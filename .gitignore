@@ -10,3 +10,6 @@ dist/
 build/
 .vscode/
 .idea/
+
+# Pipeline data output (12GB+, not suited for git without LFS) — see HANDOVER.md
+/data/

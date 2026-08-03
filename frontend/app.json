@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "TennisAI",
+    "slug": "tennisai",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.jackp.tennisai"
+    },
+    "android": {
+      "package": "com.jackp.tennisai",
+      "adaptiveIcon": {
+        "backgroundColor": "#0d0d0d",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-video",
+      "expo-av",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow TennisAI to access your videos for swing analysis."
+        }
+      ],
+      "expo-asset",
+      "expo-web-browser",
+      "expo-secure-store"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "dd4317f3-95c2-4aff-92cd-9f1567904dac"
+      }
+    }
+  }
+}
