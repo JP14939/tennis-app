@@ -13,3 +13,8 @@ build/
 
 # Pipeline data output (12GB+, not suited for git without LFS) — see HANDOVER.md
 /data/
+
+# Pretrained COCO weights auto-downloaded by ultralytics on first use (not
+# fine-tuned, not original work, redownload automatically wherever missing)
+yolo11n.pt
+yolo11n-pose.pt

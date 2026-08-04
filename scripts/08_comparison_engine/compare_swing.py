@@ -21,9 +21,14 @@ SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '05_angle_detection'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '06_database_build'))
+sys.path.insert(0, os.path.join(SCRIPTS_DIR, '07_ball_racket_tracking'))
+sys.path.insert(0, os.path.join(SCRIPTS_DIR, '09_coaching_ai'))
 from infer_angle import infer_camera_angle, angle_label
 from build_pro_database import normalise_landmarks, trajectory_scale, PRE_SEC, POST_SEC
-from trajectory_compare import dtw_distance, contact_landmarks
+from trajectory_compare import dtw_distance
+from track_racket_in_clip import track_racket_body, avg_racket_body_distance
+from select_coaching_tips import get_coaching_tips
+import phase_breakdown
 
 DB_PATH    = r'C:\Users\jackp\tennis_app\data\06_pro_database\pro_database.json'
 MODEL_PATH = os.path.join(os.path.dirname(__file__), '..', 'pose_landmarker.task')
@@ -44,51 +49,6 @@ LANDMARK_NAMES = [
     'right_hip','left_knee','right_knee','left_ankle','right_ankle','left_heel',
     'right_heel','left_foot_index','right_foot_index'
 ]
-
-# Coaching tip templates keyed by landmark and axis
-COACHING_TIPS = {
-    'forehand': {
-        'right_elbow': {
-            'x_high': 'Your elbow is too far from your body at contact — tuck it closer for more control.',
-            'y_high': 'Drop your elbow slightly at contact to generate more topspin.',
-        },
-        'right_wrist': {
-            'x_low':  'Your wrist isn\'t crossing your body enough — follow through more to your left shoulder.',
-            'y_high': 'Your wrist is dropping at contact — keep it firm and level with your forearm.',
-        },
-        'left_hip': {
-            'x_low':  'Rotate your hips more through the shot — your left hip should open toward the net.',
-        },
-        'right_shoulder': {
-            'y_high': 'Your shoulder is dropping — keep it level to maintain a consistent swing path.',
-        },
-    },
-    'backhand': {
-        'left_wrist': {
-            'x_high': 'Your left wrist isn\'t leading enough — drive through with your non-dominant hand.',
-            'y_high': 'Keep your wrists firm at contact — they\'re dropping and causing errors.',
-        },
-        'right_elbow': {
-            'y_low':  'Your elbow is too high — keep it relaxed and close to your body on the backhand.',
-        },
-        'left_shoulder': {
-            'x_low':  'Rotate your shoulders more — your left shoulder should be pointing at the net at contact.',
-        },
-    },
-    'serve': {
-        'right_wrist': {
-            'y_high': 'Your contact point is too low — toss the ball higher and reach up more.',
-            'x_low':  'Pronate your wrist more through contact for extra power and spin.',
-        },
-        'right_elbow': {
-            'y_high': 'Your elbow is dropping before contact — keep your arm up in the trophy position longer.',
-        },
-        'nose': {
-            'y_low':  'You\'re looking down too early — keep your head up and watch the ball longer.',
-        },
-    },
-}
-
 
 # ── Maths ─────────────────────────────────────────────────────────────────────
 
@@ -205,39 +165,6 @@ def build_user_trajectory(frames, fps, contact_time_sec=None):
 
 # ── Coaching tips generator ───────────────────────────────────────────────────
 
-def generate_tips(user_contact, pro_contact, shot_type):
-    """Compare user vs pro normalised landmarks (at the contact frame) and
-    return coaching tips. user_contact/pro_contact are landmark dicts as
-    returned by trajectory_compare.contact_landmarks()."""
-    tips = []
-    templates = COACHING_TIPS.get(shot_type, {})
-
-    for landmark, axes in templates.items():
-        u = user_contact.get(landmark)
-        p = pro_contact.get(landmark)
-        if not u or not p:
-            continue
-
-        dx = u['x'] - p['x']
-        dy = u['y'] - p['y']
-
-        for axis_key, tip in axes.items():
-            axis, direction = axis_key[0], axis_key[2:]
-            threshold = 0.15
-
-            if axis == 'x':
-                diff = dx
-            else:
-                diff = dy
-
-            if direction == 'high' and diff > threshold:
-                tips.append(tip)
-            elif direction == 'low' and diff < -threshold:
-                tips.append(tip)
-
-    return tips[:3]  # max 3 tips
-
-
 # ── Main comparison ───────────────────────────────────────────────────────────
 
 def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=None):
@@ -296,12 +223,10 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
     print(f'  TOP {top_n} PRO MATCHES', file=sys.stderr)
     print(f'{"="*50}', file=sys.stderr)
 
-    user_contact = contact_landmarks(user_trajectory)
-
     output = []
     for rank, (score, dist, entry) in enumerate(top, 1):
-        pro_contact = contact_landmarks(entry['trajectory'])
-        tips = generate_tips(user_contact, pro_contact, shot_type)
+        tips_result, _ = get_coaching_tips(user_trajectory, entry['trajectory'], shot_type)
+        tips = [t['tip_text'] for t in tips_result]
 
         print(f'\n  #{rank} — {entry["id"]}', file=sys.stderr)
         print(f'       Similarity: {score}/100', file=sys.stderr)
@@ -323,6 +248,26 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
             'tips':       tips if tips else ['Great technique! Your form closely matches the pro.'],
         })
 
+    # Phase breakdown (backswing/contact/follow-through/body-rotation) is
+    # only computed for the top match -- it needs per-frame racket tracking
+    # on the user's video, which is too expensive to run against every
+    # candidate.
+    if top:
+        print('  Computing phase breakdown (top match only)...', file=sys.stderr)
+        top_entry = top[0][2]
+        try:
+            lo = peak_frame - int(PRE_SEC * fps)
+            hi = peak_frame + int(POST_SEC * fps)
+            racket_frames = track_racket_body(video_path, frame_range=(lo, hi))
+            user_racket_body_distance = avg_racket_body_distance(racket_frames)
+            breakdown = phase_breakdown.compute_phase_breakdown(
+                user_trajectory, top_entry, shot_type, user_racket_body_distance)
+            output[0]['phases'] = {k: v for k, v in breakdown.items() if k != 'overall_score'}
+            output[0]['overall_score'] = breakdown['overall_score']
+            print(f'  Overall phase score: {breakdown["overall_score"]}', file=sys.stderr)
+        except Exception as e:
+            print(f'  Phase breakdown failed (non-fatal): {e}', file=sys.stderr)
+
     result = {
         'user_video':   video_path,
         'shot_type':    shot_type,
@@ -333,7 +278,7 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
     }
 
     result_path = r'C:\Users\jackp\tennis_app\data\runtime\last_comparison.json'
-    with open(result_path, 'w') as f:
+    with open(result_path, 'w', encoding='utf-8') as f:
         json.dump(result, f, indent=2)
     print(f'\n  Results saved to {result_path}', file=sys.stderr)
     return result

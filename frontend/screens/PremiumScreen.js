@@ -1,4 +1,5 @@
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView, Alert } from 'react-native';
+import { useAuth } from '../context/AuthContext';
 
 const GREEN  = '#4ade80';
 const DARK   = '#0d0d0d';
@@ -7,7 +8,7 @@ const BORDER = '#222';
 const TEXT   = '#fff';
 const MUTED  = '#888';
 
-function FeatureCard({ icon, title, desc, cta, onPress }) {
+function FeatureCard({ icon, title, desc, cta, locked, onPress }) {
   return (
     <View style={c.card}>
       <View style={c.iconWrap}>
@@ -16,7 +17,7 @@ function FeatureCard({ icon, title, desc, cta, onPress }) {
       <Text style={c.title}>{title}</Text>
       <Text style={c.desc}>{desc}</Text>
       <TouchableOpacity style={c.btn} onPress={onPress} activeOpacity={0.85}>
-        <Text style={c.btnText}>{cta}</Text>
+        <Text style={c.btnText}>{locked ? `🔒 ${cta}` : cta}</Text>
       </TouchableOpacity>
     </View>
   );
@@ -38,6 +39,28 @@ const c = StyleSheet.create({
 });
 
 export default function PremiumScreen({ navigation }) {
+  const { isAuthenticated, isPremium } = useAuth();
+
+  const gated = (destination) => {
+    if (isPremium) {
+      navigation.navigate(destination);
+      return;
+    }
+    if (!isAuthenticated) {
+      Alert.alert(
+        'Log in required',
+        'Log in and upgrade to Premium to unlock this feature.',
+        [{ text: 'Log in', onPress: () => navigation.navigate('Login') }, { text: 'Cancel', style: 'cancel' }]
+      );
+      return;
+    }
+    Alert.alert(
+      'Premium feature',
+      'This is a Premium feature — upgrade your plan to unlock it.',
+      [{ text: 'OK', style: 'cancel' }]
+    );
+  };
+
   return (
     <SafeAreaView style={s.safe}>
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
@@ -53,7 +76,8 @@ export default function PremiumScreen({ navigation }) {
           title="1v1 Comparison"
           desc="Upload any video you want to copy — a pro clip, a friend, yourself last year — and compare your swing directly against it, frame for frame."
           cta="Compare videos →"
-          onPress={() => navigation.navigate('VersusPick')}
+          locked={!isPremium}
+          onPress={() => gated('VersusPick')}
         />
 
         <FeatureCard
@@ -61,7 +85,8 @@ export default function PremiumScreen({ navigation }) {
           title="Highlight Archive"
           desc="Upload a full match and we'll automatically clip every shot into your personal swing archive, ready to tag and analyse."
           cta="Upload a match →"
-          onPress={() => navigation.navigate('HighlightUpload')}
+          locked={!isPremium}
+          onPress={() => gated('HighlightUpload')}
         />
 
       </ScrollView>

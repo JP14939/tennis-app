@@ -1,10 +1,13 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, SafeAreaView,
-  ScrollView, Alert,
+  ScrollView, Alert, ActivityIndicator,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
-import { MOCK_ANALYSES, SHOT_ICONS } from '../data/mockAnalyses';
+import { SHOT_ICONS } from '../data/mockAnalyses';
+import { useAuth } from '../context/AuthContext';
+import { fetchHistory, deleteHistory } from '../api/history';
 
 const SHOT_TYPES = ['forehand', 'backhand', 'serve'];
 
@@ -21,28 +24,39 @@ const sb = StyleSheet.create({
   fill:  { height: 4, borderRadius: 2 },
 });
 
-function AnalysisCard({ item, onPress }) {
+function formatDate(isoString) {
+  if (!isoString) return '';
+  // SQLite's datetime('now') is UTC with no 'Z' suffix — append one so the
+  // browser/RN Date parser treats it as UTC instead of local time.
+  const d = new Date(isoString.includes('Z') ? isoString : `${isoString.replace(' ', 'T')}Z`);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ', ' +
+    d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+}
+
+function AnalysisCard({ item, onPress, onLongPress }) {
+  const score = Math.round(item.similarity ?? 0);
   return (
-    <TouchableOpacity style={c.card} onPress={onPress} activeOpacity={0.8}>
+    <TouchableOpacity style={c.card} onPress={onPress} onLongPress={onLongPress} activeOpacity={0.8}>
       <View style={c.cardHeader}>
         <View style={c.shotBadge}>
           <Text style={c.shotIcon}>{SHOT_ICONS[item.shot_type]}</Text>
           <Text style={c.shotLabel}>{item.shot_type.charAt(0).toUpperCase() + item.shot_type.slice(1)}</Text>
         </View>
         <View style={c.metaRight}>
-          <Text style={c.date}>{item.date}</Text>
-          <Text style={c.anglePill}>{item.angle_label}</Text>
+          <Text style={c.date}>{formatDate(item.created_at)}</Text>
+          <Text style={c.anglePill}>{item.angle_label ?? '—'}</Text>
         </View>
       </View>
 
       <View style={c.scoreRow}>
         <Text style={c.scoreLabel}>Match score</Text>
-        <Text style={c.scoreNum}>{item.similarity}<Text style={c.scoreSlash}>/100</Text></Text>
+        <Text style={c.scoreNum}>{score}<Text style={c.scoreSlash}>/100</Text></Text>
       </View>
-      <ScoreBar value={item.similarity} />
+      <ScoreBar value={score} />
 
-      <Text style={c.proId}>{item.pro_id.replace('_', ' #').replace('0', '#')}</Text>
-      <Text style={c.tip} numberOfLines={2}>💬 {item.tip}</Text>
+      <Text style={c.proId}>{formatProId(item.pro_id)}</Text>
+      {item.tip && <Text style={c.tip} numberOfLines={2}>💬 {item.tip}</Text>}
     </TouchableOpacity>
   );
 }
@@ -183,28 +197,80 @@ const up = StyleSheet.create({
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 export default function HistoryScreen({ navigation }) {
+  const { token, isAuthenticated, isPremium } = useAuth();
   const [showUpload, setShowUpload]   = useState(false);
-  const [analyses, setAnalyses]       = useState(MOCK_ANALYSES);
+  const [loading, setLoading]         = useState(true);
+  const [analyses, setAnalyses]       = useState([]);
+  const [limit, setLimit]             = useState(null);
+
+  const load = useCallback(async () => {
+    if (!isAuthenticated) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const data = await fetchHistory(token);
+      setAnalyses(data.analyses);
+      setLimit(data.limit);
+    } catch {
+      // Leave whatever was previously loaded rather than blanking the screen
+      // on a transient network failure.
+    } finally {
+      setLoading(false);
+    }
+  }, [token, isAuthenticated]);
+
+  useFocusEffect(useCallback(() => { load(); }, [load]));
 
   const handleUpload = ({ videoUri, shotType }) => {
-    // TODO: call backend API, get results, add to list
-    // For now: add a placeholder card so the user can see the flow
-    const newItem = {
-      id: String(Date.now()),
-      shot_type: shotType,
-      date: 'Just now',
-      pro_id: 'Analysing…',
-      similarity: 0,
-      tip: 'Your video is being analysed. Results coming soon!',
-      angle_label: '—',
-      videoUri,
-      pending: true,
-    };
-    setAnalyses(prev => [newItem, ...prev]);
     setShowUpload(false);
-    // Navigate to contact marking so they can pick the exact frame
+    // Navigate to contact marking so they can pick the exact frame — saving
+    // happens automatically from ResultsScreen once analysis completes, and
+    // this list picks it up next time the tab regains focus.
     navigation.navigate('Upload', { videoUri, shotType });
   };
+
+  const handleDelete = (item) => {
+    Alert.alert('Delete this analysis?', `${formatProId(item.pro_id)} — this can't be undone.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteHistory(token, item.id);
+            load();
+          } catch (err) {
+            Alert.alert('Could not delete', err.message || 'Something went wrong');
+          }
+        },
+      },
+    ]);
+  };
+
+  const atCap = limit != null && analyses.length >= limit;
+
+  // ── Guest state ─────────────────────────────────────────────────────────
+  if (!isAuthenticated) {
+    return (
+      <SafeAreaView style={s.safe}>
+        <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
+          <View style={s.header}>
+            <Text style={s.title}>History</Text>
+          </View>
+          <View style={s.empty}>
+            <Text style={s.emptyIcon}>🔒</Text>
+            <Text style={s.emptyTitle}>Log in to see your history</Text>
+            <Text style={s.emptySub}>Your saved analyses live on your account — log in or sign up to start building your history.</Text>
+            <TouchableOpacity style={s.emptyBtn} onPress={() => navigation.navigate('Login')}>
+              <Text style={s.emptyBtnText}>Log in →</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={s.safe}>
@@ -228,60 +294,80 @@ export default function HistoryScreen({ navigation }) {
           />
         )}
 
-        {/* Stats strip */}
-        {!showUpload && analyses.length > 0 && (
-          <View style={s.statsRow}>
-            <View style={s.stat}>
-              <Text style={s.statNum}>{analyses.length}</Text>
-              <Text style={s.statLabel}>Analyses</Text>
-            </View>
-            <View style={s.statDivider} />
-            <View style={s.stat}>
-              <Text style={s.statNum}>
-                {Math.round(analyses.filter(a => !a.pending).reduce((sum, a) => sum + a.similarity, 0) / Math.max(1, analyses.filter(a => !a.pending).length))}
-              </Text>
-              <Text style={s.statLabel}>Avg score</Text>
-            </View>
-            <View style={s.statDivider} />
-            <View style={s.stat}>
-              <Text style={s.statNum}>
-                {analyses.filter(a => !a.pending && a.similarity >= 75).length}
-              </Text>
-              <Text style={s.statLabel}>Great swings</Text>
-            </View>
-          </View>
+        {loading && (
+          <ActivityIndicator size="large" color="#4ade80" style={{ marginTop: 40 }} />
         )}
 
-        {/* Analysis cards */}
-        {analyses.map(item => (
-          <AnalysisCard
-            key={item.id}
-            item={item}
-            onPress={() => {
-              if (item.pending) {
-                Alert.alert('Still analysing', 'Your results will appear here once processing is complete.');
-              } else {
-                Alert.alert(item.pro_id, `Similarity: ${item.similarity}/100\n\n${item.tip}`);
-              }
-            }}
-          />
-        ))}
+        {!loading && (
+          <>
+            {/* Stats strip */}
+            {!showUpload && analyses.length > 0 && (
+              <View style={s.statsRow}>
+                <View style={s.stat}>
+                  <Text style={s.statNum}>{limit != null ? `${analyses.length}/${limit}` : analyses.length}</Text>
+                  <Text style={s.statLabel}>{limit != null ? 'Saved' : 'Analyses'}</Text>
+                </View>
+                <View style={s.statDivider} />
+                <View style={s.stat}>
+                  <Text style={s.statNum}>
+                    {Math.round(analyses.reduce((sum, a) => sum + a.similarity, 0) / Math.max(1, analyses.length))}
+                  </Text>
+                  <Text style={s.statLabel}>Avg score</Text>
+                </View>
+                <View style={s.statDivider} />
+                <View style={s.stat}>
+                  <Text style={s.statNum}>
+                    {analyses.filter(a => a.similarity >= 75).length}
+                  </Text>
+                  <Text style={s.statLabel}>Great swings</Text>
+                </View>
+              </View>
+            )}
 
-        {/* Empty state */}
-        {analyses.length === 0 && !showUpload && (
-          <View style={s.empty}>
-            <Text style={s.emptyIcon}>🎾</Text>
-            <Text style={s.emptyTitle}>No analyses yet</Text>
-            <Text style={s.emptySub}>Upload a swing video to get matched to a pro and receive personalised coaching tips.</Text>
-            <TouchableOpacity style={s.emptyBtn} onPress={() => setShowUpload(true)}>
-              <Text style={s.emptyBtnText}>Upload your first swing →</Text>
-            </TouchableOpacity>
-          </View>
+            {/* Free-tier cap notice */}
+            {!showUpload && atCap && !isPremium && (
+              <TouchableOpacity
+                style={s.capCard}
+                onPress={() => navigation.navigate('MainTabs', { screen: 'Premium' })}
+              >
+                <Text style={s.capText}>You've saved {limit}/{limit} shots on the free plan. Delete one, or upgrade to save unlimited →</Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Analysis cards */}
+            {analyses.map(item => (
+              <AnalysisCard
+                key={item.id}
+                item={item}
+                onPress={() => Alert.alert(formatProId(item.pro_id), `Similarity: ${item.similarity}/100\n\n${item.tip ?? ''}`)}
+                onLongPress={() => handleDelete(item)}
+              />
+            ))}
+
+            {/* Empty state */}
+            {analyses.length === 0 && !showUpload && (
+              <View style={s.empty}>
+                <Text style={s.emptyIcon}>🎾</Text>
+                <Text style={s.emptyTitle}>No analyses yet</Text>
+                <Text style={s.emptySub}>Upload a swing video to get matched to a pro and receive personalised coaching tips.</Text>
+                <TouchableOpacity style={s.emptyBtn} onPress={() => setShowUpload(true)}>
+                  <Text style={s.emptyBtnText}>Upload your first swing →</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </>
         )}
 
       </ScrollView>
     </SafeAreaView>
   );
+}
+
+function formatProId(proId) {
+  if (!proId) return 'Analysis';
+  const [shot, num] = proId.split('_');
+  if (!shot || !num) return proId;
+  return `${shot.charAt(0).toUpperCase() + shot.slice(1)} Technique #${parseInt(num, 10)}`;
 }
 
 const s = StyleSheet.create({
@@ -308,6 +394,12 @@ const s = StyleSheet.create({
   statNum:     { color: '#fff', fontSize: 22, fontWeight: '800' },
   statLabel:   { color: '#555', fontSize: 11, marginTop: 2 },
   statDivider: { width: 1, height: 32, backgroundColor: '#222' },
+
+  capCard: {
+    backgroundColor: '#241a0d', borderWidth: 1, borderColor: '#4a3a1a',
+    borderRadius: 12, padding: 14, marginBottom: 16,
+  },
+  capText: { color: '#facc15', fontSize: 13, lineHeight: 18 },
 
   empty: { alignItems: 'center', paddingVertical: 60 },
   emptyIcon:  { fontSize: 48, marginBottom: 16 },

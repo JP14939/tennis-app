@@ -21,15 +21,31 @@ import argparse
 SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '05_angle_detection'))
+sys.path.insert(0, os.path.join(SCRIPTS_DIR, '09_coaching_ai'))
 
 from infer_angle import infer_camera_angle, angle_label
-from compare_swing import extract_user_poses, build_user_trajectory, generate_tips, similarity_score, KEY_LANDMARKS
-from trajectory_compare import dtw_distance, contact_landmarks
+from compare_swing import extract_user_poses, build_user_trajectory, similarity_score, KEY_LANDMARKS
+from trajectory_compare import dtw_distance
+from select_coaching_tips import get_coaching_tips
 
 # Above this angular difference between the two videos' inferred camera
-# angles, the DTW score is likely distorted by framing rather than technique
-# — surfaced to the frontend as a caveat, not treated as an error.
+# angles, the two clips aren't comparable — unlike the pro-database flow
+# (which only ever matches against angle-filtered, pre-vetted clips), a 1v1
+# comparison has no such filtering, so a framing mismatch this large is
+# treated as a hard rejection rather than a soft warning.
 ANGLE_MISMATCH_WARNING_DEG = 25
+
+# Vertical elevation compatibility: reject unless both videos' elevation
+# bands are equal or adjacent on this scale. 'unknown' (no readable height
+# signal) never matches anything, since there's no way to confirm the two
+# cameras were at a similar height.
+ELEVATION_ORDER = ['level', 'uncertain', 'possibly_elevated']
+
+
+def elevation_compatible(status_a, status_b):
+    if status_a not in ELEVATION_ORDER or status_b not in ELEVATION_ORDER:
+        return False
+    return abs(ELEVATION_ORDER.index(status_a) - ELEVATION_ORDER.index(status_b)) <= 1
 
 
 def compare_videos(reference_path, your_path, shot_type, contact_a=None, contact_b=None):
@@ -43,12 +59,12 @@ def compare_videos(reference_path, your_path, shot_type, contact_a=None, contact
     print('  Extracting poses from reference video...', file=sys.stderr)
     frames_a, fps_a = extract_user_poses(reference_path)
     traj_a, peak_a = build_user_trajectory(frames_a, fps_a, contact_a)
-    angle_a, angle_a_conf, _ = infer_camera_angle(reference_path, peak_a)
+    angle_a, angle_a_conf, debug_a = infer_camera_angle(reference_path, peak_a)
 
     print('  Extracting poses from your video...', file=sys.stderr)
     frames_b, fps_b = extract_user_poses(your_path)
     traj_b, peak_b = build_user_trajectory(frames_b, fps_b, contact_b)
-    angle_b, angle_b_conf, _ = infer_camera_angle(your_path, peak_b)
+    angle_b, angle_b_conf, debug_b = infer_camera_angle(your_path, peak_b)
 
     if not traj_a or not traj_b:
         raise RuntimeError('Could not extract a usable pose trajectory from one of the videos — try a clearer angle or trim closer to the contact point.')
@@ -61,9 +77,22 @@ def compare_videos(reference_path, your_path, shot_type, contact_a=None, contact
     if angle_a is not None and angle_b is not None:
         angle_mismatch_deg = round(abs(angle_a - angle_b), 1)
 
-    contact_a_lm = contact_landmarks(traj_a)
-    contact_b_lm = contact_landmarks(traj_b)
-    tips = generate_tips(contact_b_lm, contact_a_lm, shot_type)
+    tips_result, _ = get_coaching_tips(traj_b, traj_a, shot_type)
+    tips = [t['tip_text'] for t in tips_result]
+
+    # Hard camera-setup gate: a 1v1 comparison has no angle-filtered pro
+    # database to fall back on, so a framing mismatch this large corrupts
+    # the DTW score more than the pro-database flow's soft warning allows for.
+    if angle_mismatch_deg is None or angle_mismatch_deg > ANGLE_MISMATCH_WARNING_DEG:
+        raise RuntimeError(
+            "Couldn't confirm both videos were filmed from a similar angle — "
+            'film both from a similar side/face-on position and try again.'
+        )
+    if not elevation_compatible(debug_a.get('elevation_status'), debug_b.get('elevation_status')):
+        raise RuntimeError(
+            'Camera heights look different between the two videos — film both '
+            'from a similar height (see the fence-mount guide) and try again.'
+        )
 
     return {
         'shot_type':          shot_type,

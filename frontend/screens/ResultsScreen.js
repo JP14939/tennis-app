@@ -4,6 +4,8 @@ import {
   ScrollView, ActivityIndicator, Platform,
 } from 'react-native';
 import { API_BASE } from '../config/api';
+import { useAuth } from '../context/AuthContext';
+import { saveHistory } from '../api/history';
 
 const GREEN  = '#4ade80';
 const YELLOW = '#facc15';
@@ -17,6 +19,21 @@ const MUTED  = '#888';
 function scoreColor(score) {
   if (score >= 75) return GREEN;
   if (score >= 55) return YELLOW;
+  return RED;
+}
+
+const PHASE_LABELS = {
+  backswing: 'Backswing',
+  contact: 'Contact',
+  follow_through: 'Follow-through',
+  body_rotation: 'Body Rotation',
+};
+const PHASE_ORDER = ['backswing', 'contact', 'follow_through', 'body_rotation'];
+
+function phaseColor(score) {
+  if (score == null) return MUTED;
+  if (score >= 18.75) return GREEN;  // 75% of 25
+  if (score >= 13.75) return YELLOW; // 55% of 25
   return RED;
 }
 
@@ -45,14 +62,20 @@ async function buildFormData(videoUri, shotType, contactTimeSec) {
 
 export default function ResultsScreen({ navigation, route }) {
   const { videoUri, shotType, contactTimeSec } = route.params ?? {};
+  const { token, isAuthenticated } = useAuth();
 
   const [status, setStatus] = useState('loading'); // loading | error | done
   const [errorMsg, setErrorMsg] = useState('');
+  const [errorCode, setErrorCode] = useState(null);
   const [result, setResult] = useState(null);
+  // idle | saving | saved | limit | guest | error — purely informational,
+  // never blocks the analysis result itself from displaying.
+  const [saveStatus, setSaveStatus] = useState('idle');
 
   const runAnalysis = async () => {
     setStatus('loading');
     setErrorMsg('');
+    setErrorCode(null);
     try {
       const formData = await buildFormData(videoUri, shotType, contactTimeSec);
       const response = await fetch(`${API_BASE}/api/analyse`, {
@@ -61,13 +84,29 @@ export default function ResultsScreen({ navigation, route }) {
       });
       const data = await response.json();
       if (!response.ok) {
+        setErrorCode(data.code ?? null);
         throw new Error(data.error || 'Analysis failed');
       }
       setResult(data);
       setStatus('done');
+      saveToHistory(data);
     } catch (err) {
       setErrorMsg(err.message || 'Something went wrong');
       setStatus('error');
+    }
+  };
+
+  const saveToHistory = async (data) => {
+    if (!isAuthenticated) {
+      setSaveStatus('guest');
+      return;
+    }
+    setSaveStatus('saving');
+    try {
+      await saveHistory(token, data, shotType);
+      setSaveStatus('saved');
+    } catch (err) {
+      setSaveStatus(err.code === 'HISTORY_LIMIT' ? 'limit' : 'error');
     }
   };
 
@@ -96,15 +135,25 @@ export default function ResultsScreen({ navigation, route }) {
 
   // ── Error ─────────────────────────────────────────────────────────────────
   if (status === 'error') {
+    const isDailyLimit = errorCode === 'DAILY_LIMIT';
     return (
       <SafeAreaView style={s.safe}>
         <View style={s.centerFill}>
-          <Text style={s.errorIcon}>⚠️</Text>
-          <Text style={s.loadingTitle}>Analysis failed</Text>
+          <Text style={s.errorIcon}>{isDailyLimit ? '⏳' : '⚠️'}</Text>
+          <Text style={s.loadingTitle}>{isDailyLimit ? 'Daily limit reached' : 'Analysis failed'}</Text>
           <Text style={s.loadingSub}>{errorMsg}</Text>
-          <TouchableOpacity style={s.retryBtn} onPress={runAnalysis}>
-            <Text style={s.retryBtnText}>Try again</Text>
-          </TouchableOpacity>
+          {isDailyLimit ? (
+            <TouchableOpacity
+              style={s.retryBtn}
+              onPress={() => navigation.navigate('MainTabs', { screen: 'Premium' })}
+            >
+              <Text style={s.retryBtnText}>Upgrade to Premium</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity style={s.retryBtn} onPress={runAnalysis}>
+              <Text style={s.retryBtnText}>Try again</Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity style={s.secondaryBtn} onPress={() => navigation.popToTop()}>
             <Text style={s.secondaryBtnText}>Back to home</Text>
           </TouchableOpacity>
@@ -116,7 +165,8 @@ export default function ResultsScreen({ navigation, route }) {
   // ── Results ───────────────────────────────────────────────────────────────
   const top = result.matches?.[0];
   const otherMatches = result.matches?.slice(1) ?? [];
-  const score = top?.similarity ?? 0;
+  const score = top?.overall_score ?? top?.similarity ?? 0;
+  const phases = top?.phases;
 
   return (
     <SafeAreaView style={s.safe}>
@@ -136,6 +186,26 @@ export default function ResultsScreen({ navigation, route }) {
               <Text style={s.matchedTo}>Matched to {formatProId(top.pro_id)}</Text>
             </View>
 
+            {/* Save-to-history status */}
+            {saveStatus === 'saved' && (
+              <View style={s.saveBanner}>
+                <Text style={s.saveBannerText}>✓ Saved to your history</Text>
+              </View>
+            )}
+            {saveStatus === 'guest' && (
+              <TouchableOpacity style={s.saveBannerAction} onPress={() => navigation.navigate('Login')}>
+                <Text style={s.saveBannerActionText}>Log in to save this result →</Text>
+              </TouchableOpacity>
+            )}
+            {saveStatus === 'limit' && (
+              <TouchableOpacity
+                style={s.saveBannerAction}
+                onPress={() => navigation.navigate('MainTabs', { screen: 'Premium' })}
+              >
+                <Text style={s.saveBannerActionText}>Free plan limit reached (3/3) — upgrade to save unlimited →</Text>
+              </TouchableOpacity>
+            )}
+
             {/* Angle info */}
             <View style={s.angleRow}>
               <View style={s.angleCard}>
@@ -150,6 +220,40 @@ export default function ResultsScreen({ navigation, route }) {
                 <Text style={s.angleValue}>{top.pro_angle != null ? `${top.pro_angle}°` : '—'}</Text>
               </View>
             </View>
+
+            {/* Phase breakdown */}
+            {phases && (
+              <>
+                <Text style={s.sectionTitle}>Phase Breakdown</Text>
+                {PHASE_ORDER.map((key) => {
+                  const phase = phases[key];
+                  if (!phase) return null;
+                  const pScore = phase.score;
+                  return (
+                    <View key={key} style={s.phaseCard}>
+                      <View style={s.phaseHeader}>
+                        <Text style={s.phaseName}>{PHASE_LABELS[key]}</Text>
+                        <Text style={[s.phaseScore, { color: phaseColor(pScore) }]}>
+                          {pScore != null ? `${pScore}/25` : '—'}
+                        </Text>
+                      </View>
+                      <View style={s.scoreTrack}>
+                        <View
+                          style={[
+                            s.scoreFill,
+                            { width: `${((pScore ?? 0) / 25) * 100}%`, backgroundColor: phaseColor(pScore) },
+                          ]}
+                        />
+                      </View>
+                      {key === 'body_rotation' && phase.has_racket_data === false && (
+                        <Text style={s.phaseNote}>Racket not clearly visible — scored on body rotation only.</Text>
+                      )}
+                      {phase.tips?.[0] && <Text style={s.phaseTip}>{phase.tips[0]}</Text>}
+                    </View>
+                  );
+                })}
+              </>
+            )}
 
             {/* Coaching tips */}
             <Text style={s.sectionTitle}>Coaching tips</Text>
@@ -215,6 +319,17 @@ const s = StyleSheet.create({
   scoreFill: { height: 8, borderRadius: 4 },
   matchedTo: { color: MUTED, fontSize: 13, marginTop: 14 },
 
+  saveBanner: {
+    backgroundColor: '#0f2a1a', borderWidth: 1, borderColor: '#1e4a2e',
+    borderRadius: 12, padding: 12, marginBottom: 16, alignItems: 'center',
+  },
+  saveBannerText: { color: GREEN, fontSize: 13, fontWeight: '600' },
+  saveBannerAction: {
+    backgroundColor: '#241a0d', borderWidth: 1, borderColor: '#4a3a1a',
+    borderRadius: 12, padding: 12, marginBottom: 16, alignItems: 'center',
+  },
+  saveBannerActionText: { color: YELLOW, fontSize: 13, fontWeight: '600', textAlign: 'center' },
+
   angleRow: { flexDirection: 'row', gap: 12, marginBottom: 24 },
   angleCard: {
     flex: 1, backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
@@ -225,6 +340,15 @@ const s = StyleSheet.create({
   angleSub: { color: MUTED, fontSize: 12, marginTop: 2 },
 
   sectionTitle: { color: TEXT, fontSize: 16, fontWeight: '700', marginBottom: 12 },
+  phaseCard: {
+    backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
+    borderRadius: 14, padding: 14, marginBottom: 10,
+  },
+  phaseHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  phaseName: { color: TEXT, fontSize: 14, fontWeight: '700' },
+  phaseScore: { fontSize: 14, fontWeight: '700' },
+  phaseTip: { color: '#ccc', fontSize: 13, lineHeight: 18, marginTop: 10 },
+  phaseNote: { color: MUTED, fontSize: 12, marginTop: 8, fontStyle: 'italic' },
   tipCard: {
     flexDirection: 'row', gap: 10, backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
     borderRadius: 14, padding: 14, marginBottom: 10, alignItems: 'flex-start',

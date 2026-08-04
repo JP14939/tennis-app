@@ -17,6 +17,7 @@ import VersusResultsScreen from './screens/VersusResultsScreen';
 import HighlightUploadScreen from './screens/HighlightUploadScreen';
 import HighlightReviewScreen from './screens/HighlightReviewScreen';
 import HighlightArchiveScreen from './screens/HighlightArchiveScreen';
+import FenceTutorialScreen from './screens/FenceTutorialScreen';
 import { AuthProvider } from './context/AuthContext';
 
 const DARK   = '#0d0d0d';
@@ -82,6 +83,7 @@ export default function App() {
           <Stack.Screen name="HighlightUpload" component={HighlightUploadScreen} options={{ title: 'Upload Match' }} />
           <Stack.Screen name="HighlightReview" component={HighlightReviewScreen} options={{ title: 'Tag Shots' }} />
           <Stack.Screen name="HighlightArchive" component={HighlightArchiveScreen} options={{ title: 'Archive' }} />
+          <Stack.Screen name="FenceTutorial" component={FenceTutorialScreen} options={{ title: 'Camera Setup' }} />
         </Stack.Navigator>
       </NavigationContainer>
     </AuthProvider>

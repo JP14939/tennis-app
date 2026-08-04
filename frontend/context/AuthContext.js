@@ -1,23 +1,8 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { Platform } from 'react-native';
-import * as SecureStore from 'expo-secure-store';
 import { API_BASE } from '../config/api';
+import { storage } from '../utils/storage';
 
 const TOKEN_KEY = 'tennisai_token';
-
-// expo-secure-store's native APIs aren't available on web — fall back to
-// localStorage there so the same AuthContext code works in both.
-const storage = Platform.OS === 'web'
-  ? {
-      getItem: async (key) => localStorage.getItem(key),
-      setItem: async (key, value) => localStorage.setItem(key, value),
-      deleteItem: async (key) => localStorage.removeItem(key),
-    }
-  : {
-      getItem: SecureStore.getItemAsync,
-      setItem: SecureStore.setItemAsync,
-      deleteItem: SecureStore.deleteItemAsync,
-    };
 
 const AuthContext = createContext(null);
 

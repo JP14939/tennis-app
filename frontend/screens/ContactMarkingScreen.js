@@ -5,11 +5,29 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import PlatformVideo from '../components/PlatformVideo';
+import FenceTutorialContent from '../components/FenceTutorialContent';
+import LiveCalibrationCamera from '../components/LiveCalibrationCamera';
+import { storage } from '../utils/storage';
+import { API_BASE } from '../config/api';
 
 const ASSUMED_FPS = 30;
 const FINE_RADIUS = 10;
 const SHOT_TYPES  = ['forehand', 'backhand', 'serve'];
 const IS_WEB      = Platform.OS === 'web';
+const TUTORIAL_SEEN_KEY = 'tennisai_seen_fence_tutorial';
+
+async function checkCameraSetup(videoUri) {
+  const formData = new FormData();
+  if (Platform.OS === 'web') {
+    const response = await fetch(videoUri);
+    const blob = await response.blob();
+    formData.append('video', blob, 'swing.mp4');
+  } else {
+    formData.append('video', { uri: videoUri, name: 'swing.mp4', type: 'video/mp4' });
+  }
+  const response = await fetch(`${API_BASE}/api/check-setup`, { method: 'POST', body: formData });
+  return response.json();
+}
 
 function useDims() {
   const [dims, setDims] = useState(Dimensions.get('window'));
@@ -27,9 +45,21 @@ export default function ContactMarkingScreen({ navigation, route }) {
   const [status, setStatus]     = useState({});
   const [roughTime, setRoughTime]   = useState(null);
   const [fineOffset, setFineOffset] = useState(0);
+  const [calibration, setCalibration] = useState({ status: 'idle' }); // idle | checking | done
   const videoRef  = useRef(null);
   const slowMoRef = useRef(null);
   const dims = useDims();
+
+  // Gate the fence-mount tutorial before the first video pick of a fresh session
+  // (skip it if a video was already supplied, e.g. the 1v1 comparison flow).
+  useEffect(() => {
+    if (uri) return;
+    (async () => {
+      const seen = await storage.getItem(TUTORIAL_SEEN_KEY);
+      if (!seen) setPhase('tutorial');
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Derived from status (expo-av shape — web PlatformVideo pushes same shape)
   const currentTime = (status.positionMillis  ?? 0) / 1000;
@@ -63,9 +93,20 @@ export default function ContactMarkingScreen({ navigation, route }) {
       quality: 1,
     });
     if (!result.canceled && result.assets?.[0]?.uri) {
-      setUri(result.assets[0].uri);
-      setPhase('rough');
+      useVideo(result.assets[0].uri);
     }
+  };
+
+  // Shared by both entry points (library pick and live recording) -- lands
+  // in the same 'rough' phase with the same post-record authoritative
+  // check, so everything downstream is identical regardless of source.
+  const useVideo = (videoUri) => {
+    setUri(videoUri);
+    setPhase('rough');
+    setCalibration({ status: 'checking' });
+    checkCameraSetup(videoUri)
+      .then((data) => setCalibration({ status: 'done', ...data }))
+      .catch(() => setCalibration({ status: 'done', ok: null, message: 'Could not check camera setup.' }));
   };
 
   const markWindow = async () => {
@@ -118,6 +159,20 @@ export default function ContactMarkingScreen({ navigation, route }) {
   const fineFrameAbs = Math.round(fineT * ASSUMED_FPS);
   const videoH       = Math.round(Math.min(dims.width * 0.56, dims.height * 0.42));
 
+  // ── TUTORIAL ──────────────────────────────────────────────────────────────
+  if (phase === 'tutorial') {
+    return (
+      <SafeAreaView style={s.safe}>
+        <FenceTutorialContent
+          onDismiss={async () => {
+            await storage.setItem(TUTORIAL_SEEN_KEY, '1');
+            setPhase('pick');
+          }}
+        />
+      </SafeAreaView>
+    );
+  }
+
   // ── PICK ──────────────────────────────────────────────────────────────────
   if (phase === 'pick') {
     return (
@@ -146,8 +201,27 @@ export default function ContactMarkingScreen({ navigation, route }) {
             <Text style={s.uploadBtnText}>Choose video from library</Text>
             <Text style={s.uploadBtnSub}>MP4 · MOV · any resolution</Text>
           </TouchableOpacity>
+
+          {!IS_WEB && (
+            <TouchableOpacity style={[s.uploadBtn, s.recordBtn]} onPress={() => setPhase('record')}>
+              <Text style={s.uploadIcon}>🎥</Text>
+              <Text style={s.uploadBtnText}>Record now</Text>
+              <Text style={s.uploadBtnSub}>Live camera positioning guide</Text>
+            </TouchableOpacity>
+          )}
         </ScrollView>
       </SafeAreaView>
+    );
+  }
+
+  // ── RECORD ────────────────────────────────────────────────────────────────
+  if (phase === 'record') {
+    return (
+      <LiveCalibrationCamera
+        shotType={shotType}
+        onCancel={() => setPhase('pick')}
+        onRecorded={useVideo}
+      />
     );
   }
 
@@ -185,6 +259,22 @@ export default function ContactMarkingScreen({ navigation, route }) {
           <>
             <Text style={s.panelTitle}>Step 1 — Find the contact frame</Text>
             <Text style={s.panelSub}>Tap video to play/pause · drag slider to scrub</Text>
+
+            {calibration.status === 'checking' && (
+              <Text style={s.calibChecking}>Checking camera setup…</Text>
+            )}
+            {calibration.status === 'done' && calibration.message && (() => {
+              // elevation_status can warn ("possibly_elevated") even when ok
+              // is true (framing is fine, height is the separate concern) —
+              // don't let a green checkmark contradict a height warning.
+              const elevationWarn = calibration.elevation_status === 'possibly_elevated';
+              const isWarn = calibration.ok === false || elevationWarn;
+              return (
+                <Text style={[s.calibMsg, isWarn && s.calibWarn]}>
+                  {isWarn ? '⚠ ' : calibration.ok === true ? '✓ ' : ''}{calibration.message}
+                </Text>
+              );
+            })()}
 
             {IS_WEB
               ? React.createElement('input', {
@@ -298,6 +388,7 @@ const s = StyleSheet.create({
   uploadIcon:    { fontSize: 36, marginBottom: 4 },
   uploadBtnText: { color: TEXT, fontSize: 16, fontWeight: '600' },
   uploadBtnSub:  { color: MUTED, fontSize: 13 },
+  recordBtn:     { marginTop: 14 },
 
   playHint: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   playHintText: { color: 'rgba(255,255,255,0.35)', fontSize: 52 },
@@ -305,6 +396,9 @@ const s = StyleSheet.create({
   panel:      { backgroundColor: DARK, padding: 20, paddingTop: 18, flex: 1 },
   panelTitle: { color: TEXT, fontSize: 16, fontWeight: '700', marginBottom: 4 },
   panelSub:   { color: MUTED, fontSize: 13, marginBottom: 14 },
+  calibChecking: { color: MUTED, fontSize: 12, marginBottom: 10 },
+  calibMsg:      { color: GREEN, fontSize: 12, marginBottom: 10, lineHeight: 17 },
+  calibWarn:     { color: '#facc15' },
 
   progressTrack: {
     height: 8, backgroundColor: '#1a1a1a', borderRadius: 4,

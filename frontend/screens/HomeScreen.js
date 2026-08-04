@@ -1,5 +1,9 @@
+import { useCallback, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView } from 'react-native';
-import { MOCK_ANALYSES, SHOT_ICONS } from '../data/mockAnalyses';
+import { useFocusEffect } from '@react-navigation/native';
+import { SHOT_ICONS } from '../data/mockAnalyses';
+import { useAuth } from '../context/AuthContext';
+import { fetchHistory } from '../api/history';
 
 const GREEN  = '#4ade80';
 const YELLOW = '#facc15';
@@ -22,15 +26,23 @@ const QUICK_SHOTS = [
   { label: 'Serve',    value: 'serve' },
 ];
 
+function formatDate(isoString) {
+  if (!isoString) return '';
+  const d = new Date(isoString.includes('Z') ? isoString : `${isoString.replace(' ', 'T')}Z`);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 function RecentRow({ item }) {
+  const score = Math.round(item.similarity ?? 0);
   return (
     <View style={r.row}>
       <Text style={r.icon}>{SHOT_ICONS[item.shot_type]}</Text>
       <View style={r.body}>
         <Text style={r.title}>{item.shot_type.charAt(0).toUpperCase() + item.shot_type.slice(1)}</Text>
-        <Text style={r.date}>{item.date}</Text>
+        <Text style={r.date}>{formatDate(item.created_at)}</Text>
       </View>
-      <Text style={[r.score, { color: scoreColor(item.similarity) }]}>{item.similarity}</Text>
+      <Text style={[r.score, { color: scoreColor(score) }]}>{score}</Text>
     </View>
   );
 }
@@ -48,11 +60,22 @@ const r = StyleSheet.create({
 });
 
 export default function HomeScreen({ navigation }) {
-  const recents = MOCK_ANALYSES.slice(0, 2);
-  const avg = Math.round(
-    MOCK_ANALYSES.reduce((sum, a) => sum + a.similarity, 0) / MOCK_ANALYSES.length
-  );
-  const great = MOCK_ANALYSES.filter(a => a.similarity >= 75).length;
+  const { token, isAuthenticated } = useAuth();
+  const [analyses, setAnalyses] = useState([]);
+
+  useFocusEffect(useCallback(() => {
+    if (!isAuthenticated) {
+      setAnalyses([]);
+      return;
+    }
+    fetchHistory(token).then(data => setAnalyses(data.analyses)).catch(() => {});
+  }, [token, isAuthenticated]));
+
+  const recents = analyses.slice(0, 2);
+  const avg = analyses.length
+    ? Math.round(analyses.reduce((sum, a) => sum + a.similarity, 0) / analyses.length)
+    : 0;
+  const great = analyses.filter(a => a.similarity >= 75).length;
 
   return (
     <SafeAreaView style={s.safe}>
@@ -95,7 +118,7 @@ export default function HomeScreen({ navigation }) {
         {/* Stats */}
         <View style={s.statsRow}>
           <View style={s.stat}>
-            <Text style={s.statNum}>{MOCK_ANALYSES.length}</Text>
+            <Text style={s.statNum}>{analyses.length}</Text>
             <Text style={s.statLabel}>Analyses</Text>
           </View>
           <View style={s.statDivider} />
@@ -117,6 +140,14 @@ export default function HomeScreen({ navigation }) {
             <Text style={s.seeAll}>See all</Text>
           </TouchableOpacity>
         </View>
+        {!isAuthenticated && (
+          <TouchableOpacity style={s.loginPrompt} onPress={() => navigation.navigate('Login')}>
+            <Text style={s.loginPromptText}>Log in to track your analysis history →</Text>
+          </TouchableOpacity>
+        )}
+        {isAuthenticated && recents.length === 0 && (
+          <Text style={s.noRecents}>No analyses yet — upload a swing to get started.</Text>
+        )}
         {recents.map(item => <RecentRow key={item.id} item={item} />)}
 
       </ScrollView>
@@ -170,4 +201,11 @@ const s = StyleSheet.create({
   },
   sectionTitle: { color: TEXT, fontSize: 16, fontWeight: '700' },
   seeAll: { color: GREEN, fontSize: 13, fontWeight: '600' },
+
+  loginPrompt: {
+    backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
+    borderRadius: 14, padding: 16, alignItems: 'center',
+  },
+  loginPromptText: { color: GREEN, fontSize: 13, fontWeight: '600' },
+  noRecents: { color: MUTED, fontSize: 13, textAlign: 'center', paddingVertical: 12 },
 });

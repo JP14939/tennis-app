@@ -81,7 +81,10 @@ def verify_picks(shot_type, scored_issues, student_pick_ids, top_n=3, model='cla
         max_tokens=500,
         messages=[{'role': 'user', 'content': prompt}],
     )
-    text = response.content[0].text.strip()
+    text_blocks = [b.text for b in response.content if b.type == 'text']
+    if not text_blocks:
+        raise ValueError(f'No text block in Claude response (blocks: {[b.type for b in response.content]!r})')
+    text = text_blocks[0].strip()
 
     match = re.search(r'\{.*\}', text, re.DOTALL)
     if not match:

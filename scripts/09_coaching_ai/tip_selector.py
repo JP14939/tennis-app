@@ -29,7 +29,7 @@ _tips_db = None
 def load_tips_db():
     global _tips_db
     if _tips_db is None:
-        with open(TIPS_DB_PATH) as f:
+        with open(TIPS_DB_PATH, encoding='utf-8') as f:
             _tips_db = json.load(f)
     return _tips_db
 
@@ -62,6 +62,8 @@ def score_issues(user_trajectory, pro_trajectory, shot_type):
     scored = []
     for issue in issues:
         phase = issue['phase']
+        if phase not in PHASE_TARGET_T:
+            continue  # e.g. 'body_rotation' issues -- scored separately by phase_breakdown.py, not a time-snapshot comparison
         landmark = issue['landmark']
         axis = issue['axis']
         expected_direction = issue['direction']

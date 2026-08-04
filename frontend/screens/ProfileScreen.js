@@ -88,7 +88,7 @@ export default function ProfileScreen({ navigation }) {
 
         <View style={s.menu}>
           <MenuItem icon="⚙️" label="Settings" onPress={() => {}} />
-          <MenuItem icon="❓" label="Help & support" onPress={() => {}} />
+          <MenuItem icon="❓" label="Help & support" onPress={() => navigation.navigate('FenceTutorial')} />
         </View>
 
         <Text style={s.footer}>🎾 TennisAI · © 2026</Text>

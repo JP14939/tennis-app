@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, SafeAreaView,
-  ScrollView, ActivityIndicator,
+  ScrollView, ActivityIndicator, Platform,
 } from 'react-native';
+import { API_BASE } from '../config/api';
 
 const GREEN  = '#4ade80';
 const YELLOW = '#facc15';
@@ -19,53 +20,67 @@ function scoreColor(score) {
   return RED;
 }
 
-// Mock tips so the results UI can be reviewed now — TODO: replace with a real
-// POST to /api/compare-videos (backend engine already exists at
-// scripts/08_comparison_engine/compare_videos.py, just not wired up yet).
-const MOCK_TIPS = {
-  forehand: [
-    'Your elbow is too far from your body at contact — tuck it closer for more control.',
-    "Your wrist isn't crossing your body enough — follow through more to your left shoulder.",
-  ],
-  backhand: [
-    "Your left wrist isn't leading enough — drive through with your non-dominant hand.",
-    'Keep your wrists firm at contact — they\'re dropping and causing errors.',
-  ],
-  serve: [
-    'Your contact point is too low — toss the ball higher and reach up more.',
-    'Your elbow is dropping before contact — keep your arm up in the trophy position longer.',
-  ],
-};
+async function appendVideo(formData, field, videoUri) {
+  if (Platform.OS === 'web') {
+    const response = await fetch(videoUri);
+    const blob = await response.blob();
+    formData.append(field, blob, `${field}.mp4`);
+  } else {
+    formData.append(field, { uri: videoUri, name: `${field}.mp4`, type: 'video/mp4' });
+  }
+}
 
-function buildMockResult(shotType) {
-  const score = 55 + Math.round(Math.random() * 30);
-  return {
-    shot_type: shotType,
-    similarity: score,
-    reference_angle_label: 'Diagonal',
-    your_angle_label: 'Semi-front',
-    angle_mismatch_deg: 12,
-    angle_mismatch_warning: false,
-    tips: MOCK_TIPS[shotType] ?? [],
-  };
+async function buildCompareFormData(reference, yours, shotType) {
+  const formData = new FormData();
+  await appendVideo(formData, 'reference', reference.videoUri);
+  await appendVideo(formData, 'yours', yours.videoUri);
+  formData.append('shotType', shotType);
+  if (reference.contactTimeSec !== undefined && reference.contactTimeSec !== null) {
+    formData.append('contactTimeA', String(reference.contactTimeSec));
+  }
+  if (yours.contactTimeSec !== undefined && yours.contactTimeSec !== null) {
+    formData.append('contactTimeB', String(yours.contactTimeSec));
+  }
+  return formData;
 }
 
 export default function VersusResultsScreen({ route, navigation }) {
   const { shotType, reference, yours } = route.params ?? {};
 
-  const [status, setStatus] = useState('loading'); // loading | done
+  const [status, setStatus] = useState('loading'); // loading | error | done
+  const [errorMsg, setErrorMsg] = useState('');
   const [result, setResult] = useState(null);
 
-  useEffect(() => {
-    // TODO: replace with a real call once /api/compare-videos exists —
-    // POST reference.videoUri + yours.videoUri + shotType + both
-    // contactTimeSec values, same pattern as ResultsScreen's buildFormData.
-    const timer = setTimeout(() => {
-      setResult(buildMockResult(shotType));
+  const runComparison = async () => {
+    setStatus('loading');
+    setErrorMsg('');
+    try {
+      const formData = await buildCompareFormData(reference, yours, shotType);
+      const response = await fetch(`${API_BASE}/api/compare-videos`, {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Comparison failed');
+      }
+      setResult(data);
       setStatus('done');
-    }, 1800);
-    return () => clearTimeout(timer);
-  }, [shotType]);
+    } catch (err) {
+      setErrorMsg(err.message || 'Something went wrong');
+      setStatus('error');
+    }
+  };
+
+  useEffect(() => {
+    if (reference?.videoUri && yours?.videoUri && shotType) {
+      runComparison();
+    } else {
+      setErrorMsg('Missing video or shot type — go back and try again.');
+      setStatus('error');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (status === 'loading') {
     return (
@@ -74,6 +89,24 @@ export default function VersusResultsScreen({ route, navigation }) {
           <ActivityIndicator size="large" color={GREEN} />
           <Text style={s.loadingTitle}>Comparing your swing...</Text>
           <Text style={s.loadingSub}>Analysing both videos frame by frame</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <SafeAreaView style={s.safe}>
+        <View style={s.centerFill}>
+          <Text style={s.errorIcon}>⚠️</Text>
+          <Text style={s.loadingTitle}>Comparison failed</Text>
+          <Text style={s.loadingSub}>{errorMsg}</Text>
+          <TouchableOpacity style={s.retryBtn} onPress={runComparison}>
+            <Text style={s.retryBtnText}>Try again</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={s.secondaryBtn} onPress={() => navigation.navigate('VersusPick')}>
+            <Text style={s.secondaryBtnText}>Pick different videos</Text>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
@@ -138,6 +171,9 @@ const s = StyleSheet.create({
   centerFill: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
   loadingTitle: { color: TEXT, fontSize: 18, fontWeight: '700', marginTop: 20, textAlign: 'center' },
   loadingSub: { color: MUTED, fontSize: 14, marginTop: 8, textAlign: 'center', lineHeight: 20 },
+  errorIcon: { fontSize: 40 },
+  retryBtn: { backgroundColor: GREEN, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 28, marginTop: 24 },
+  retryBtnText: { color: '#000', fontSize: 15, fontWeight: '700' },
 
   header: { color: TEXT, fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
   headerSub: { color: MUTED, fontSize: 14, marginTop: 2, marginBottom: 24 },

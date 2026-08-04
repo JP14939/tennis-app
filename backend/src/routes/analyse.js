@@ -3,6 +3,9 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+const db = require('../db');
+const optionalAuth = require('../middleware/optionalAuth');
+const { currentTier } = require('../utils/tier');
 
 const router = express.Router();
 
@@ -11,6 +14,7 @@ const PYTHON = path.join(__dirname, '..', '..', '..', 'scripts', 'venv', 'Script
 const MATCHER = path.join(__dirname, '..', 'services', 'pro_matcher.py');
 const SHOT_TYPES = ['forehand', 'backhand', 'serve'];
 const ANALYSIS_TIMEOUT_MS = 2 * 60 * 1000; // pose extraction on a short clip should finish well within this
+const FREE_DAILY_LIMIT = 2;
 
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
@@ -25,7 +29,7 @@ const upload = multer({
   limits: { fileSize: 200 * 1024 * 1024 }, // 200MB
 });
 
-router.post('/analyse', upload.single('video'), (req, res) => {
+router.post('/analyse', optionalAuth, upload.single('video'), (req, res) => {
   const cleanup = () => {
     if (req.file) fs.unlink(req.file.path, () => {});
   };
@@ -38,6 +42,23 @@ router.post('/analyse', upload.single('video'), (req, res) => {
   if (!SHOT_TYPES.includes(shotType)) {
     cleanup();
     return res.status(400).json({ error: `shotType must be one of ${SHOT_TYPES.join(', ')}` });
+  }
+
+  // Guests and premium accounts are unlimited -- only identifiable free-tier
+  // accounts are capped, and only checked (not forced to log in) so this
+  // doesn't change today's unauthenticated behavior for anyone else.
+  const isFreeUser = req.user && currentTier(req.user.id) === 'free';
+  if (isFreeUser) {
+    const { count } = db.prepare(
+      `SELECT COUNT(*) AS count FROM analysis_usage WHERE user_id = ? AND date(created_at) = date('now')`
+    ).get(req.user.id);
+    if (count >= FREE_DAILY_LIMIT) {
+      cleanup();
+      return res.status(403).json({
+        error: `Free plan is limited to ${FREE_DAILY_LIMIT} analyses per day — upgrade to Premium for unlimited.`,
+        code: 'DAILY_LIMIT',
+      });
+    }
   }
 
   const args = [MATCHER, req.file.path, shotType, '--top', '3'];
@@ -74,6 +95,9 @@ router.post('/analyse', upload.single('video'), (req, res) => {
 
     try {
       const result = JSON.parse(stdout);
+      if (isFreeUser) {
+        db.prepare('INSERT INTO analysis_usage (user_id) VALUES (?)').run(req.user.id);
+      }
       res.json(result);
     } catch (e) {
       console.error('[analyse] failed to parse pro_matcher.py output:', stdout.slice(-2000));
