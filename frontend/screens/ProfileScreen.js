@@ -83,6 +83,9 @@ export default function ProfileScreen({ navigation }) {
 
         <View style={s.menu}>
           <MenuItem icon={<SettingsIcon size={15} color={colors.mutedDark} />} label="Settings" onPress={() => navigation.navigate('Settings')} />
+          {isAuthenticated && (
+            <MenuItem icon={<LinesIcon size={15} color={colors.mutedDark} />} label="Coach mode" sub="Follow a student, or let a coach follow you" onPress={() => navigation.navigate('Coach')} />
+          )}
           <MenuItem icon={<HelpIcon size={15} color={colors.mutedDark} />} label="Help & support" onPress={() => navigation.navigate('FenceTutorial')} />
         </View>
 

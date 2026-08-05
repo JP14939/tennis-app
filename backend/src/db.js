@@ -96,6 +96,40 @@ db.exec(`
     token        TEXT NOT NULL UNIQUE,
     created_at   TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  -- Coach collaboration mode. Coaching is a relationship between two
+  -- ordinary accounts, not a separate role/tier -- any user can generate an
+  -- invite code (as a student) and separately link to someone else's code
+  -- (as a coach).
+  CREATE TABLE IF NOT EXISTS coach_invite_codes (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id   INTEGER NOT NULL REFERENCES users(id),
+    code         TEXT NOT NULL UNIQUE,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    used_at      TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS coach_links (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    coach_id     INTEGER NOT NULL REFERENCES users(id),
+    student_id   INTEGER NOT NULL REFERENCES users(id),
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(coach_id, student_id)
+  );
+
+  -- A note is tied to at most one of phase_key ('backswing'/'contact'/
+  -- 'follow_through'/'body_rotation', matching ResultsScreen's phase cards)
+  -- or timestamp_sec (a raw video-relative second, for SyncCompareScreen) --
+  -- both may be NULL for a general note on the whole analysis.
+  CREATE TABLE IF NOT EXISTS coach_notes (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    coach_id      INTEGER NOT NULL REFERENCES users(id),
+    analysis_id   INTEGER NOT NULL REFERENCES analyses(id),
+    phase_key     TEXT,
+    timestamp_sec REAL,
+    note_text     TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 
 // No migrations framework here -- CREATE TABLE IF NOT EXISTS above is

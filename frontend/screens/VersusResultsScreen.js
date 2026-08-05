@@ -155,6 +155,8 @@ export default function VersusResultsScreen({ route, navigation }) {
               croppedBUrl: result.your_clip_cropped_url ? `${API_BASE}${result.your_clip_cropped_url}` : null,
               contactASec: result.reference_contact_time_sec ?? 0,
               contactBSec: result.your_contact_time_sec ?? 0,
+              overlayA: result.reference_overlay_trajectory ?? null,
+              overlayB: result.your_overlay_trajectory ?? null,
               labelA: 'Reference',
               labelB: 'You',
             })}

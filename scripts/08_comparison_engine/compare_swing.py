@@ -32,8 +32,9 @@ from select_coaching_tips import get_coaching_tips
 from paths import DATA_DIR
 import phase_breakdown
 
-DB_PATH    = os.path.join(DATA_DIR, '06_pro_database', 'pro_database.json')
-MODEL_PATH = os.path.join(os.path.dirname(__file__), '..', 'pose_landmarker.task')
+DB_PATH         = os.path.join(DATA_DIR, '06_pro_database', 'pro_database.json')
+OVERLAY_DB_PATH = os.path.join(DATA_DIR, '06_pro_database', 'overlay_trajectories.json')
+MODEL_PATH      = os.path.join(os.path.dirname(__file__), '..', 'pose_landmarker.task')
 
 KEY_LANDMARKS = [
     'nose',
@@ -58,6 +59,28 @@ def similarity_score(dist, scale=0.4):
     """Convert a DTW distance (avg per-landmark-per-frame error, in
     shoulder-width units) to a 0-100 similarity score."""
     return round(max(0, 100 * math.exp(-dist / scale)), 1)
+
+
+def build_overlay_trajectory(frames):
+    """
+    Reduce raw per-frame pose output (extract_user_poses' shape) to the 9
+    upper-body KEY_LANDMARKS, keeping RAW image-normalized (0-1) x/y --
+    unlike build_user_trajectory, this is NOT re-centered/rescaled for DTW,
+    since a skeleton overlay needs to line up with actual video pixels, not
+    a shoulder-width-normalized comparison space. 't' is the frame's own
+    video-relative timestamp so the frontend can sync directly to the
+    video's own playhead.
+    """
+    result = []
+    for f in frames:
+        if not f['landmarks']:
+            continue
+        landmarks = {}
+        for k in KEY_LANDMARKS:
+            lm = f['landmarks'].get(k)
+            landmarks[k] = {'x': lm['x'], 'y': lm['y']} if lm and lm['visibility'] >= 0.3 else None
+        result.append({'t': f['timestamp'], 'landmarks': landmarks})
+    return result
 
 
 # ── Pose extraction from user video ──────────────────────────────────────────
@@ -247,7 +270,10 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
             'similarity': score,
             'clip_path':  entry.get('clip_path'),
             'pro_angle':  entry.get('camera_angle'),
-            'pro_contact_time_sec': entry.get('peak_time'),
+            # Contact time WITHIN entry['clip_path'] (the played-back clip
+            # file), not entry['peak_time'] (contact time in the source
+            # compilation video, wrong timeline for seeking clip_path).
+            'pro_contact_time_sec': entry.get('clip_contact_time_sec'),
             'tips':       tips if tips else [{'tip_text': 'Great technique! Your form closely matches the pro.', 'drill': None}],
         })
 
@@ -271,6 +297,21 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         except Exception as e:
             print(f'  Phase breakdown failed (non-fatal): {e}', file=sys.stderr)
 
+        # Skeleton overlay data -- only for the top match, mirroring the
+        # phase-breakdown-only-for-top-match pattern above. Pro side is a
+        # precomputed lookup (see 13_overlay_trajectories/); user side is
+        # cheap since we already have the raw frames from this request.
+        try:
+            with open(OVERLAY_DB_PATH, encoding='utf-8') as f:
+                overlay_db = json.load(f)
+            pro_overlay = overlay_db.get(top_entry['id'])
+            if pro_overlay is not None:
+                output[0]['pro_overlay_trajectory'] = pro_overlay
+        except FileNotFoundError:
+            print('  No overlay_trajectories.json found (run 13_overlay_trajectories/build_pro_overlay_trajectories.py) -- skipping pro skeleton overlay', file=sys.stderr)
+        except Exception as e:
+            print(f'  Pro overlay lookup failed (non-fatal): {e}', file=sys.stderr)
+
     result = {
         'user_video':   video_path,
         'shot_type':    shot_type,
@@ -278,6 +319,7 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         'angle_label':  angle_label(user_angle) if user_angle is not None else None,
         'angle_conf':   angle_conf if user_angle is not None else None,
         'contact_time_sec': round(peak_frame / fps, 3),
+        'user_overlay_trajectory': build_overlay_trajectory(frames),
         'matches':      output,
     }
 

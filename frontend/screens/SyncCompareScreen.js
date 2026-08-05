@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, SafeAreaView,
-  PanResponder, Animated, Dimensions,
+  View, Text, TouchableOpacity, TextInput, StyleSheet, SafeAreaView,
+  PanResponder, Animated, Dimensions, Alert,
 } from 'react-native';
 import PlatformVideo from '../components/PlatformVideo';
+import SkeletonOverlay from '../components/SkeletonOverlay';
+import { useAuth } from '../context/AuthContext';
+import { getNotes, addNote } from '../api/coach';
 
 const GREEN  = '#4ade80';
+const GOLD   = '#fbbf24';
 const DARK   = '#0d0d0d';
 const CARD   = '#141414';
 const BORDER = '#222';
@@ -23,7 +27,9 @@ const T_MAX = 1.5;
 const videoWidth = Math.min(Dimensions.get('window').width - 48, 460);
 const videoHeight = Math.round(videoWidth * 1.5);
 
-function VideoPane({ label, uri, videoRef, onStatusUpdate }) {
+function VideoPane({ label, uri, videoRef, onStatusUpdate, overlayTrajectory, overlayTimeSec, overlayColor, showOverlay }) {
+  const paneWidth = videoWidth / 2 - 10;
+  const paneHeight = (videoHeight / 2) - 10;
   return (
     <View style={p.wrap}>
       <Text style={p.label}>{label}</Text>
@@ -31,10 +37,20 @@ function VideoPane({ label, uri, videoRef, onStatusUpdate }) {
         <PlatformVideo
           ref={videoRef}
           uri={uri}
-          width={videoWidth / 2 - 10}
-          height={(videoHeight / 2) - 10}
+          width={paneWidth}
+          height={paneHeight}
           onStatusUpdate={onStatusUpdate}
+          highFrequencyUpdates={showOverlay}
         />
+        {showOverlay && (
+          <SkeletonOverlay
+            trajectory={overlayTrajectory}
+            currentTimeSec={overlayTimeSec}
+            width={paneWidth}
+            height={paneHeight}
+            color={overlayColor}
+          />
+        )}
       </View>
     </View>
   );
@@ -42,23 +58,63 @@ function VideoPane({ label, uri, videoRef, onStatusUpdate }) {
 const p = StyleSheet.create({
   wrap: { flex: 1 },
   label: { color: MUTED, fontSize: 12, fontWeight: '700', marginBottom: 6, textAlign: 'center' },
-  videoBox: { borderRadius: 12, overflow: 'hidden', backgroundColor: '#000' },
+  videoBox: { borderRadius: 12, overflow: 'hidden', backgroundColor: '#000', position: 'relative' },
 });
 
 export default function SyncCompareScreen({ route, navigation }) {
   const {
     videoAUrl, videoBUrl, croppedAUrl, croppedBUrl,
     contactASec = 0, contactBSec = 0,
+    overlayA = null, overlayB = null,
     labelA = 'Reference', labelB = 'You',
+    analysisId = null, canAddNotes = false,
   } = route.params ?? {};
 
+  const { token } = useAuth();
   const videoARef = useRef(null);
   const videoBRef = useRef(null);
+
+  // Timestamp notes here are keyed to the shared scrubber's contact-relative
+  // 't' (not a single video's raw playhead) -- the meaningful "moment" in
+  // this view is shared between both clips regardless of their individual
+  // lengths, same reference frame the scrubber/contact-mark already use.
+  const [timeNotes, setTimeNotes] = useState([]);
+  const [addingNote, setAddingNote] = useState(false);
+  const [noteText, setNoteText] = useState('');
+
+  useEffect(() => {
+    if (!analysisId) return;
+    getNotes(token, analysisId)
+      .then((data) => setTimeNotes(data.notes.filter((nt) => nt.timestamp_sec != null)))
+      .catch(() => {});
+  }, [analysisId, token]);
+
+  const submitTimeNote = async () => {
+    if (!noteText.trim()) return;
+    try {
+      await addNote(token, { analysisId, noteText: noteText.trim(), timestampSec: t });
+      const data = await getNotes(token, analysisId);
+      setTimeNotes(data.notes.filter((nt) => nt.timestamp_sec != null));
+      setNoteText('');
+      setAddingNote(false);
+    } catch (err) {
+      Alert.alert('Could not add note', err.message || 'Something went wrong');
+    }
+  };
 
   const bothCropped = !!(croppedAUrl && croppedBUrl);
   const [showCropped, setShowCropped] = useState(bothCropped);
   const uriA = showCropped && croppedAUrl ? croppedAUrl : videoAUrl;
   const uriB = showCropped && croppedBUrl ? croppedBUrl : videoBUrl;
+
+  // Skeleton overlay coordinates were extracted from the ORIGINAL video's
+  // pixels -- the crop-to-subject pipeline repositions the subject per
+  // frame using a transform that was never persisted, so an overlay drawn
+  // on the cropped video would be misaligned. Only show it on original.
+  const hasOverlayData = !!(overlayA || overlayB);
+  const showOverlay = hasOverlayData && !showCropped;
+  const [timeA, setTimeA] = useState(0);
+  const [timeB, setTimeB] = useState(0);
 
   const [t, setT] = useState(0); // seconds relative to contact, shared by both videos
   const [isPlaying, setIsPlaying] = useState(false);
@@ -126,7 +182,12 @@ export default function SyncCompareScreen({ route, navigation }) {
   // seeking is what actually keeps the two videos aligned; continuous
   // playback is only approximately synced, since the two clips can differ
   // in length/tempo after the shared start).
+  const onAStatusUpdate = (status) => {
+    if (status.isLoaded) setTimeA(status.positionMillis / 1000);
+  };
+
   const onBStatusUpdate = (status) => {
+    if (status.isLoaded) setTimeB(status.positionMillis / 1000);
     if (!isPlaying || !status.isLoaded) return;
     if (!status.isPlaying) {
       setIsPlaying(false);
@@ -154,9 +215,19 @@ export default function SyncCompareScreen({ route, navigation }) {
       </View>
 
       <View style={s.videosRow}>
-        <VideoPane label={labelA} uri={uriA} videoRef={videoARef} onStatusUpdate={() => {}} />
-        <VideoPane label={labelB} uri={uriB} videoRef={videoBRef} onStatusUpdate={onBStatusUpdate} />
+        <VideoPane
+          label={labelA} uri={uriA} videoRef={videoARef} onStatusUpdate={onAStatusUpdate}
+          overlayTrajectory={overlayA} overlayTimeSec={timeA} overlayColor={GOLD} showOverlay={showOverlay}
+        />
+        <VideoPane
+          label={labelB} uri={uriB} videoRef={videoBRef} onStatusUpdate={onBStatusUpdate}
+          overlayTrajectory={overlayB} overlayTimeSec={timeB} overlayColor={GREEN} showOverlay={showOverlay}
+        />
       </View>
+
+      {hasOverlayData && showCropped && (
+        <Text style={s.overlayNote}>Skeleton overlay only available on the original (uncropped) video.</Text>
+      )}
 
       <Text style={s.tHint}>{t >= 0 ? '+' : ''}{t.toFixed(2)}s from contact</Text>
 
@@ -170,6 +241,18 @@ export default function SyncCompareScreen({ route, navigation }) {
       >
         <View style={s.trackLine} />
         <View style={s.contactMark} />
+        {timeNotes.map((note) => {
+          const frac = Math.max(0, Math.min(1, (note.timestamp_sec - T_MIN) / (T_MAX - T_MIN)));
+          return (
+            <TouchableOpacity
+              key={note.id}
+              style={[s.noteMark, { left: `${frac * 100}%` }]}
+              onPress={() => Alert.alert(note.coach_name, note.note_text)}
+            >
+              <Text style={s.noteMarkText}>💬</Text>
+            </TouchableOpacity>
+          );
+        })}
         <Animated.View style={[s.handle, { transform: [{ translateX: handleX }] }]} />
       </View>
 
@@ -181,6 +264,33 @@ export default function SyncCompareScreen({ route, navigation }) {
         moments exactly aligned. Play starts both together but they may drift apart if the
         clips differ in length.
       </Text>
+
+      {canAddNotes && analysisId && (
+        addingNote ? (
+          <View style={s.noteComposer}>
+            <TextInput
+              style={s.noteInput}
+              value={noteText}
+              onChangeText={setNoteText}
+              placeholder="Note at this moment..."
+              placeholderTextColor={MUTED}
+              multiline
+            />
+            <View style={s.noteComposerBtns}>
+              <TouchableOpacity onPress={() => { setAddingNote(false); setNoteText(''); }}>
+                <Text style={s.noteCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={submitTimeNote}>
+                <Text style={s.noteSaveText}>Save note</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : (
+          <TouchableOpacity style={s.addNoteBtn} onPress={() => setAddingNote(true)}>
+            <Text style={s.addNoteBtnText}>+ Add note at current time</Text>
+          </TouchableOpacity>
+        )
+      )}
     </SafeAreaView>
   );
 }
@@ -199,6 +309,7 @@ const s = StyleSheet.create({
   videosRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 20, marginTop: 8 },
 
   tHint: { color: MUTED, fontSize: 12, textAlign: 'center', marginTop: 14 },
+  overlayNote: { color: MUTED, fontSize: 11, textAlign: 'center', marginTop: 8, paddingHorizontal: 24 },
 
   track: {
     height: 40, marginHorizontal: 28, marginTop: 8, justifyContent: 'center',
@@ -222,4 +333,18 @@ const s = StyleSheet.create({
   },
   playBtnText: { color: '#000', fontSize: 15, fontWeight: '700' },
   playNote: { color: MUTED, fontSize: 11.5, lineHeight: 16, textAlign: 'center', paddingHorizontal: 28, marginTop: 12 },
+
+  noteMark: { position: 'absolute', top: -18, marginLeft: -9 },
+  noteMarkText: { fontSize: 16 },
+
+  addNoteBtn: { alignItems: 'center', marginTop: 16 },
+  addNoteBtnText: { color: GOLD, fontSize: 13, fontWeight: '700' },
+  noteComposer: { marginHorizontal: 20, marginTop: 16 },
+  noteInput: {
+    backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 10,
+    padding: 12, color: TEXT, fontSize: 13.5, minHeight: 60, textAlignVertical: 'top',
+  },
+  noteComposerBtns: { flexDirection: 'row', justifyContent: 'flex-end', gap: 20, marginTop: 8 },
+  noteCancelText: { color: MUTED, fontSize: 13, fontWeight: '600' },
+  noteSaveText: { color: GREEN, fontSize: 13, fontWeight: '700' },
 });

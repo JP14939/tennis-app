@@ -152,6 +152,13 @@ router.delete('/auth/me', requireAuth, async (req, res) => {
   }
 
   const deleteUser = db.transaction((userId) => {
+    // Coach-mode rows reference both users(id) and analyses(id) -- must go
+    // before the analyses/users deletes below or the FK constraints on
+    // coach_notes/coach_links/coach_invite_codes fail.
+    db.prepare('DELETE FROM coach_notes WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?)').run(userId);
+    db.prepare('DELETE FROM coach_notes WHERE coach_id = ?').run(userId);
+    db.prepare('DELETE FROM coach_links WHERE coach_id = ? OR student_id = ?').run(userId, userId);
+    db.prepare('DELETE FROM coach_invite_codes WHERE student_id = ?').run(userId);
     db.prepare('DELETE FROM analyses WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM analysis_usage WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM rally_clips WHERE user_id = ?').run(userId);

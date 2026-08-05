@@ -5,14 +5,20 @@
  *
  * Exposes the same async interface as expo-av's Video ref:
  *   playAsync(), pauseAsync(), setPositionAsync(ms), setRateAsync(rate)
+ *
+ * `highFrequencyUpdates`: DOM `timeupdate` only fires ~4Hz, too coarse for
+ * a per-frame skeleton overlay to look smooth. When set, a
+ * requestAnimationFrame loop pushes onStatusUpdate every frame while
+ * playing instead of waiting on `timeupdate`.
  */
 import React, { forwardRef, useImperativeHandle, useRef, useEffect } from 'react';
 
 const PlatformVideo = forwardRef(function PlatformVideo(
-  { uri, width, height, onStatusUpdate },
+  { uri, width, height, onStatusUpdate, highFrequencyUpdates },
   ref,
 ) {
   const elRef = useRef(null);
+  const rafRef = useRef(null);
 
   // Expose expo-av-compatible async methods to parent via ref
   useImperativeHandle(ref, () => ({
@@ -40,20 +46,42 @@ const PlatformVideo = forwardRef(function PlatformVideo(
       });
     };
 
+    const rafTick = () => {
+      push();
+      rafRef.current = requestAnimationFrame(rafTick);
+    };
+    const stopRaf = () => {
+      if (rafRef.current != null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+    const handlePlay = () => {
+      push();
+      if (highFrequencyUpdates && rafRef.current == null) {
+        rafRef.current = requestAnimationFrame(rafTick);
+      }
+    };
+    const handleStop = () => {
+      push();
+      stopRaf();
+    };
+
     el.addEventListener('timeupdate',    push);
-    el.addEventListener('play',          push);
-    el.addEventListener('pause',         push);
-    el.addEventListener('ended',         push);
+    el.addEventListener('play',          handlePlay);
+    el.addEventListener('pause',         handleStop);
+    el.addEventListener('ended',         handleStop);
     el.addEventListener('loadedmetadata', push);
 
     return () => {
+      stopRaf();
       el.removeEventListener('timeupdate',    push);
-      el.removeEventListener('play',          push);
-      el.removeEventListener('pause',         push);
-      el.removeEventListener('ended',         push);
+      el.removeEventListener('play',          handlePlay);
+      el.removeEventListener('pause',         handleStop);
+      el.removeEventListener('ended',         handleStop);
       el.removeEventListener('loadedmetadata', push);
     };
-  }, [onStatusUpdate]);
+  }, [onStatusUpdate, highFrequencyUpdates]);
 
   // When URI changes, update src and reload
   useEffect(() => {

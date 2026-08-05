@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.join(SCRIPTS_DIR, '05_angle_detection'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '09_coaching_ai'))
 
 from infer_angle import infer_camera_angle, angle_label
-from compare_swing import extract_user_poses, build_user_trajectory, similarity_score, KEY_LANDMARKS
+from compare_swing import extract_user_poses, build_user_trajectory, similarity_score, KEY_LANDMARKS, build_overlay_trajectory
 from trajectory_compare import dtw_distance
 from select_coaching_tips import get_coaching_tips
 
@@ -103,6 +103,8 @@ def compare_videos(reference_path, your_path, shot_type, contact_a=None, contact
         'your_angle':         angle_b,
         'your_angle_label':   angle_label(angle_b) if angle_b is not None else None,
         'your_contact_time_sec': round(peak_b / fps_b, 3),
+        'reference_overlay_trajectory': build_overlay_trajectory(frames_a),
+        'your_overlay_trajectory': build_overlay_trajectory(frames_b),
         'angle_mismatch_deg': angle_mismatch_deg,
         'angle_mismatch_warning': angle_mismatch_deg is not None and angle_mismatch_deg > ANGLE_MISMATCH_WARNING_DEG,
         'tips': tips if tips else [{'tip_text': 'Great technique! Your form closely matches the reference video.', 'drill': None}],

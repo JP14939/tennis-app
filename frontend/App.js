@@ -27,6 +27,7 @@ import HighlightReviewScreen from './screens/HighlightReviewScreen';
 import HighlightArchiveScreen from './screens/HighlightArchiveScreen';
 import FenceTutorialScreen from './screens/FenceTutorialScreen';
 import SettingsScreen from './screens/SettingsScreen';
+import CoachScreen from './screens/CoachScreen';
 import { AuthProvider } from './context/AuthContext';
 
 const DARK   = '#0d0d0d';
@@ -85,6 +86,7 @@ export default function App() {
           <Stack.Screen name="HighlightArchive" component={HighlightArchiveScreen} options={{ title: 'Archive' }} />
           <Stack.Screen name="FenceTutorial" component={FenceTutorialScreen} options={{ title: 'Camera Setup' }} />
           <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
+          <Stack.Screen name="Coach" component={CoachScreen} options={{ title: 'Coach Mode' }} />
         </Stack.Navigator>
       </NavigationContainer>
     </AuthProvider>

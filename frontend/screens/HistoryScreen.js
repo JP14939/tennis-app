@@ -442,7 +442,11 @@ export default function HistoryScreen({ navigation }) {
               <AnalysisCard
                 key={item.id}
                 item={item}
-                onPress={() => Alert.alert(formatProId(item.pro_id), `Similarity: ${item.similarity}/100\n\n${item.tip ?? ''}`)}
+                onPress={() => navigation.navigate('Results', {
+                  savedResult: item.result,
+                  analysisId: item.id,
+                  shotType: item.shot_type,
+                })}
                 onLongPress={() => handleDelete(item)}
               />
             ))}

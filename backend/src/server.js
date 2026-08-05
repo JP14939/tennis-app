@@ -14,6 +14,7 @@ const historyRouter = require('./routes/history');
 const billingRouter = require('./routes/billing');
 const webhooksRouter = require('./routes/webhooks');
 const highlightsRouter = require('./routes/highlights');
+const coachRouter = require('./routes/coach');
 
 const app = express();
 app.use(cors());
@@ -31,6 +32,7 @@ app.use('/api', historyRouter);
 app.use('/api', billingRouter);
 app.use('/api', webhooksRouter);
 app.use('/api', highlightsRouter);
+app.use('/api', coachRouter);
 
 // Rally clips need to be watchable from the app after the request that
 // created them is long gone -- first real use of static file serving in

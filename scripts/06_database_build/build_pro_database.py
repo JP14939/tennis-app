@@ -251,6 +251,13 @@ def build_database():
                 'swing_id':         sw['swing_id'],
                 'confidence':       sw['confidence'],
                 'peak_time':        sw['peak_time_sec'],
+                # Contact time WITHIN the cut clip file (clip_path), not the
+                # source compilation -- clip_path's own frame 0 is
+                # sw['start_frame'] in the source, so 'peak_time' above
+                # (source-relative) is the wrong value to seek a player to
+                # when playing clip_path. This is the one that should be used
+                # for that purpose.
+                'clip_contact_time_sec': round((sw['peak_frame'] - sw['start_frame']) / fps, 3),
                 'clip_path':        clip_path,
                 'camera_angle':     camera_angle,
                 'angle_confidence': angle_confidence,

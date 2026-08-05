@@ -1,16 +1,85 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, SafeAreaView,
+  View, Text, TouchableOpacity, TextInput, StyleSheet, SafeAreaView,
   ScrollView, ActivityIndicator, Platform, Animated,
 } from 'react-native';
 import { API_BASE } from '../config/api';
 import { useAuth } from '../context/AuthContext';
 import { saveHistory } from '../api/history';
+import { getNotes, addNote } from '../api/coach';
 import { colors, fonts, radius, spacing, scoreColor } from '../theme';
 import CourtBackground from '../components/CourtBackground';
 import ResultShareCard from '../components/ResultShareCard';
 import { captureAndShare } from '../utils/shareCard';
 import { BackChevronIcon, ChevronDownIcon, ShareIcon } from '../components/icons';
+
+// Coach notes attached to one phase (or general, phaseKey=null) -- shown
+// inline wherever they're relevant, with an "Add note" composer when the
+// viewer is allowed to write one (canAddNotes, passed from CoachScreen).
+function NotesBlock({ notes, phaseKey, canAddNotes, onAdd }) {
+  const [composing, setComposing] = useState(false);
+  const [text, setText] = useState('');
+  const relevant = notes.filter((n) => (n.phase_key ?? null) === (phaseKey ?? null) && n.timestamp_sec == null);
+
+  const submit = async () => {
+    if (!text.trim()) return;
+    await onAdd({ noteText: text.trim(), phaseKey: phaseKey ?? undefined });
+    setText('');
+    setComposing(false);
+  };
+
+  return (
+    <View style={n.wrap}>
+      {relevant.map((note) => (
+        <View key={note.id} style={n.note}>
+          <Text style={n.noteAuthor}>{note.coach_name}</Text>
+          <Text style={n.noteText}>{note.note_text}</Text>
+        </View>
+      ))}
+      {canAddNotes && (
+        composing ? (
+          <View style={n.composer}>
+            <TextInput
+              style={n.input}
+              value={text}
+              onChangeText={setText}
+              placeholder="Write a note..."
+              placeholderTextColor={colors.muted}
+              multiline
+            />
+            <View style={n.composerBtns}>
+              <TouchableOpacity onPress={() => { setComposing(false); setText(''); }}>
+                <Text style={n.cancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={submit}>
+                <Text style={n.saveText}>Save note</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : (
+          <TouchableOpacity onPress={() => setComposing(true)}>
+            <Text style={n.addLink}>+ Add note</Text>
+          </TouchableOpacity>
+        )
+      )}
+    </View>
+  );
+}
+const n = StyleSheet.create({
+  wrap: { marginTop: 8 },
+  note: { backgroundColor: colors.primarySoft, borderRadius: radius.sm, padding: 10, marginBottom: 6 },
+  noteAuthor: { color: colors.primary, fontSize: 11, fontFamily: fonts.bold, marginBottom: 2 },
+  noteText: { color: colors.limeText, fontSize: 12.5, lineHeight: 18, fontFamily: fonts.regular },
+  addLink: { color: colors.primary, fontSize: 12, fontFamily: fonts.semibold },
+  composer: { marginTop: 4 },
+  input: {
+    backgroundColor: colors.bg, borderRadius: radius.sm, padding: 10,
+    color: colors.ink, fontSize: 13, fontFamily: fonts.regular, minHeight: 60, textAlignVertical: 'top',
+  },
+  composerBtns: { flexDirection: 'row', justifyContent: 'flex-end', gap: 16, marginTop: 6 },
+  cancelText: { color: colors.muted, fontSize: 12.5, fontFamily: fonts.semibold },
+  saveText: { color: colors.primary, fontSize: 12.5, fontFamily: fonts.bold },
+});
 
 const PHASE_LABELS = {
   backswing: 'Backswing',
@@ -151,17 +220,31 @@ const ts = StyleSheet.create({
 });
 
 export default function ResultsScreen({ navigation, route }) {
-  const { videoUri, shotType, contactTimeSec } = route.params ?? {};
+  const {
+    videoUri, shotType, contactTimeSec,
+    savedResult, analysisId, canAddNotes,
+  } = route.params ?? {};
   const { token, isAuthenticated } = useAuth();
 
-  const [status, setStatus] = useState('loading'); // loading | error | done
+  const [status, setStatus] = useState(savedResult ? 'done' : 'loading'); // loading | error | done
   const [errorMsg, setErrorMsg] = useState('');
   const [errorCode, setErrorCode] = useState(null);
-  const [result, setResult] = useState(null);
+  const [result, setResult] = useState(savedResult ?? null);
   // idle | saving | saved | limit | guest | error — purely informational,
   // never blocks the analysis result itself from displaying.
   const [saveStatus, setSaveStatus] = useState('idle');
   const shareCardRef = useRef(null);
+
+  const [notes, setNotes] = useState([]);
+  const loadNotes = () => {
+    if (!analysisId) return;
+    getNotes(token, analysisId).then((data) => setNotes(data.notes)).catch(() => {});
+  };
+  useEffect(() => { loadNotes(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [analysisId]);
+  const handleAddNote = async ({ noteText, phaseKey }) => {
+    await addNote(token, { analysisId, noteText, phaseKey });
+    loadNotes();
+  };
 
   const runAnalysis = async () => {
     setStatus('loading');
@@ -202,6 +285,9 @@ export default function ResultsScreen({ navigation, route }) {
   };
 
   useEffect(() => {
+    if (savedResult) {
+      return; // already have the full result — nothing to fetch
+    }
     if (videoUri && shotType) {
       runAnalysis();
     } else {
@@ -309,8 +395,12 @@ export default function ResultsScreen({ navigation, route }) {
                   croppedBUrl: result.user_clip_cropped_url ? `${API_BASE}${result.user_clip_cropped_url}` : null,
                   contactASec: top.pro_contact_time_sec ?? 0,
                   contactBSec: result.contact_time_sec ?? 0,
+                  overlayA: top.pro_overlay_trajectory ?? null,
+                  overlayB: result.user_overlay_trajectory ?? null,
                   labelA: formatProId(top.pro_id),
                   labelB: 'You',
+                  analysisId,
+                  canAddNotes,
                 })}
               >
                 <Text style={s.compareBtnText}>Compare side-by-side →</Text>
@@ -335,6 +425,14 @@ export default function ResultsScreen({ navigation, route }) {
               >
                 <Text style={s.saveBannerActionText}>Free plan limit reached (3/3) — upgrade to save unlimited →</Text>
               </TouchableOpacity>
+            )}
+
+            {/* General coach notes (not tied to a phase) */}
+            {analysisId && (canAddNotes || notes.some((nt) => !nt.phase_key && nt.timestamp_sec == null)) && (
+              <View style={s.generalNotesWrap}>
+                <Text style={s.sectionTitle}>Coach notes</Text>
+                <NotesBlock notes={notes} phaseKey={null} canAddNotes={!!canAddNotes} onAdd={handleAddNote} />
+              </View>
             )}
 
             {/* Angle info */}
@@ -380,6 +478,9 @@ export default function ResultsScreen({ navigation, route }) {
                         <Text style={s.phaseNote}>Racket not clearly visible — scored on body rotation only.</Text>
                       )}
                       {phase.tips?.[0] && <Text style={s.phaseTip}>{phase.tips[0]}</Text>}
+                      {analysisId && (
+                        <NotesBlock notes={notes} phaseKey={key} canAddNotes={!!canAddNotes} onAdd={handleAddNote} />
+                      )}
                     </View>
                   );
                 })}
@@ -470,6 +571,7 @@ const s = StyleSheet.create({
     paddingVertical: 13, alignItems: 'center', marginBottom: 14,
   },
   compareBtnText: { color: colors.primary, fontSize: 13.5, fontFamily: fonts.bold },
+  generalNotesWrap: { marginBottom: 26 },
 
   saveBanner: {
     backgroundColor: colors.primarySoft,

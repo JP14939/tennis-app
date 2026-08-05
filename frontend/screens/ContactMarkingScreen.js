@@ -218,6 +218,10 @@ export default function ContactMarkingScreen({ navigation, route }) {
               <Text style={s.uploadBtnSub}>Live camera positioning guide</Text>
             </TouchableOpacity>
           )}
+
+          <TouchableOpacity style={s.tipLink} onPress={() => setPhase('tutorial')}>
+            <Text style={s.tipLinkText}>🔗 How to mount your phone (rubber band method)</Text>
+          </TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
     );
@@ -397,6 +401,9 @@ const s = StyleSheet.create({
   uploadBtnText: { color: colors.ink, fontSize: 15, fontFamily: fonts.bold },
   uploadBtnSub:  { color: colors.muted, fontSize: 12.5, fontFamily: fonts.regular },
   recordBtn:     { marginTop: 12, borderStyle: 'solid', borderColor: colors.border },
+
+  tipLink:     { alignItems: 'center', marginTop: 18 },
+  tipLinkText: { color: colors.muted, fontSize: 12.5, fontFamily: fonts.semibold },
 
   playHint: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   playHintText: { color: 'rgba(255,255,255,0.35)', fontSize: 52 },
