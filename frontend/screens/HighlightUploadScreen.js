@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, SafeAreaView,
-  ScrollView, Alert, ActivityIndicator,
+  ScrollView, Alert, ActivityIndicator, Platform,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { MOCK_DETECTED_CLIPS } from '../data/mockHighlights';
+import { useAuth } from '../context/AuthContext';
+import { API_BASE } from '../config/api';
 
 const GREEN  = '#4ade80';
 const DARK   = '#0d0d0d';
@@ -13,17 +14,41 @@ const BORDER = '#222';
 const TEXT   = '#fff';
 const MUTED  = '#888';
 
+async function uploadMatch(videoUri, token) {
+  const formData = new FormData();
+  if (Platform.OS === 'web') {
+    const response = await fetch(videoUri);
+    const blob = await response.blob();
+    formData.append('video', blob, 'match.mp4');
+  } else {
+    formData.append('video', { uri: videoUri, name: 'match.mp4', type: 'video/mp4' });
+  }
+  const response = await fetch(`${API_BASE}/api/highlights/upload`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Upload failed');
+  return data;
+}
+
 export default function HighlightUploadScreen({ navigation }) {
+  const { token } = useAuth();
   const [videoUri, setVideoUri] = useState(null);
   const [videoName, setVideoName] = useState(null);
   const [picking, setPicking] = useState(false);
-  const [processing, setProcessing] = useState(false);
+  // idle | uploading | uploaded | error -- "uploaded" means the job is
+  // running in the background on the server; this screen doesn't wait for
+  // it to finish (that can take a long time for a full match video).
+  const [status, setStatus] = useState('idle');
+  const [errorMsg, setErrorMsg] = useState('');
 
   const pick = async () => {
     setPicking(true);
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
+      const { status: perm } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (perm !== 'granted') {
         Alert.alert('Permission needed', 'Allow access to your photo library.');
         return;
       }
@@ -37,27 +62,41 @@ export default function HighlightUploadScreen({ navigation }) {
     }
   };
 
-  const findShots = () => {
+  const startUpload = async () => {
     if (!videoUri) return;
-    setProcessing(true);
-    // TODO: replace with a real upload — backend needs to run pose
-    // extraction + swing detection (scripts/03_swing_detection/detect_swings.py
-    // already does this for pre-extracted pose data, but has no shot-type
-    // classifier yet and has never been run against arbitrary match footage
-    // end-to-end). Mocked here so the review/tag UI can be built now.
-    setTimeout(() => {
-      setProcessing(false);
-      navigation.navigate('HighlightReview', { videoUri, clips: MOCK_DETECTED_CLIPS });
-    }, 2200);
+    setStatus('uploading');
+    setErrorMsg('');
+    try {
+      await uploadMatch(videoUri, token);
+      setStatus('uploaded');
+    } catch (err) {
+      setErrorMsg(err.message || 'Something went wrong');
+      setStatus('error');
+    }
   };
 
-  if (processing) {
+  if (status === 'uploading') {
     return (
       <SafeAreaView style={s.safe}>
         <View style={s.centerFill}>
           <ActivityIndicator size="large" color={GREEN} />
-          <Text style={s.loadingTitle}>Finding your shots...</Text>
-          <Text style={s.loadingSub}>Scanning the match for every swing</Text>
+          <Text style={s.loadingTitle}>Uploading your match...</Text>
+          <Text style={s.loadingSub}>Rally detection runs in the background — this can take a while for a full match.</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (status === 'uploaded') {
+    return (
+      <SafeAreaView style={s.safe}>
+        <View style={s.centerFill}>
+          <Text style={s.doneIcon}>✅</Text>
+          <Text style={s.loadingTitle}>Upload complete</Text>
+          <Text style={s.loadingSub}>We're scanning your match for rallies now — you'll get a notification when it's ready to review.</Text>
+          <TouchableOpacity style={s.continueBtn} onPress={() => navigation.navigate('HighlightArchive')}>
+            <Text style={s.continueBtnText}>Go to Archive</Text>
+          </TouchableOpacity>
         </View>
       </SafeAreaView>
     );
@@ -67,7 +106,9 @@ export default function HighlightUploadScreen({ navigation }) {
     <SafeAreaView style={s.safe}>
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
         <Text style={s.h1}>Upload a match</Text>
-        <Text style={s.sub}>We'll scan it and clip out every shot you hit — up to 10 minutes per upload for now.</Text>
+        <Text style={s.sub}>We'll scan it and clip out every rally you play — full matches or practice sessions welcome.</Text>
+
+        {status === 'error' && <Text style={s.errorText}>{errorMsg}</Text>}
 
         <TouchableOpacity style={s.uploadBtn} onPress={pick} disabled={picking}>
           {videoUri ? (
@@ -81,17 +122,17 @@ export default function HighlightUploadScreen({ navigation }) {
             <>
               <Text style={s.uploadIcon}>🎬</Text>
               <Text style={s.uploadBtnText}>{picking ? 'Opening...' : 'Choose match video'}</Text>
-              <Text style={s.uploadBtnSub}>MP4 · MOV · up to 10 minutes</Text>
+              <Text style={s.uploadBtnSub}>MP4 · MOV · any length</Text>
             </>
           )}
         </TouchableOpacity>
 
         <TouchableOpacity
           style={[s.continueBtn, !videoUri && s.continueDisabled]}
-          onPress={findShots}
+          onPress={startUpload}
           disabled={!videoUri}
         >
-          <Text style={s.continueBtnText}>Find my shots →</Text>
+          <Text style={s.continueBtnText}>Find my rallies →</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -105,6 +146,8 @@ const s = StyleSheet.create({
   centerFill: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
   loadingTitle: { color: TEXT, fontSize: 18, fontWeight: '700', marginTop: 20, textAlign: 'center' },
   loadingSub: { color: MUTED, fontSize: 14, marginTop: 8, textAlign: 'center', lineHeight: 20 },
+  doneIcon: { fontSize: 44 },
+  errorText: { color: '#f87171', fontSize: 13, marginBottom: 16, textAlign: 'center' },
 
   h1:  { color: TEXT, fontSize: 26, fontWeight: '800', letterSpacing: -0.5, marginBottom: 8 },
   sub: { color: MUTED, fontSize: 14, lineHeight: 21, marginBottom: 28 },

@@ -1,29 +1,32 @@
-import { useMemo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Alert } from 'react-native';
-import { MOCK_ARCHIVE_CLIPS } from '../data/mockHighlights';
+import { useCallback, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Alert, ActivityIndicator } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
+import { useAuth } from '../context/AuthContext';
+import { API_BASE } from '../config/api';
 
 const GREEN  = '#4ade80';
+const YELLOW = '#facc15';
 const DARK   = '#0d0d0d';
 const CARD   = '#141414';
 const BORDER = '#222';
 const TEXT   = '#fff';
 const MUTED  = '#888';
 
-const SHOT_ICONS = { forehand: '🎾', backhand: '🏓', serve: '🚀' };
+const TAG_ICONS = { winner: '🏆', ace: '🚀', error: '❌' };
 
 function ArchiveRow({ clip }) {
   return (
     <View style={r.card}>
-      <Text style={r.icon}>{SHOT_ICONS[clip.shot_type] ?? '🎾'}</Text>
+      <Text style={r.icon}>{TAG_ICONS[clip.outcome_tag] ?? '🎾'}</Text>
       <View style={r.body}>
-        <Text style={r.title}>{clip.shot_type.charAt(0).toUpperCase() + clip.shot_type.slice(1)}</Text>
-        <Text style={r.meta}>{clip.timestamp} · {clip.date}</Text>
+        <Text style={r.title}>{clip.outcome_tag.charAt(0).toUpperCase() + clip.outcome_tag.slice(1)}</Text>
+        <Text style={r.meta}>{clip.duration_sec.toFixed(1)}s · {new Date(clip.created_at.includes('Z') ? clip.created_at : `${clip.created_at.replace(' ', 'T')}Z`).toLocaleDateString()}</Text>
       </View>
       <TouchableOpacity
         style={r.analyseBtn}
         onPress={() => Alert.alert(
           'Coming soon',
-          'Sending archived clips straight into analysis needs the backend clipping pipeline — not built yet.'
+          'Deep analysis of tagged rally footage is a separate future feature — not built yet.'
         )}
       >
         <Text style={r.analyseBtnText}>Analyse</Text>
@@ -48,11 +51,36 @@ const r = StyleSheet.create({
   analyseBtnText: { color: GREEN, fontSize: 12, fontWeight: '700' },
 });
 
-export default function HighlightArchiveScreen({ route, navigation }) {
-  const newClips = route.params?.newClips ?? [];
-  // TODO: this archive is session-local (mock starter list + whatever was
-  // just tagged). Needs a real backend store once clipping is wired up.
-  const clips = useMemo(() => [...newClips, ...MOCK_ARCHIVE_CLIPS], [newClips]);
+export default function HighlightArchiveScreen({ navigation }) {
+  const { token } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [clips, setClips] = useState([]);
+  const [jobs, setJobs] = useState([]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [archiveRes, jobsRes] = await Promise.all([
+        fetch(`${API_BASE}/api/highlights/archive`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API_BASE}/api/highlights/jobs`, { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      const archiveData = await archiveRes.json();
+      const jobsData = await jobsRes.json();
+      setClips(archiveData.clips ?? []);
+      setJobs(jobsData.jobs ?? []);
+    } catch {
+      // Leave whatever was previously loaded rather than blanking the
+      // screen on a transient network failure.
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const processingJobs = jobs.filter(j => j.status === 'pending' || j.status === 'processing');
+  const readyToReview = jobs.filter(j => j.status === 'done' && j.pending_review > 0);
+  const failedJobs = jobs.filter(j => j.status === 'failed');
 
   return (
     <SafeAreaView style={s.safe}>
@@ -64,13 +92,38 @@ export default function HighlightArchiveScreen({ route, navigation }) {
           </TouchableOpacity>
         </View>
 
-        {newClips.length > 0 && (
-          <View style={s.savedBanner}>
-            <Text style={s.savedBannerText}>✓ Saved {newClips.length} new clip{newClips.length === 1 ? '' : 's'}</Text>
+        {processingJobs.length > 0 && (
+          <View style={s.processingBanner}>
+            <ActivityIndicator size="small" color={YELLOW} />
+            <Text style={s.processingBannerText}>
+              {processingJobs.length === 1 ? 'A match is' : `${processingJobs.length} matches are`} still being scanned for rallies — we'll notify you when ready.
+            </Text>
           </View>
         )}
 
-        {clips.length === 0 ? (
+        {readyToReview.map(job => (
+          <TouchableOpacity
+            key={job.id}
+            style={s.reviewBanner}
+            onPress={() => navigation.navigate('HighlightReview', { jobId: job.id })}
+          >
+            <Text style={s.reviewBannerText}>
+              {job.pending_review} rall{job.pending_review === 1 ? 'y' : 'ies'} ready to review →
+            </Text>
+          </TouchableOpacity>
+        ))}
+
+        {failedJobs.length > 0 && (
+          <View style={s.failedBanner}>
+            <Text style={s.failedBannerText}>
+              {failedJobs.length === 1 ? 'A match' : `${failedJobs.length} matches`} failed to process. Try uploading again.
+            </Text>
+          </View>
+        )}
+
+        {loading && clips.length === 0 ? (
+          <ActivityIndicator size="large" color={GREEN} style={{ marginTop: 40 }} />
+        ) : clips.length === 0 && jobs.length === 0 ? (
           <View style={s.empty}>
             <Text style={s.emptyIcon}>🎬</Text>
             <Text style={s.emptyTitle}>No clips yet</Text>
@@ -93,11 +146,24 @@ const s = StyleSheet.create({
   addBtn: { backgroundColor: GREEN, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 },
   addBtnText: { color: '#000', fontSize: 13, fontWeight: '700' },
 
-  savedBanner: {
-    backgroundColor: '#0d1f0d', borderWidth: 1, borderColor: '#1a3a1a',
-    borderRadius: 12, padding: 12, marginBottom: 16,
+  processingBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: '#241a0d', borderWidth: 1, borderColor: '#4a3a1a',
+    borderRadius: 12, padding: 14, marginBottom: 12,
   },
-  savedBannerText: { color: GREEN, fontSize: 13, fontWeight: '600', textAlign: 'center' },
+  processingBannerText: { color: YELLOW, fontSize: 13, lineHeight: 18, flex: 1 },
+
+  reviewBanner: {
+    backgroundColor: '#0d1f0d', borderWidth: 1, borderColor: '#1a3a1a',
+    borderRadius: 12, padding: 14, marginBottom: 12,
+  },
+  reviewBannerText: { color: GREEN, fontSize: 13, fontWeight: '700', textAlign: 'center' },
+
+  failedBanner: {
+    backgroundColor: '#2a0f0f', borderWidth: 1, borderColor: '#4a1a1a',
+    borderRadius: 12, padding: 14, marginBottom: 12,
+  },
+  failedBannerText: { color: '#f87171', fontSize: 13, textAlign: 'center' },
 
   empty: { alignItems: 'center', paddingVertical: 60 },
   emptyIcon: { fontSize: 44, marginBottom: 14 },

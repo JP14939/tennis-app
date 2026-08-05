@@ -63,7 +63,7 @@ router.post('/history', requireAuth, (req, res) => {
     top.overall_score ?? top.similarity ?? 0,
     top.pro_id ?? null,
     result.angle_label ?? null,
-    top.tips?.[0] ?? null,
+    top.tips?.[0]?.tip_text ?? null,
     JSON.stringify(result)
   );
 

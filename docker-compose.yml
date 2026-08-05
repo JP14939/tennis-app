@@ -1,6 +1,20 @@
 version: '3.8'
 
 services:
+  app:
+    build: .
+    container_name: tennis_app_backend
+    ports:
+      - "5000:5000"
+    env_file:
+      - backend/.env
+    volumes:
+      # Both gitignored (data/ is 12GB+, backend/data holds the SQLite file)
+      # -- not baked into the image, must exist on the host already. See
+      # DEPLOY.md for how to get data/ onto a fresh server.
+      - ./data:/app/data
+      - ./backend/data:/app/backend/data
+
   postgres:
     image: postgres:16-alpine
     container_name: tennis_app_db

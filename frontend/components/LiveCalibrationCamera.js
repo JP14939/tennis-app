@@ -1,11 +1,18 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView } from 'react-native';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
+import { LinearGradient } from 'expo-linear-gradient';
 import { API_BASE } from '../config/api';
+import { colors as theme } from '../theme';
 
-const GREEN  = '#4ade80';
-const YELLOW = '#facc15';
-const RED    = '#f87171';
+// Camera screen intentionally stays a dark, full-bleed overlay regardless of
+// the light "Pine & Lime" theme used elsewhere -- these are semantic
+// state colors (ok/warn/error) shown over a live camera feed, not surface
+// colors, so they keep their own literals rather than pulling from theme.js.
+const GREEN  = theme.lime;
+const YELLOW = theme.gold;
+const RED    = theme.coral;
+const NEUTRAL = '#aaa';
 const DARK   = '#0d0d0d';
 
 const LIVE_CHECK_INTERVAL_MS = 1500;
@@ -104,11 +111,21 @@ export default function LiveCalibrationCamera({ shotType, onRecorded, onCancel }
     );
   }
 
-  const badgeColor = live ? calibColor({ status: 'done', ...live }) ?? '#888' : '#888';
+  const badgeColor = live ? calibColor({ status: 'done', ...live }) ?? NEUTRAL : NEUTRAL;
 
   return (
     <SafeAreaView style={s.safe}>
       <CameraView ref={cameraRef} style={s.camera} facing="back" mode="video">
+        <LinearGradient
+          colors={['rgba(0,0,0,0.45)', 'transparent']}
+          style={s.topScrim}
+          pointerEvents="none"
+        />
+        <LinearGradient
+          colors={['transparent', 'rgba(0,0,0,0.55)']}
+          style={s.bottomScrim}
+          pointerEvents="none"
+        />
         <View style={s.overlay}>
           <View style={[s.badge, { borderColor: badgeColor }]}>
             <Text style={[s.badgeText, { color: badgeColor }]}>
@@ -150,6 +167,9 @@ const s = StyleSheet.create({
   permBtnText: { color: '#000', fontSize: 15, fontWeight: '700' },
   cancelLink: { marginTop: 16 },
   cancelLinkText: { color: '#888', fontSize: 14 },
+
+  topScrim: { position: 'absolute', top: 0, left: 0, right: 0, height: '18%' },
+  bottomScrim: { position: 'absolute', bottom: 0, left: 0, right: 0, height: '22%' },
 
   overlay: { flex: 1, justifyContent: 'space-between', padding: 20, paddingTop: 60, paddingBottom: 40 },
   badge: {

@@ -1,0 +1,22 @@
+# Never copy the host's own venv into the image -- it's built fresh inside
+# the container (Windows binaries from a dev machine would be useless here,
+# and would silently clobber the Linux venv the Dockerfile just installed).
+scripts/venv/
+
+# 12GB+ pipeline output, mounted as a volume at runtime instead -- see
+# Dockerfile and DEPLOY.md.
+data/
+backend/data/
+
+node_modules/
+backend/node_modules/
+frontend/
+
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+.git/
+.env
+backend/.env
+*.pyc
+__pycache__/

@@ -78,7 +78,7 @@ def compare_videos(reference_path, your_path, shot_type, contact_a=None, contact
         angle_mismatch_deg = round(abs(angle_a - angle_b), 1)
 
     tips_result, _ = get_coaching_tips(traj_b, traj_a, shot_type)
-    tips = [t['tip_text'] for t in tips_result]
+    tips = [{'tip_text': t['tip_text'], 'drill': t.get('drill')} for t in tips_result]
 
     # Hard camera-setup gate: a 1v1 comparison has no angle-filtered pro
     # database to fall back on, so a framing mismatch this large corrupts
@@ -99,11 +99,13 @@ def compare_videos(reference_path, your_path, shot_type, contact_a=None, contact
         'similarity':         score,
         'reference_angle':    angle_a,
         'reference_angle_label': angle_label(angle_a) if angle_a is not None else None,
+        'reference_contact_time_sec': round(peak_a / fps_a, 3),
         'your_angle':         angle_b,
         'your_angle_label':   angle_label(angle_b) if angle_b is not None else None,
+        'your_contact_time_sec': round(peak_b / fps_b, 3),
         'angle_mismatch_deg': angle_mismatch_deg,
         'angle_mismatch_warning': angle_mismatch_deg is not None and angle_mismatch_deg > ANGLE_MISMATCH_WARNING_DEG,
-        'tips': tips if tips else ['Great technique! Your form closely matches the reference video.'],
+        'tips': tips if tips else [{'tip_text': 'Great technique! Your form closely matches the reference video.', 'drill': None}],
     }
 
 

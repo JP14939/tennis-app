@@ -1,21 +1,15 @@
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView, ActivityIndicator } from 'react-native';
 import { useAuth } from '../context/AuthContext';
-
-const GREEN  = '#4ade80';
-const DARK   = '#0d0d0d';
-const CARD   = '#141414';
-const BORDER = '#222';
-const TEXT   = '#fff';
-const MUTED  = '#888';
+import { colors, fonts, radius, spacing } from '../theme';
+import CourtBackground from '../components/CourtBackground';
+import { PremiumIcon, LinesIcon, SettingsIcon, HelpIcon } from '../components/icons';
 
 function MenuItem({ icon, label, sub, onPress, accent, danger }) {
   return (
     <TouchableOpacity style={s.menuItem} onPress={onPress} activeOpacity={0.7}>
-      <View style={s.menuIconWrap}>
-        <Text style={s.menuIcon}>{icon}</Text>
-      </View>
+      <View style={[s.menuIconWrap, accent && s.menuIconWrapAccent]}>{icon}</View>
       <View style={s.menuBody}>
-        <Text style={[s.menuLabel, accent && { color: GREEN }, danger && { color: '#f87171' }]}>{label}</Text>
+        <Text style={[s.menuLabel, accent && { color: colors.primary }, danger && { color: colors.coral }]}>{label}</Text>
         {sub ? <Text style={s.menuSub}>{sub}</Text> : null}
       </View>
       <Text style={s.chevron}>›</Text>
@@ -30,7 +24,7 @@ export default function ProfileScreen({ navigation }) {
     return (
       <SafeAreaView style={s.safe}>
         <View style={s.centerFill}>
-          <ActivityIndicator color={GREEN} />
+          <ActivityIndicator color={colors.primary} />
         </View>
       </SafeAreaView>
     );
@@ -38,6 +32,7 @@ export default function ProfileScreen({ navigation }) {
 
   return (
     <SafeAreaView style={s.safe}>
+      <CourtBackground />
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
 
         <View style={s.avatarBlock}>
@@ -59,26 +54,26 @@ export default function ProfileScreen({ navigation }) {
           <View style={s.menu}>
             {!isPremium && (
               <MenuItem
-                icon="✨"
+                icon={<PremiumIcon size={16} color={colors.primary} filled />}
                 label="Upgrade to Premium"
                 sub="1v1 comparison, unlimited history & more"
                 accent
                 onPress={() => navigation.navigate('MainTabs', { screen: 'Premium' })}
               />
             )}
-            <MenuItem icon="🚪" label="Log out" danger onPress={logout} />
+            <MenuItem icon={<LinesIcon size={15} color={colors.coral} />} label="Log out" danger onPress={logout} />
           </View>
         ) : (
           <View style={s.menu}>
             <MenuItem
-              icon="🔑"
+              icon={<PremiumIcon size={16} color={colors.primary} filled />}
               label="Log in"
               sub="Sync your analyses across devices"
               accent
               onPress={() => navigation.navigate('Login')}
             />
             <MenuItem
-              icon="✨"
+              icon={<PremiumIcon size={16} color={colors.mutedDark} />}
               label="Create an account"
               sub="Free · 2 analyses per day"
               onPress={() => navigation.navigate('Signup')}
@@ -87,11 +82,11 @@ export default function ProfileScreen({ navigation }) {
         )}
 
         <View style={s.menu}>
-          <MenuItem icon="⚙️" label="Settings" onPress={() => {}} />
-          <MenuItem icon="❓" label="Help & support" onPress={() => navigation.navigate('FenceTutorial')} />
+          <MenuItem icon={<SettingsIcon size={15} color={colors.mutedDark} />} label="Settings" onPress={() => navigation.navigate('Settings')} />
+          <MenuItem icon={<HelpIcon size={15} color={colors.mutedDark} />} label="Help & support" onPress={() => navigation.navigate('FenceTutorial')} />
         </View>
 
-        <Text style={s.footer}>🎾 TennisAI · © 2026</Text>
+        <Text style={s.footer}>TennisAI · © 2026</Text>
 
       </ScrollView>
     </SafeAreaView>
@@ -99,46 +94,45 @@ export default function ProfileScreen({ navigation }) {
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: DARK },
-  scroll: { padding: 20, paddingTop: 24, paddingBottom: 40 },
+  safe: { flex: 1, backgroundColor: colors.bg },
+  scroll: { padding: spacing.xl, paddingTop: 24, paddingBottom: 130 },
   centerFill: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
-  avatarBlock: { alignItems: 'center', marginBottom: 32 },
+  avatarBlock: { alignItems: 'center', marginBottom: 28 },
   avatar: {
-    width: 72, height: 72, borderRadius: 36,
-    backgroundColor: '#1a2e1a', borderWidth: 1, borderColor: '#2a4a2a',
+    width: 76, height: 76, borderRadius: 38, backgroundColor: colors.primary,
     alignItems: 'center', justifyContent: 'center', marginBottom: 12,
+    shadowColor: colors.primary, shadowOpacity: 0.25, shadowRadius: 16, shadowOffset: { width: 0, height: 8 },
   },
-  avatarText: { fontSize: 30, color: GREEN, fontWeight: '800' },
-  name: { color: TEXT, fontSize: 19, fontWeight: '800' },
-  status: { color: MUTED, fontSize: 13, marginTop: 2 },
+  avatarText: { fontSize: 32, color: colors.lime, fontFamily: fonts.serif },
+  name: { color: colors.ink, fontSize: 19, fontFamily: fonts.extrabold },
+  status: { color: colors.muted, fontSize: 13, marginTop: 2, fontFamily: fonts.regular },
 
   tierBadge: {
-    marginTop: 12, backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: BORDER,
-    borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5,
+    marginTop: 12, backgroundColor: colors.border,
+    borderRadius: 20, paddingHorizontal: 13, paddingVertical: 5,
   },
-  tierBadgePremium: { backgroundColor: '#1a2e1a', borderColor: '#2a4a2a' },
-  tierBadgeText: { color: MUTED, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 },
-  tierBadgeTextPremium: { color: GREEN },
+  tierBadgePremium: { backgroundColor: colors.primarySoft },
+  tierBadgeText: { color: colors.mutedDark, fontSize: 11, fontFamily: fonts.bold, letterSpacing: 0.4 },
+  tierBadgeTextPremium: { color: colors.primary },
 
   menu: {
-    backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
-    borderRadius: 16, marginBottom: 16, overflow: 'hidden',
+    backgroundColor: colors.surface, borderRadius: radius.lg, marginBottom: spacing.lg, overflow: 'hidden',
   },
   menuItem: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingVertical: 14, paddingHorizontal: 16,
-    borderBottomWidth: 1, borderBottomColor: BORDER,
+    paddingVertical: 15, paddingHorizontal: 16,
+    borderBottomWidth: 1, borderBottomColor: colors.border,
   },
   menuIconWrap: {
-    width: 32, height: 32, borderRadius: 8, backgroundColor: '#1a1a1a',
+    width: 32, height: 32, borderRadius: 8, backgroundColor: colors.border,
     alignItems: 'center', justifyContent: 'center',
   },
-  menuIcon: { fontSize: 16 },
+  menuIconWrapAccent: { backgroundColor: colors.primarySoft },
   menuBody: { flex: 1 },
-  menuLabel: { color: TEXT, fontSize: 15, fontWeight: '600' },
-  menuSub: { color: MUTED, fontSize: 12, marginTop: 2 },
-  chevron: { color: '#444', fontSize: 20 },
+  menuLabel: { color: colors.ink, fontSize: 14.5, fontFamily: fonts.semibold },
+  menuSub: { color: colors.muted, fontSize: 11.5, marginTop: 2, fontFamily: fonts.regular },
+  chevron: { color: colors.divider, fontSize: 20 },
 
-  footer: { color: '#444', fontSize: 12, textAlign: 'center', marginTop: 12 },
+  footer: { color: colors.divider, fontSize: 12, textAlign: 'center', marginTop: 12, fontFamily: fonts.regular },
 });

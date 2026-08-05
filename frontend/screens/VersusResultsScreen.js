@@ -1,9 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, SafeAreaView,
   ScrollView, ActivityIndicator, Platform,
 } from 'react-native';
 import { API_BASE } from '../config/api';
+import ResultShareCard from '../components/ResultShareCard';
+import { captureAndShare } from '../utils/shareCard';
+import { ShareIcon } from '../components/icons';
 
 const GREEN  = '#4ade80';
 const YELLOW = '#facc15';
@@ -50,6 +53,7 @@ export default function VersusResultsScreen({ route, navigation }) {
   const [status, setStatus] = useState('loading'); // loading | error | done
   const [errorMsg, setErrorMsg] = useState('');
   const [result, setResult] = useState(null);
+  const shareCardRef = useRef(null);
 
   const runComparison = async () => {
     setStatus('loading');
@@ -117,8 +121,20 @@ export default function VersusResultsScreen({ route, navigation }) {
   return (
     <SafeAreaView style={s.safe}>
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
-        <Text style={s.header}>Comparison Results</Text>
-        <Text style={s.headerSub}>{shotType?.charAt(0).toUpperCase() + shotType?.slice(1)}</Text>
+        <View style={s.headerRow}>
+          <View>
+            <Text style={s.header}>Comparison Results</Text>
+            <Text style={s.headerSub}>{shotType?.charAt(0).toUpperCase() + shotType?.slice(1)}</Text>
+          </View>
+          {Platform.OS !== 'web' && (
+            <TouchableOpacity
+              style={s.shareBtn}
+              onPress={() => captureAndShare(shareCardRef, 'Share your TennisAI comparison')}
+            >
+              <ShareIcon size={17} color={TEXT} />
+            </TouchableOpacity>
+          )}
+        </View>
 
         <View style={s.scoreCard}>
           <Text style={[s.scoreNum, { color: scoreColor(score) }]}>{score}</Text>
@@ -128,6 +144,24 @@ export default function VersusResultsScreen({ route, navigation }) {
           </View>
           <Text style={s.matchedTo}>How closely your swing matches the reference video</Text>
         </View>
+
+        {result.reference_clip_url && result.your_clip_url && (
+          <TouchableOpacity
+            style={s.compareBtn}
+            onPress={() => navigation.navigate('SyncCompare', {
+              videoAUrl: `${API_BASE}${result.reference_clip_url}`,
+              videoBUrl: `${API_BASE}${result.your_clip_url}`,
+              croppedAUrl: result.reference_clip_cropped_url ? `${API_BASE}${result.reference_clip_cropped_url}` : null,
+              croppedBUrl: result.your_clip_cropped_url ? `${API_BASE}${result.your_clip_cropped_url}` : null,
+              contactASec: result.reference_contact_time_sec ?? 0,
+              contactBSec: result.your_contact_time_sec ?? 0,
+              labelA: 'Reference',
+              labelB: 'You',
+            })}
+          >
+            <Text style={s.compareBtnText}>Compare side-by-side →</Text>
+          </TouchableOpacity>
+        )}
 
         <View style={s.angleRow}>
           <View style={s.angleCard}>
@@ -160,6 +194,15 @@ export default function VersusResultsScreen({ route, navigation }) {
           <Text style={s.secondaryBtnText}>Back to home</Text>
         </TouchableOpacity>
       </ScrollView>
+
+      <View style={s.offscreen}>
+        <ResultShareCard
+          ref={shareCardRef}
+          score={score}
+          shotType={shotType}
+          caption="Compared to your reference video"
+        />
+      </View>
     </SafeAreaView>
   );
 }
@@ -175,8 +218,14 @@ const s = StyleSheet.create({
   retryBtn: { backgroundColor: GREEN, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 28, marginTop: 24 },
   retryBtnText: { color: '#000', fontSize: 15, fontWeight: '700' },
 
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   header: { color: TEXT, fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
   headerSub: { color: MUTED, fontSize: 14, marginTop: 2, marginBottom: 24 },
+  shareBtn: {
+    width: 38, height: 38, borderRadius: 19, backgroundColor: CARD,
+    borderWidth: 1, borderColor: BORDER, alignItems: 'center', justifyContent: 'center',
+  },
+  offscreen: { position: 'absolute', left: -9999, top: -9999 },
 
   scoreCard: {
     backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 18,
@@ -187,6 +236,12 @@ const s = StyleSheet.create({
   scoreTrack: { width: '100%', height: 8, backgroundColor: '#1a1a1a', borderRadius: 4, marginTop: 16, overflow: 'hidden' },
   scoreFill: { height: 8, borderRadius: 4 },
   matchedTo: { color: MUTED, fontSize: 13, marginTop: 14, textAlign: 'center' },
+
+  compareBtn: {
+    borderWidth: 1, borderColor: BORDER, borderRadius: 12,
+    paddingVertical: 13, alignItems: 'center', marginBottom: 16,
+  },
+  compareBtnText: { color: GREEN, fontSize: 14, fontWeight: '700' },
 
   angleRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
   angleCard: {

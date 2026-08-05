@@ -23,13 +23,15 @@ from ultralytics import YOLO
 SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '06_database_build'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '05_angle_detection'))
+sys.path.insert(0, os.path.join(SCRIPTS_DIR, '00_utils'))
 from build_pro_database import get_shoulder_ref  # noqa: E402
+from paths import DATA_DIR  # noqa: E402
 
 RACKET_CLASS = 38
 DETECT_CONF = 0.25
 PADDING_FRAC = 0.25
 RACKET_DETECTOR_PATH = 'yolo11n.pt'
-RACKET_KEYPOINT_MODEL_PATH = r'C:\Users\jackp\tennis_app\data\09_racket_keypoints\yolo_pose_run\weights\best.pt'
+RACKET_KEYPOINT_MODEL_PATH = os.path.join(DATA_DIR, '09_racket_keypoints', 'yolo_pose_run', 'weights', 'best.pt')
 POINTS = ['handle', 'throat', 'tip', 'left_edge', 'right_edge']
 
 _detector = None

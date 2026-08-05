@@ -1,27 +1,32 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, SafeAreaView,
-  ScrollView, Alert, ActivityIndicator,
+  ScrollView, Alert, ActivityIndicator, Platform,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
-import { SHOT_ICONS } from '../data/mockAnalyses';
 import { useAuth } from '../context/AuthContext';
 import { fetchHistory, deleteHistory } from '../api/history';
+import { colors, fonts, radius, spacing, scoreColor } from '../theme';
+import CourtBackground from '../components/CourtBackground';
+import TrendChart from '../components/TrendChart';
+import ProgressShareCard from '../components/ProgressShareCard';
+import { captureAndShare } from '../utils/shareCard';
+import { TennisBallIcon, PlusIcon, VideoIcon, CheckIcon, ShareIcon } from '../components/icons';
 
 const SHOT_TYPES = ['forehand', 'backhand', 'serve'];
+const PROGRESS_FILTERS = ['all', ...SHOT_TYPES];
 
 function ScoreBar({ value }) {
-  const color = value >= 75 ? '#4ade80' : value >= 55 ? '#facc15' : '#f87171';
   return (
     <View style={sb.track}>
-      <View style={[sb.fill, { width: `${value}%`, backgroundColor: color }]} />
+      <View style={[sb.fill, { width: `${value}%`, backgroundColor: scoreColor(value) }]} />
     </View>
   );
 }
 const sb = StyleSheet.create({
-  track: { height: 4, backgroundColor: '#222', borderRadius: 2, marginTop: 6, marginBottom: 4 },
-  fill:  { height: 4, borderRadius: 2 },
+  track: { height: 5, backgroundColor: colors.border, borderRadius: 3, marginTop: 7, marginBottom: 10, overflow: 'hidden' },
+  fill:  { height: 5, borderRadius: 3 },
 });
 
 function formatDate(isoString) {
@@ -40,7 +45,7 @@ function AnalysisCard({ item, onPress, onLongPress }) {
     <TouchableOpacity style={c.card} onPress={onPress} onLongPress={onLongPress} activeOpacity={0.8}>
       <View style={c.cardHeader}>
         <View style={c.shotBadge}>
-          <Text style={c.shotIcon}>{SHOT_ICONS[item.shot_type]}</Text>
+          <TennisBallIcon size={18} color={colors.primary} />
           <Text style={c.shotLabel}>{item.shot_type.charAt(0).toUpperCase() + item.shot_type.slice(1)}</Text>
         </View>
         <View style={c.metaRight}>
@@ -56,29 +61,117 @@ function AnalysisCard({ item, onPress, onLongPress }) {
       <ScoreBar value={score} />
 
       <Text style={c.proId}>{formatProId(item.pro_id)}</Text>
-      {item.tip && <Text style={c.tip} numberOfLines={2}>💬 {item.tip}</Text>}
+      {item.tip && <Text style={c.tip} numberOfLines={2}>{item.tip}</Text>}
     </TouchableOpacity>
   );
 }
 const c = StyleSheet.create({
   card: {
-    backgroundColor: '#141414', borderWidth: 1, borderColor: '#222',
-    borderRadius: 14, padding: 16, marginBottom: 12,
+    backgroundColor: colors.surface, borderRadius: radius.lg, padding: 16, marginBottom: 12,
   },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 },
   shotBadge:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  shotIcon:   { fontSize: 20 },
-  shotLabel:  { color: '#fff', fontSize: 15, fontWeight: '700' },
+  shotLabel:  { color: colors.ink, fontSize: 15, fontFamily: fonts.bold },
   metaRight:  { alignItems: 'flex-end', gap: 4 },
-  date:       { color: '#555', fontSize: 12 },
-  anglePill:  { color: '#4ade80', fontSize: 11, fontWeight: '600',
-    backgroundColor: '#1a2e1a', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10 },
+  date:       { color: colors.muted, fontSize: 11.5, fontFamily: fonts.regular },
+  anglePill:  { color: colors.primary, fontSize: 10.5, fontFamily: fonts.bold,
+    backgroundColor: colors.primarySoft, paddingHorizontal: 9, paddingVertical: 2, borderRadius: 10 },
   scoreRow:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
-  scoreLabel: { color: '#666', fontSize: 12 },
-  scoreNum:   { color: '#fff', fontSize: 20, fontWeight: '800' },
-  scoreSlash: { color: '#444', fontSize: 13, fontWeight: '400' },
-  proId:      { color: '#555', fontSize: 11, marginBottom: 8 },
-  tip:        { color: '#888', fontSize: 13, lineHeight: 18 },
+  scoreLabel: { color: colors.muted, fontSize: 12, fontFamily: fonts.regular },
+  scoreNum:   { color: colors.ink, fontSize: 19, fontFamily: fonts.extrabold },
+  scoreSlash: { color: colors.divider, fontSize: 12, fontFamily: fonts.regular },
+  proId:      { color: colors.muted, fontSize: 11, marginBottom: 6, fontFamily: fonts.regular },
+  tip:        { color: colors.mutedDark, fontSize: 12.5, lineHeight: 18, fontFamily: fonts.regular },
+});
+
+// ── Progress trend (derived client-side from the already-fetched history --
+// no new endpoint, /api/history already returns similarity/shot_type/created_at
+// for every saved analysis) ───────────────────────────────────────────────────
+function ProgressSection({ analyses }) {
+  const [filter, setFilter] = useState('all');
+  const [chartWidth, setChartWidth] = useState(0);
+  const shareCardRef = useRef(null);
+
+  const filtered = filter === 'all' ? analyses : analyses.filter(a => a.shot_type === filter);
+  const points = [...filtered]
+    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+    .map(a => ({ date: a.created_at, score: Math.round(a.similarity ?? 0) }));
+
+  const delta = points.length >= 2 ? points[points.length - 1].score - points[0].score : null;
+  const filterLabel = filter === 'all' ? 'Overall' : filter.charAt(0).toUpperCase() + filter.slice(1);
+
+  return (
+    <View style={pg.wrap}>
+      <View style={pg.header}>
+        <View style={pg.headerLeft}>
+          <Text style={pg.title}>Progress</Text>
+          {delta !== null && (
+            <Text style={[pg.delta, { color: scoreColor(points[points.length - 1].score) }]}>
+              {delta >= 0 ? '+' : ''}{delta} since your first shot
+            </Text>
+          )}
+        </View>
+        {points.length > 0 && Platform.OS !== 'web' && (
+          <TouchableOpacity
+            style={pg.shareBtn}
+            onPress={() => captureAndShare(shareCardRef, 'Share your TennisAI progress')}
+          >
+            <ShareIcon size={15} color={colors.mutedDark} />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      <View style={pg.filterRow}>
+        {PROGRESS_FILTERS.map(f => (
+          <TouchableOpacity
+            key={f}
+            style={[pg.pill, filter === f && pg.pillActive]}
+            onPress={() => setFilter(f)}
+          >
+            <Text style={[pg.pillText, filter === f && pg.pillTextActive]}>
+              {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <View onLayout={(e) => setChartWidth(e.nativeEvent.layout.width)}>
+        {points.length > 0 && chartWidth > 0 && <TrendChart points={points} width={chartWidth} />}
+      </View>
+      {points.length === 0 && (
+        <Text style={pg.emptyNote}>
+          No {filter === 'all' ? '' : `${filter} `}shots saved yet.
+        </Text>
+      )}
+      {points.length === 1 && (
+        <Text style={pg.emptyNote}>Log a few more shots to see your trend.</Text>
+      )}
+
+      {points.length > 0 && (
+        <View style={pg.offscreen}>
+          <ProgressShareCard ref={shareCardRef} points={points} delta={delta} filterLabel={filterLabel} />
+        </View>
+      )}
+    </View>
+  );
+}
+const pg = StyleSheet.create({
+  wrap: { backgroundColor: colors.surface, borderRadius: radius.lg, padding: 16, marginBottom: spacing.xl },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 },
+  headerLeft: { flex: 1 },
+  title: { color: colors.ink, fontSize: 16, fontFamily: fonts.bold },
+  delta: { fontSize: 12, fontFamily: fonts.bold, marginTop: 2 },
+  shareBtn: {
+    width: 30, height: 30, borderRadius: 15, backgroundColor: colors.bg,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  filterRow: { flexDirection: 'row', gap: 6, marginBottom: 12 },
+  pill: { flex: 1, backgroundColor: colors.bg, borderRadius: radius.pill, paddingVertical: 7, alignItems: 'center' },
+  pillActive: { backgroundColor: colors.primary },
+  pillText: { color: colors.mutedDark, fontSize: 11.5, fontFamily: fonts.semibold },
+  pillTextActive: { color: colors.white, fontFamily: fonts.bold },
+  emptyNote: { color: colors.muted, fontSize: 12.5, fontFamily: fonts.regular, textAlign: 'center', paddingVertical: 8 },
+  offscreen: { position: 'absolute', left: -9999, top: -9999 },
 });
 
 // ── Upload modal (inline, shown in place of the list) ────────────────────────
@@ -130,7 +223,7 @@ function UploadPanel({ onCancel, onUpload }) {
             onPress={() => setShotType(t)}
           >
             <Text style={[up.pillText, shotType === t && up.pillTextActive]}>
-              {SHOT_ICONS[t]} {t.charAt(0).toUpperCase() + t.slice(1)}
+              {t.charAt(0).toUpperCase() + t.slice(1)}
             </Text>
           </TouchableOpacity>
         ))}
@@ -139,14 +232,14 @@ function UploadPanel({ onCancel, onUpload }) {
       <TouchableOpacity style={up.pickBtn} onPress={pick} disabled={picking}>
         {videoUri ? (
           <>
-            <Text style={up.pickIcon}>✅</Text>
+            <View style={up.pickIconWrap}><CheckIcon size={20} color={colors.primary} /></View>
             <Text style={up.pickBtnText}>Video selected</Text>
             <Text style={up.pickBtnSub} numberOfLines={1}>{videoName}</Text>
             <Text style={up.changeText}>Tap to change</Text>
           </>
         ) : (
           <>
-            <Text style={up.pickIcon}>📹</Text>
+            <View style={up.pickIconWrap}><VideoIcon size={20} color={colors.primary} /></View>
             <Text style={up.pickBtnText}>{picking ? 'Opening...' : 'Choose video from library'}</Text>
             <Text style={up.pickBtnSub}>MP4 · MOV · 5–30 seconds</Text>
           </>
@@ -169,30 +262,32 @@ function UploadPanel({ onCancel, onUpload }) {
 }
 const up = StyleSheet.create({
   panel: {
-    backgroundColor: '#141414', borderWidth: 1, borderColor: '#222',
-    borderRadius: 16, padding: 20, marginBottom: 24,
+    backgroundColor: colors.surface, borderRadius: radius.lg, padding: 20, marginBottom: 24,
   },
-  title: { color: '#fff', fontSize: 20, fontWeight: '800', marginBottom: 4 },
-  sub:   { color: '#666', fontSize: 13, marginBottom: 20 },
-  label: { color: '#aaa', fontSize: 13, fontWeight: '600', marginBottom: 10 },
+  title: { color: colors.ink, fontSize: 19, fontFamily: fonts.extrabold, marginBottom: 4 },
+  sub:   { color: colors.muted, fontSize: 13, marginBottom: 20, fontFamily: fonts.regular },
+  label: { color: colors.mutedDark, fontSize: 12.5, fontFamily: fonts.bold, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.3 },
   shotRow:    { flexDirection: 'row', gap: 8, marginBottom: 20 },
-  pill:       { flex: 1, borderWidth: 1, borderColor: '#222', borderRadius: 20, paddingVertical: 9, alignItems: 'center' },
-  pillActive: { backgroundColor: '#1a2e1a', borderColor: '#2a4a2a' },
-  pillText:       { color: '#666', fontSize: 13 },
-  pillTextActive: { color: '#4ade80', fontWeight: '700' },
+  pill:       { flex: 1, backgroundColor: colors.bg, borderRadius: radius.pill, paddingVertical: 10, alignItems: 'center' },
+  pillActive: { backgroundColor: colors.primary },
+  pillText:       { color: colors.mutedDark, fontSize: 13, fontFamily: fonts.semibold },
+  pillTextActive: { color: colors.white, fontFamily: fonts.bold },
   pickBtn: {
-    backgroundColor: '#0d0d0d', borderWidth: 1, borderColor: '#2a2a2a',
-    borderRadius: 12, padding: 20, alignItems: 'center', gap: 4, marginBottom: 14,
+    backgroundColor: colors.bg, borderWidth: 1.5, borderColor: colors.borderDashed, borderStyle: 'dashed',
+    borderRadius: radius.md, padding: 20, alignItems: 'center', gap: 4, marginBottom: 14,
   },
-  pickIcon:    { fontSize: 28, marginBottom: 4 },
-  pickBtnText: { color: '#fff', fontSize: 15, fontWeight: '600' },
-  pickBtnSub:  { color: '#555', fontSize: 12 },
-  changeText:  { color: '#4ade80', fontSize: 12, marginTop: 4 },
-  submitBtn:     { backgroundColor: '#4ade80', borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginBottom: 10 },
+  pickIconWrap: {
+    width: 44, height: 44, borderRadius: 22, backgroundColor: colors.primarySoft,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 6,
+  },
+  pickBtnText: { color: colors.ink, fontSize: 14.5, fontFamily: fonts.bold },
+  pickBtnSub:  { color: colors.muted, fontSize: 12, fontFamily: fonts.regular },
+  changeText:  { color: colors.primary, fontSize: 12, marginTop: 4, fontFamily: fonts.semibold },
+  submitBtn:     { backgroundColor: colors.primary, borderRadius: radius.pill, paddingVertical: 14, alignItems: 'center', marginBottom: 10 },
   submitDisabled: { opacity: 0.4 },
-  submitText:    { color: '#000', fontSize: 15, fontWeight: '700' },
+  submitText:    { color: colors.white, fontSize: 15, fontFamily: fonts.bold },
   cancelBtn:  { alignItems: 'center', paddingVertical: 8 },
-  cancelText: { color: '#555', fontSize: 14 },
+  cancelText: { color: colors.muted, fontSize: 14, fontFamily: fonts.semibold },
 });
 
 // ── Main screen ───────────────────────────────────────────────────────────────
@@ -255,6 +350,7 @@ export default function HistoryScreen({ navigation }) {
   if (!isAuthenticated) {
     return (
       <SafeAreaView style={s.safe}>
+        <CourtBackground />
         <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
           <View style={s.header}>
             <Text style={s.title}>History</Text>
@@ -274,6 +370,7 @@ export default function HistoryScreen({ navigation }) {
 
   return (
     <SafeAreaView style={s.safe}>
+      <CourtBackground />
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
 
         {/* Header */}
@@ -281,7 +378,8 @@ export default function HistoryScreen({ navigation }) {
           <Text style={s.title}>History</Text>
           {!showUpload && (
             <TouchableOpacity style={s.newBtn} onPress={() => setShowUpload(true)}>
-              <Text style={s.newBtnText}>+ New</Text>
+              <PlusIcon size={13} color={colors.white} />
+              <Text style={s.newBtnText}>New</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -295,11 +393,16 @@ export default function HistoryScreen({ navigation }) {
         )}
 
         {loading && (
-          <ActivityIndicator size="large" color="#4ade80" style={{ marginTop: 40 }} />
+          <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
         )}
 
         {!loading && (
           <>
+            {/* Progress trend */}
+            {!showUpload && analyses.length > 0 && (
+              <ProgressSection analyses={analyses} />
+            )}
+
             {/* Stats strip */}
             {!showUpload && analyses.length > 0 && (
               <View style={s.statsRow}>
@@ -330,7 +433,7 @@ export default function HistoryScreen({ navigation }) {
                 style={s.capCard}
                 onPress={() => navigation.navigate('MainTabs', { screen: 'Premium' })}
               >
-                <Text style={s.capText}>You've saved {limit}/{limit} shots on the free plan. Delete one, or upgrade to save unlimited →</Text>
+                <Text style={s.capText}>You've saved {limit}/{limit} shots on the free plan. Delete one, or <Text style={s.capTextBold}>upgrade to save unlimited →</Text></Text>
               </TouchableOpacity>
             )}
 
@@ -371,40 +474,40 @@ function formatProId(proId) {
 }
 
 const s = StyleSheet.create({
-  safe:   { flex: 1, backgroundColor: '#0d0d0d' },
-  scroll: { padding: 20, paddingBottom: 40 },
+  safe:   { flex: 1, backgroundColor: colors.bg },
+  scroll: { padding: spacing.xl, paddingBottom: 130 },
 
   header: {
     flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center', marginBottom: 20, paddingTop: 8,
+    alignItems: 'center', marginBottom: spacing.xl, paddingTop: 8,
   },
-  title: { color: '#fff', fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
+  title: { color: colors.ink, fontSize: 32, fontFamily: fonts.serifItalic },
   newBtn: {
-    backgroundColor: '#4ade80', borderRadius: 20,
-    paddingHorizontal: 16, paddingVertical: 8,
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: colors.primary, borderRadius: radius.pill,
+    paddingHorizontal: 16, paddingVertical: 9,
   },
-  newBtnText: { color: '#000', fontSize: 14, fontWeight: '700' },
+  newBtnText: { color: colors.white, fontSize: 13, fontFamily: fonts.bold },
 
   statsRow: {
-    flexDirection: 'row', backgroundColor: '#141414',
-    borderWidth: 1, borderColor: '#222', borderRadius: 14,
-    padding: 16, marginBottom: 20, alignItems: 'center',
+    flexDirection: 'row', backgroundColor: colors.surface,
+    borderRadius: radius.lg, padding: 16, marginBottom: spacing.xl, alignItems: 'center',
   },
   stat:        { flex: 1, alignItems: 'center' },
-  statNum:     { color: '#fff', fontSize: 22, fontWeight: '800' },
-  statLabel:   { color: '#555', fontSize: 11, marginTop: 2 },
-  statDivider: { width: 1, height: 32, backgroundColor: '#222' },
+  statNum:     { color: colors.ink, fontSize: 24, fontFamily: fonts.serif },
+  statLabel:   { color: colors.muted, fontSize: 10.5, fontFamily: fonts.semibold, marginTop: 2 },
+  statDivider: { width: 1, height: 30, backgroundColor: colors.border },
 
   capCard: {
-    backgroundColor: '#241a0d', borderWidth: 1, borderColor: '#4a3a1a',
-    borderRadius: 12, padding: 14, marginBottom: 16,
+    backgroundColor: colors.amberBg, borderRadius: radius.sm, padding: 13, marginBottom: spacing.lg,
   },
-  capText: { color: '#facc15', fontSize: 13, lineHeight: 18 },
+  capText: { color: colors.amberText, fontSize: 12.5, lineHeight: 18, fontFamily: fonts.regular },
+  capTextBold: { fontFamily: fonts.bold },
 
   empty: { alignItems: 'center', paddingVertical: 60 },
   emptyIcon:  { fontSize: 48, marginBottom: 16 },
-  emptyTitle: { color: '#fff', fontSize: 20, fontWeight: '700', marginBottom: 8 },
-  emptySub:   { color: '#555', fontSize: 14, textAlign: 'center', lineHeight: 21, marginBottom: 28, paddingHorizontal: 20 },
-  emptyBtn:   { backgroundColor: '#4ade80', borderRadius: 12, paddingVertical: 14, paddingHorizontal: 28 },
-  emptyBtnText: { color: '#000', fontSize: 15, fontWeight: '700' },
+  emptyTitle: { color: colors.ink, fontSize: 20, fontFamily: fonts.extrabold, marginBottom: 8 },
+  emptySub:   { color: colors.muted, fontSize: 14, textAlign: 'center', lineHeight: 21, marginBottom: 28, paddingHorizontal: 20, fontFamily: fonts.regular },
+  emptyBtn:   { backgroundColor: colors.primary, borderRadius: radius.md, paddingVertical: 14, paddingHorizontal: 28 },
+  emptyBtnText: { color: colors.white, fontSize: 15, fontFamily: fonts.bold },
 });

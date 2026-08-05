@@ -9,6 +9,9 @@ import FenceTutorialContent from '../components/FenceTutorialContent';
 import LiveCalibrationCamera from '../components/LiveCalibrationCamera';
 import { storage } from '../utils/storage';
 import { API_BASE } from '../config/api';
+import { colors, fonts, radius, spacing } from '../theme';
+import CourtBackground from '../components/CourtBackground';
+import { BackChevronIcon, VideoIcon, CameraIcon } from '../components/icons';
 
 const ASSUMED_FPS = 30;
 const FINE_RADIUS = 10;
@@ -177,9 +180,15 @@ export default function ContactMarkingScreen({ navigation, route }) {
   if (phase === 'pick') {
     return (
       <SafeAreaView style={s.safe}>
+        <CourtBackground />
         <ScrollView contentContainerStyle={s.pickScroll} showsVerticalScrollIndicator={false}>
+          <TouchableOpacity style={s.backLinkTop} onPress={() => navigation.goBack()}>
+            <BackChevronIcon size={13} color={colors.muted} />
+            <Text style={s.backLinkTopText}>Home</Text>
+          </TouchableOpacity>
+
           <Text style={s.h1}>Analyse your swing</Text>
-          <Text style={s.sub}>Upload a 10–30 second video of your shot</Text>
+          <Text style={s.sub}>Upload a 10–30 second video of your shot.</Text>
 
           <Text style={s.fieldLabel}>Shot type</Text>
           <View style={s.shotRow}>
@@ -196,15 +205,15 @@ export default function ContactMarkingScreen({ navigation, route }) {
             ))}
           </View>
 
-          <TouchableOpacity style={s.uploadBtn} onPress={pickVideo}>
-            <Text style={s.uploadIcon}>📹</Text>
+          <TouchableOpacity style={s.uploadBtn} onPress={pickVideo} activeOpacity={0.9}>
+            <View style={s.uploadIconWrap}><VideoIcon size={22} color={colors.primary} /></View>
             <Text style={s.uploadBtnText}>Choose video from library</Text>
             <Text style={s.uploadBtnSub}>MP4 · MOV · any resolution</Text>
           </TouchableOpacity>
 
           {!IS_WEB && (
-            <TouchableOpacity style={[s.uploadBtn, s.recordBtn]} onPress={() => setPhase('record')}>
-              <Text style={s.uploadIcon}>🎥</Text>
+            <TouchableOpacity style={[s.uploadBtn, s.recordBtn]} onPress={() => setPhase('record')} activeOpacity={0.9}>
+              <View style={[s.uploadIconWrap, s.recordIconWrap]}><CameraIcon size={22} color={colors.mutedDark} /></View>
               <Text style={s.uploadBtnText}>Record now</Text>
               <Text style={s.uploadBtnSub}>Live camera positioning guide</Text>
             </TouchableOpacity>
@@ -283,7 +292,7 @@ export default function ContactMarkingScreen({ navigation, route }) {
                   value: String(progressFraction),
                   onChange: (e) => seekTo(parseFloat(e.target.value) * duration),
                   style: {
-                    width: '100%', accentColor: '#4ade80',
+                    width: '100%', accentColor: colors.primary,
                     marginBottom: '8px', cursor: 'pointer', height: '20px',
                   },
                 })
@@ -357,101 +366,100 @@ export default function ContactMarkingScreen({ navigation, route }) {
   );
 }
 
-const GREEN  = '#4ade80';
-const DARK   = '#0d0d0d';
-const CARD   = '#141414';
-const BORDER = '#222';
-const TEXT   = '#fff';
-const MUTED  = '#888';
-
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: DARK },
+  safe: { flex: 1, backgroundColor: colors.bg },
 
-  pickScroll: { padding: 24, paddingTop: 48, flexGrow: 1 },
-  h1:  { color: TEXT, fontSize: 28, fontWeight: '800', letterSpacing: -0.5, marginBottom: 8 },
-  sub: { color: MUTED, fontSize: 15, lineHeight: 22, marginBottom: 32 },
+  pickScroll: { padding: spacing.xl, paddingTop: 60, flexGrow: 1 },
+  backLinkTop: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 20, alignSelf: 'flex-start' },
+  backLinkTopText: { color: colors.muted, fontSize: 13, fontFamily: fonts.semibold },
+  h1:  { color: colors.ink, fontSize: 30, fontFamily: fonts.serifItalic, marginBottom: 6 },
+  sub: { color: colors.muted, fontSize: 14, lineHeight: 21, marginBottom: 26, fontFamily: fonts.regular },
 
-  fieldLabel: { color: '#aaa', fontSize: 13, fontWeight: '600', marginBottom: 10 },
-  shotRow: { flexDirection: 'row', gap: 8, marginBottom: 28 },
+  fieldLabel: { color: colors.mutedDark, fontSize: 12.5, fontFamily: fonts.bold, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.3 },
+  shotRow: { flexDirection: 'row', gap: 9, marginBottom: 26 },
   shotPill: {
-    flex: 1, borderWidth: 1, borderColor: BORDER,
-    borderRadius: 20, paddingVertical: 10, alignItems: 'center',
+    flex: 1, backgroundColor: colors.surface,
+    borderRadius: radius.pill, paddingVertical: 12, alignItems: 'center',
   },
-  shotPillActive:     { backgroundColor: '#1a2e1a', borderColor: '#2a4a2a' },
-  shotPillText:       { color: MUTED, fontSize: 14, fontWeight: '500' },
-  shotPillTextActive: { color: GREEN, fontWeight: '700' },
+  shotPillActive:     { backgroundColor: colors.primary },
+  shotPillText:       { color: colors.ink, fontSize: 13, fontFamily: fonts.semibold },
+  shotPillTextActive: { color: colors.white, fontFamily: fonts.bold },
 
   uploadBtn: {
-    backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
-    borderRadius: 16, padding: 28, alignItems: 'center', gap: 6,
+    backgroundColor: colors.surface, borderWidth: 1.5, borderColor: colors.borderDashed, borderStyle: 'dashed',
+    borderRadius: radius.xl, padding: 30, alignItems: 'center', gap: 4,
   },
-  uploadIcon:    { fontSize: 36, marginBottom: 4 },
-  uploadBtnText: { color: TEXT, fontSize: 16, fontWeight: '600' },
-  uploadBtnSub:  { color: MUTED, fontSize: 13 },
-  recordBtn:     { marginTop: 14 },
+  uploadIconWrap: {
+    width: 52, height: 52, borderRadius: 26, backgroundColor: colors.primarySoft,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 12,
+  },
+  recordIconWrap: { backgroundColor: colors.border },
+  uploadBtnText: { color: colors.ink, fontSize: 15, fontFamily: fonts.bold },
+  uploadBtnSub:  { color: colors.muted, fontSize: 12.5, fontFamily: fonts.regular },
+  recordBtn:     { marginTop: 12, borderStyle: 'solid', borderColor: colors.border },
 
   playHint: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   playHintText: { color: 'rgba(255,255,255,0.35)', fontSize: 52 },
 
-  panel:      { backgroundColor: DARK, padding: 20, paddingTop: 18, flex: 1 },
-  panelTitle: { color: TEXT, fontSize: 16, fontWeight: '700', marginBottom: 4 },
-  panelSub:   { color: MUTED, fontSize: 13, marginBottom: 14 },
-  calibChecking: { color: MUTED, fontSize: 12, marginBottom: 10 },
-  calibMsg:      { color: GREEN, fontSize: 12, marginBottom: 10, lineHeight: 17 },
-  calibWarn:     { color: '#facc15' },
+  panel:      { backgroundColor: colors.bg, padding: 20, paddingTop: 18, flex: 1 },
+  panelTitle: { color: colors.ink, fontSize: 16, fontFamily: fonts.bold, marginBottom: 4 },
+  panelSub:   { color: colors.muted, fontSize: 13, marginBottom: 14, fontFamily: fonts.regular },
+  calibChecking: { color: colors.muted, fontSize: 12, marginBottom: 10, fontFamily: fonts.regular },
+  calibMsg:      { color: colors.primary, fontSize: 12, marginBottom: 10, lineHeight: 17, fontFamily: fonts.regular },
+  calibWarn:     { color: colors.gold },
 
   progressTrack: {
-    height: 8, backgroundColor: '#1a1a1a', borderRadius: 4,
+    height: 8, backgroundColor: colors.border, borderRadius: 4,
     marginBottom: 8, position: 'relative',
   },
-  progressFill:  { height: 8, backgroundColor: GREEN, borderRadius: 4 },
+  progressFill:  { height: 8, backgroundColor: colors.primary, borderRadius: 4 },
   progressThumb: {
     position: 'absolute', top: -4,
     width: 16, height: 16, borderRadius: 8,
-    backgroundColor: GREEN, marginLeft: -8,
+    backgroundColor: colors.primary, marginLeft: -8,
   },
-  timeText: { color: MUTED, fontSize: 12, textAlign: 'right', marginBottom: 14 },
+  timeText: { color: colors.muted, fontSize: 12, textAlign: 'right', marginBottom: 14, fontFamily: fonts.regular },
 
   rowBtns:  { flexDirection: 'row', gap: 10, marginTop: 4 },
   btnPrimary: {
-    backgroundColor: GREEN, borderRadius: 12,
+    backgroundColor: colors.primary, borderRadius: radius.md,
     paddingVertical: 14, alignItems: 'center',
   },
   btnPrimary2: {
-    flex: 1, backgroundColor: GREEN, borderRadius: 12,
+    flex: 1, backgroundColor: colors.primary, borderRadius: radius.md,
     paddingVertical: 13, alignItems: 'center',
   },
-  btnPrimaryText: { color: '#000', fontSize: 15, fontWeight: '700' },
+  btnPrimaryText: { color: colors.white, fontSize: 15, fontFamily: fonts.bold },
   btnGhost: {
-    flex: 1, borderWidth: 1, borderColor: BORDER,
-    borderRadius: 12, paddingVertical: 13, alignItems: 'center',
+    flex: 1, backgroundColor: colors.surface,
+    borderRadius: radius.md, paddingVertical: 13, alignItems: 'center',
   },
-  btnGhostText: { color: '#aaa', fontSize: 15, fontWeight: '500' },
+  btnGhostText: { color: colors.mutedDark, fontSize: 15, fontFamily: fonts.medium },
 
   frameRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
-    borderRadius: 14, padding: 16, marginBottom: 16,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg, padding: 16, marginBottom: 16,
   },
   frameBtn:         { padding: 8 },
-  frameBtnText:     { color: GREEN, fontSize: 26, fontWeight: '700' },
-  frameBtnDisabled: { color: '#2a2a2a' },
+  frameBtnText:     { color: colors.primary, fontSize: 26, fontFamily: fonts.bold },
+  frameBtnDisabled: { color: colors.divider },
   frameCenter:      { alignItems: 'center' },
-  frameNumber:      { color: TEXT, fontSize: 22, fontWeight: '800' },
-  frameOffset:      { color: MUTED, fontSize: 12, marginTop: 2 },
+  frameNumber:      { color: colors.ink, fontSize: 22, fontFamily: fonts.extrabold },
+  frameOffset:      { color: colors.muted, fontSize: 12, marginTop: 2, fontFamily: fonts.regular },
 
   offsetTrack: {
-    height: 4, backgroundColor: '#1a1a1a', borderRadius: 2,
+    height: 4, backgroundColor: colors.border, borderRadius: 2,
     marginBottom: 6, position: 'relative',
   },
   offsetThumb: {
     position: 'absolute', top: -6,
     width: 16, height: 16, borderRadius: 8,
-    backgroundColor: GREEN, marginLeft: -8,
+    backgroundColor: colors.primary, marginLeft: -8,
   },
   offsetLabels: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 14 },
-  offsetLabel:  { color: '#444', fontSize: 11 },
+  offsetLabel:  { color: colors.divider, fontSize: 11, fontFamily: fonts.regular },
 
   backLink:     { alignItems: 'center', marginTop: 14 },
-  backLinkText: { color: '#555', fontSize: 13 },
+  backLinkText: { color: colors.muted, fontSize: 13, fontFamily: fonts.regular },
 });

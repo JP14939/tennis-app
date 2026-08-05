@@ -5,16 +5,21 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 const requireAuth = require('../middleware/requireAuth');
 const requirePremium = require('../middleware/requirePremium');
+const { PYTHON, DATA_DIR } = require('../config/paths');
+const { persistAndCrop, toUrl } = require('../utils/videoCrop');
 
 const router = express.Router();
 
 const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads');
-const PYTHON = path.join(__dirname, '..', '..', '..', 'scripts', 'venv', 'Scripts', 'python.exe');
 const MATCHER = path.join(__dirname, '..', 'services', 'video_matcher.py');
 const SHOT_TYPES = ['forehand', 'backhand', 'serve'];
 const COMPARE_TIMEOUT_MS = 3 * 60 * 1000; // two videos processed sequentially, needs more headroom than /analyse
+// Both uploaded videos used to be deleted right after comparison -- kept
+// here now so the sync-compare screen can play them back afterward.
+const COMPARISON_CLIPS_DIR = path.join(DATA_DIR, 'runtime', 'comparison_clips');
 
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+fs.mkdirSync(COMPARISON_CLIPS_DIR, { recursive: true });
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -74,11 +79,11 @@ router.post('/compare-videos', requireAuth, requirePremium, upload.fields([
     proc.kill();
   }, COMPARE_TIMEOUT_MS);
 
-  proc.on('close', (code) => {
+  proc.on('close', async (code) => {
     clearTimeout(timeout);
-    cleanup();
 
     if (code !== 0) {
+      cleanup();
       console.error('[compare-videos] video_matcher.py failed:', stderr.slice(-2000));
       let error = 'Comparison failed';
       try { error = JSON.parse(stdout).error || error; } catch { /* stdout wasn't JSON */ }
@@ -87,8 +92,23 @@ router.post('/compare-videos', requireAuth, requirePremium, upload.fields([
 
     try {
       const result = JSON.parse(stdout);
+
+      // Comparison succeeded -- keep both videos (used to be deleted here)
+      // and crop each for the sync-compare screen. Cropping failure is
+      // non-fatal per video; the screen falls back to the original.
+      const jobId = `${Date.now()}_${Math.round(Math.random() * 1e6)}`;
+      const [ref, yours] = await Promise.all([
+        persistAndCrop(referenceFile.path, path.join(COMPARISON_CLIPS_DIR, jobId, 'reference')),
+        persistAndCrop(yoursFile.path, path.join(COMPARISON_CLIPS_DIR, jobId, 'yours')),
+      ]);
+      result.reference_clip_url = toUrl('/comparison-clips', COMPARISON_CLIPS_DIR, ref.originalPath);
+      result.reference_clip_cropped_url = toUrl('/comparison-clips', COMPARISON_CLIPS_DIR, ref.croppedPath);
+      result.your_clip_url = toUrl('/comparison-clips', COMPARISON_CLIPS_DIR, yours.originalPath);
+      result.your_clip_cropped_url = toUrl('/comparison-clips', COMPARISON_CLIPS_DIR, yours.croppedPath);
+
       res.json(result);
     } catch (e) {
+      cleanup();
       console.error('[compare-videos] failed to parse video_matcher.py output:', stdout.slice(-2000));
       res.status(500).json({ error: 'Comparison produced invalid output' });
     }

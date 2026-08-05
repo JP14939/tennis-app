@@ -3,12 +3,12 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+const { SCRIPTS_DIR, PYTHON } = require('../config/paths');
 
 const router = express.Router();
 
 const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads');
-const PYTHON = path.join(__dirname, '..', '..', '..', 'scripts', 'venv', 'Scripts', 'python.exe');
-const CHECKER = path.join(__dirname, '..', '..', '..', 'scripts', '00_utils', 'check_camera_setup.py');
+const CHECKER = path.join(SCRIPTS_DIR, '00_utils', 'check_camera_setup.py');
 const CHECK_TIMEOUT_MS = 30 * 1000; // just angle inference on a few sampled frames, should be fast
 const CALIBRATION_SERVER_URL = 'http://127.0.0.1:5055/check';
 

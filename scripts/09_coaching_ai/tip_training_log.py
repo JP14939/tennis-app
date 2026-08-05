@@ -5,9 +5,13 @@ accurate enough to trust without calling the Claude verifier on every request.
 """
 import json
 import os
+import sys
 import time
 
-LOG_PATH = r'C:\Users\jackp\tennis_app\data\08_coaching_ai\tip_training_log.jsonl'
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '00_utils'))
+from paths import DATA_DIR  # noqa: E402
+
+LOG_PATH = os.path.join(DATA_DIR, '08_coaching_ai', 'tip_training_log.jsonl')
 
 # Once the student's agreement with Claude over the last WINDOW examples is
 # >= AGREEMENT_THRESHOLD, select_coaching_tips.py can stop calling the

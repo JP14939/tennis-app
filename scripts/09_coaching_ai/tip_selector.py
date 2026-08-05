@@ -10,8 +10,12 @@ version without changing the interface.
 """
 import json
 import os
+import sys
 
-TIPS_DB_PATH = r'C:\Users\jackp\tennis_app\data\08_coaching_ai\coaching_tips_database.json'
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '00_utils'))
+from paths import DATA_DIR  # noqa: E402
+
+TIPS_DB_PATH = os.path.join(DATA_DIR, '08_coaching_ai', 'coaching_tips_database.json')
 
 # Phase -> offset from contact (seconds), matching PRE_SEC/POST_SEC in
 # build_pro_database.py and the 'backswing'/'contact'/'followthrough' split
@@ -97,6 +101,7 @@ def score_issues(user_trajectory, pro_trajectory, shot_type):
             'magnitude': round(magnitude, 4),
             'severity': severity,
             'candidate_tips': issue['tips'][severity],
+            'drill': issue.get('drill'),
         })
 
     scored.sort(key=lambda s: -s['magnitude'])

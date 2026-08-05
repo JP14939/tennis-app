@@ -1,30 +1,36 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { SHOT_ICONS } from '../data/mockAnalyses';
 import { useAuth } from '../context/AuthContext';
 import { fetchHistory } from '../api/history';
-
-const GREEN  = '#4ade80';
-const YELLOW = '#facc15';
-const RED    = '#f87171';
-const DARK   = '#0d0d0d';
-const CARD   = '#141414';
-const BORDER = '#222';
-const TEXT   = '#fff';
-const MUTED  = '#888';
-
-function scoreColor(score) {
-  if (score >= 75) return GREEN;
-  if (score >= 55) return YELLOW;
-  return RED;
-}
+import { colors, fonts, radius, spacing, scoreColor } from '../theme';
+import CourtBackground from '../components/CourtBackground';
+import ScoreRing from '../components/ScoreRing';
+import { TennisBallIcon, ChevronRightIcon } from '../components/icons';
 
 const QUICK_SHOTS = [
   { label: 'Forehand', value: 'forehand' },
   { label: 'Backhand', value: 'backhand' },
   { label: 'Serve',    value: 'serve' },
 ];
+
+function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+
+function useCountUp(target, durationMs = 1100) {
+  const [value, setValue] = useState(0);
+  const frame = useRef(null);
+  useEffect(() => {
+    const start = performance.now();
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / durationMs);
+      setValue(Math.round(target * easeOutCubic(t)));
+      if (t < 1) frame.current = requestAnimationFrame(tick);
+    };
+    frame.current = requestAnimationFrame(tick);
+    return () => frame.current && cancelAnimationFrame(frame.current);
+  }, [target, durationMs]);
+  return value;
+}
 
 function formatDate(isoString) {
   if (!isoString) return '';
@@ -37,30 +43,28 @@ function RecentRow({ item }) {
   const score = Math.round(item.similarity ?? 0);
   return (
     <View style={r.row}>
-      <Text style={r.icon}>{SHOT_ICONS[item.shot_type]}</Text>
+      <ScoreRing score={score} />
       <View style={r.body}>
         <Text style={r.title}>{item.shot_type.charAt(0).toUpperCase() + item.shot_type.slice(1)}</Text>
-        <Text style={r.date}>{formatDate(item.created_at)}</Text>
+        <Text style={r.date}>{formatDate(item.created_at)} · {item.pro_id ?? 'Technique'}</Text>
       </View>
-      <Text style={[r.score, { color: scoreColor(score) }]}>{score}</Text>
+      <ChevronRightIcon size={7} color={colors.muted} />
     </View>
   );
 }
 const r = StyleSheet.create({
   row: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
-    borderRadius: 14, padding: 14, marginBottom: 10,
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    backgroundColor: colors.surface, borderRadius: radius.lg,
+    padding: 13, marginBottom: 10,
   },
-  icon: { fontSize: 22 },
-  body: { flex: 1 },
-  title: { color: TEXT, fontSize: 14, fontWeight: '700' },
-  date: { color: MUTED, fontSize: 12, marginTop: 2 },
-  score: { fontSize: 18, fontWeight: '800' },
+  body: { flex: 1, minWidth: 0 },
+  title: { color: colors.ink, fontSize: 14.5, fontFamily: fonts.bold },
+  date: { color: colors.muted, fontSize: 12, marginTop: 2, fontFamily: fonts.regular },
 });
 
 export default function HomeScreen({ navigation }) {
-  const { token, isAuthenticated } = useAuth();
+  const { token, isAuthenticated, user } = useAuth();
   const [analyses, setAnalyses] = useState([]);
 
   useFocusEffect(useCallback(() => {
@@ -77,27 +81,45 @@ export default function HomeScreen({ navigation }) {
     : 0;
   const great = analyses.filter(a => a.similarity >= 75).length;
 
+  const analysesCount = useCountUp(analyses.length);
+  const avgCount = useCountUp(avg);
+  const greatCount = useCountUp(great);
+
+  const playerName = isAuthenticated ? user.name.split(' ')[0] : 'there';
+  const playerInitial = isAuthenticated ? user.name.charAt(0).toUpperCase() : '🎾';
+
+  const dayLabel = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+
   return (
     <SafeAreaView style={s.safe}>
+      <CourtBackground />
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
 
         <View style={s.topRow}>
-          <Text style={s.greeting}>Welcome back</Text>
-          <Text style={s.title}>Ready to train? 🎾</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={s.dayLabel}>{dayLabel}</Text>
+            <Text style={s.greeting}>Let's play, {playerName}.</Text>
+          </View>
+          <View style={s.avatar}>
+            <Text style={s.avatarText}>{playerInitial}</Text>
+          </View>
         </View>
 
         {/* Primary CTA */}
         <TouchableOpacity
           style={s.ctaCard}
-          activeOpacity={0.85}
+          activeOpacity={0.9}
           onPress={() => navigation.navigate('Upload')}
         >
-          <View style={s.ctaText}>
-            <Text style={s.ctaTitle}>Analyse your swing</Text>
-            <Text style={s.ctaSub}>Get matched to a pro in under 60s</Text>
+          <View style={s.ctaTopRow}>
+            <View style={s.ctaBadge}>
+              <Text style={s.ctaBadgeText}>NEW ANALYSIS</Text>
+            </View>
+            <Text style={s.ctaHint}>Perfect your swing in under 60s</Text>
           </View>
-          <View style={s.ctaArrowWrap}>
-            <Text style={s.ctaArrow}>→</Text>
+          <View style={s.ctaPill}>
+            <Text style={s.ctaPillText}>Start analysis</Text>
+            <Text style={s.ctaPillArrow}>→</Text>
           </View>
         </TouchableOpacity>
 
@@ -108,8 +130,9 @@ export default function HomeScreen({ navigation }) {
               key={shot.value}
               style={s.quickPill}
               onPress={() => navigation.navigate('Upload', { shotType: shot.value })}
+              activeOpacity={0.85}
             >
-              <Text style={s.quickIcon}>{SHOT_ICONS[shot.value]}</Text>
+              <TennisBallIcon size={15} color={colors.primary} />
               <Text style={s.quickLabel}>{shot.label}</Text>
             </TouchableOpacity>
           ))}
@@ -118,17 +141,18 @@ export default function HomeScreen({ navigation }) {
         {/* Stats */}
         <View style={s.statsRow}>
           <View style={s.stat}>
-            <Text style={s.statNum}>{analyses.length}</Text>
+            <View style={[s.statAccent, { backgroundColor: colors.primary }]} />
+            <Text style={s.statNum}>{analysesCount}</Text>
             <Text style={s.statLabel}>Analyses</Text>
           </View>
-          <View style={s.statDivider} />
           <View style={s.stat}>
-            <Text style={s.statNum}>{avg}</Text>
+            <View style={[s.statAccent, { backgroundColor: colors.gold }]} />
+            <Text style={s.statNum}>{avgCount}</Text>
             <Text style={s.statLabel}>Avg score</Text>
           </View>
-          <View style={s.statDivider} />
           <View style={s.stat}>
-            <Text style={s.statNum}>{great}</Text>
+            <View style={[s.statAccent, { backgroundColor: colors.lime }]} />
+            <Text style={s.statNum}>{greatCount}</Text>
             <Text style={s.statLabel}>Great swings</Text>
           </View>
         </View>
@@ -156,56 +180,61 @@ export default function HomeScreen({ navigation }) {
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: DARK },
-  scroll: { padding: 20, paddingTop: 12, paddingBottom: 40 },
+  safe: { flex: 1, backgroundColor: colors.bg },
+  scroll: { padding: spacing.xl, paddingTop: 20, paddingBottom: 130 },
 
-  topRow: { marginBottom: 22 },
-  greeting: { color: MUTED, fontSize: 14, marginBottom: 2 },
-  title: { color: TEXT, fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
+  topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: spacing.xxl },
+  dayLabel: { color: colors.muted, fontSize: 13, fontFamily: fonts.semibold, marginBottom: 4 },
+  greeting: { color: colors.ink, fontSize: 32, fontFamily: fonts.serifItalic, lineHeight: 36 },
+  avatar: {
+    width: 44, height: 44, borderRadius: 22, backgroundColor: colors.primary,
+    alignItems: 'center', justifyContent: 'center', marginTop: 4,
+    shadowColor: colors.primary, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 4 },
+  },
+  avatarText: { color: colors.lime, fontSize: 18, fontFamily: fonts.serif },
 
   ctaCard: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: '#0d1f0d', borderWidth: 1, borderColor: '#1a3a1a',
-    borderRadius: 18, padding: 20, marginBottom: 18,
+    backgroundColor: colors.primary, borderRadius: radius.xl, padding: 18, marginBottom: spacing.xl,
+    overflow: 'hidden',
   },
-  ctaText: { flex: 1 },
-  ctaTitle: { color: TEXT, fontSize: 18, fontWeight: '800', marginBottom: 4 },
-  ctaSub: { color: '#8fbf9a', fontSize: 13 },
-  ctaArrowWrap: {
-    width: 40, height: 40, borderRadius: 20, backgroundColor: GREEN,
-    alignItems: 'center', justifyContent: 'center', marginLeft: 12,
+  ctaTopRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 14 },
+  ctaBadge: { backgroundColor: colors.lime, borderRadius: radius.pill, paddingHorizontal: 10, paddingVertical: 4 },
+  ctaBadgeText: { color: colors.primary, fontSize: 10, fontFamily: fonts.extrabold, letterSpacing: 0.6 },
+  ctaHint: { color: 'rgba(255,255,255,0.85)', fontSize: 12.5, fontFamily: fonts.semibold, flexShrink: 1 },
+  ctaPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: colors.white,
+    alignSelf: 'flex-start', paddingVertical: 10, paddingHorizontal: 18, borderRadius: radius.pill,
   },
-  ctaArrow: { color: '#000', fontSize: 18, fontWeight: '800' },
+  ctaPillText: { color: colors.primary, fontSize: 14, fontFamily: fonts.bold },
+  ctaPillArrow: { color: colors.primary, fontSize: 14, fontFamily: fonts.bold },
 
-  quickRow: { flexDirection: 'row', gap: 10, marginBottom: 20 },
+  quickRow: { flexDirection: 'row', gap: 9, marginBottom: spacing.xxl },
   quickPill: {
-    flex: 1, backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
-    borderRadius: 14, paddingVertical: 14, alignItems: 'center', gap: 4,
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    backgroundColor: colors.surface, borderRadius: radius.pill, paddingVertical: 12,
   },
-  quickIcon: { fontSize: 20 },
-  quickLabel: { color: '#ccc', fontSize: 12, fontWeight: '600' },
+  quickLabel: { color: colors.ink, fontSize: 12.5, fontFamily: fonts.bold },
 
   statsRow: {
-    flexDirection: 'row', backgroundColor: CARD,
-    borderWidth: 1, borderColor: BORDER, borderRadius: 14,
-    padding: 16, marginBottom: 24, alignItems: 'center',
+    flexDirection: 'row', gap: 10, marginBottom: spacing.xxl,
   },
-  stat:        { flex: 1, alignItems: 'center' },
-  statNum:     { color: TEXT, fontSize: 22, fontWeight: '800' },
-  statLabel:   { color: MUTED, fontSize: 11, marginTop: 2 },
-  statDivider: { width: 1, height: 32, backgroundColor: BORDER },
+  stat: {
+    flex: 1, backgroundColor: colors.surface, borderRadius: radius.lg,
+    paddingTop: 16, paddingBottom: 14, paddingHorizontal: 10, alignItems: 'center', overflow: 'hidden',
+  },
+  statAccent: { position: 'absolute', top: 0, left: 0, right: 0, height: 3 },
+  statNum: { color: colors.ink, fontSize: 26, fontFamily: fonts.serif },
+  statLabel: { color: colors.muted, fontSize: 10.5, fontFamily: fonts.semibold, marginTop: 3 },
 
   sectionHeader: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    marginBottom: 12,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: spacing.md,
   },
-  sectionTitle: { color: TEXT, fontSize: 16, fontWeight: '700' },
-  seeAll: { color: GREEN, fontSize: 13, fontWeight: '600' },
+  sectionTitle: { color: colors.ink, fontSize: 19, fontFamily: fonts.serif },
+  seeAll: { color: colors.primary, fontSize: 13, fontFamily: fonts.semibold },
 
   loginPrompt: {
-    backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
-    borderRadius: 14, padding: 16, alignItems: 'center',
+    backgroundColor: colors.surface, borderRadius: radius.lg, padding: 16, alignItems: 'center',
   },
-  loginPromptText: { color: GREEN, fontSize: 13, fontWeight: '600' },
-  noRecents: { color: MUTED, fontSize: 13, textAlign: 'center', paddingVertical: 12 },
+  loginPromptText: { color: colors.primary, fontSize: 13, fontFamily: fonts.semibold },
+  noRecents: { color: colors.muted, fontSize: 13, textAlign: 'center', paddingVertical: 12, fontFamily: fonts.regular },
 });

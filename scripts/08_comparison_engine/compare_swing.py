@@ -23,14 +23,16 @@ sys.path.insert(0, os.path.join(SCRIPTS_DIR, '05_angle_detection'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '06_database_build'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '07_ball_racket_tracking'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '09_coaching_ai'))
+sys.path.insert(0, os.path.join(SCRIPTS_DIR, '00_utils'))
 from infer_angle import infer_camera_angle, angle_label
 from build_pro_database import normalise_landmarks, trajectory_scale, PRE_SEC, POST_SEC
 from trajectory_compare import dtw_distance
 from track_racket_in_clip import track_racket_body, avg_racket_body_distance
 from select_coaching_tips import get_coaching_tips
+from paths import DATA_DIR
 import phase_breakdown
 
-DB_PATH    = r'C:\Users\jackp\tennis_app\data\06_pro_database\pro_database.json'
+DB_PATH    = os.path.join(DATA_DIR, '06_pro_database', 'pro_database.json')
 MODEL_PATH = os.path.join(os.path.dirname(__file__), '..', 'pose_landmarker.task')
 
 KEY_LANDMARKS = [
@@ -226,7 +228,7 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
     output = []
     for rank, (score, dist, entry) in enumerate(top, 1):
         tips_result, _ = get_coaching_tips(user_trajectory, entry['trajectory'], shot_type)
-        tips = [t['tip_text'] for t in tips_result]
+        tips = [{'tip_text': t['tip_text'], 'drill': t.get('drill')} for t in tips_result]
 
         print(f'\n  #{rank} — {entry["id"]}', file=sys.stderr)
         print(f'       Similarity: {score}/100', file=sys.stderr)
@@ -234,7 +236,7 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
             print(f'       Pro angle:  {entry["camera_angle"]}°', file=sys.stderr)
         print(f'       Coaching tips:', file=sys.stderr)
         for tip in tips:
-            print(f'         • {tip}', file=sys.stderr)
+            print(f'         • {tip["tip_text"]}', file=sys.stderr)
         if not tips:
             print(f'         • Great technique! Your form closely matches the pro.', file=sys.stderr)
 
@@ -245,7 +247,8 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
             'similarity': score,
             'clip_path':  entry.get('clip_path'),
             'pro_angle':  entry.get('camera_angle'),
-            'tips':       tips if tips else ['Great technique! Your form closely matches the pro.'],
+            'pro_contact_time_sec': entry.get('peak_time'),
+            'tips':       tips if tips else [{'tip_text': 'Great technique! Your form closely matches the pro.', 'drill': None}],
         })
 
     # Phase breakdown (backswing/contact/follow-through/body-rotation) is
@@ -274,10 +277,11 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         'user_angle':   user_angle,
         'angle_label':  angle_label(user_angle) if user_angle is not None else None,
         'angle_conf':   angle_conf if user_angle is not None else None,
+        'contact_time_sec': round(peak_frame / fps, 3),
         'matches':      output,
     }
 
-    result_path = r'C:\Users\jackp\tennis_app\data\runtime\last_comparison.json'
+    result_path = os.path.join(DATA_DIR, 'runtime', 'last_comparison.json')
     with open(result_path, 'w', encoding='utf-8') as f:
         json.dump(result, f, indent=2)
     print(f'\n  Results saved to {result_path}', file=sys.stderr)

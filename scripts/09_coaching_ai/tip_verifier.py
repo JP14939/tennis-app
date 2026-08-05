@@ -14,8 +14,12 @@ verify_picks() until the ANTHROPIC_API_KEY in backend/.env has been rotated
 import json
 import os
 import re
+import sys
 
-ENV_PATH = r'C:\Users\jackp\tennis_app\backend\.env'
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '00_utils'))
+from paths import BACKEND_DIR  # noqa: E402
+
+ENV_PATH = os.path.join(BACKEND_DIR, '.env')
 
 
 def _load_api_key():

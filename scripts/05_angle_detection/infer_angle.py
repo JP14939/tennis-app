@@ -22,6 +22,9 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '00_utils'))
+from paths import DATA_DIR  # noqa: E402
+
 MODEL_PATH = os.path.join(os.path.dirname(__file__), '..', 'pose_landmarker.task')
 
 # MediaPipe landmark indices
@@ -96,7 +99,7 @@ def extract_frame(video_path, frame_number):
 
 # ── Net detection ─────────────────────────────────────────────────────────────
 
-NET_KEYPOINT_MODEL_PATH = r'C:\Users\jackp\tennis_app\data\10_net_detection\yolo_pose_run_v3\weights\best.pt'
+NET_KEYPOINT_MODEL_PATH = os.path.join(DATA_DIR, '10_net_detection', 'yolo_pose_run_v3', 'weights', 'best.pt')
 NET_KEYPOINT_CONF_MIN = 0.4
 _net_kp_model = None
 

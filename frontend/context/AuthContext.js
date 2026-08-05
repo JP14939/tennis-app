@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { API_BASE } from '../config/api';
 import { storage } from '../utils/storage';
+import { registerForPushNotifications } from '../utils/pushNotifications';
+import { updateProfile, deleteAccount as deleteAccountApi } from '../api/account';
 
 const TOKEN_KEY = 'tennisai_token';
 
@@ -67,6 +69,44 @@ export function AuthProvider({ children }) {
     setUser(null);
   }, []);
 
+  // Re-fetches the current user (tier included) without a full re-login --
+  // used right after a purchase completes so isPremium flips immediately
+  // app-wide instead of waiting for the next natural refetch.
+  const refreshUser = useCallback(async () => {
+    if (!token) return;
+    const res = await fetch(`${API_BASE}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setUser(data.user);
+    }
+  }, [token]);
+
+  // Used by SettingsScreen for name / notifications_enabled edits -- returns
+  // the updated user so callers can show a saved confirmation if they want.
+  const updateUser = useCallback(async (patch) => {
+    const data = await updateProfile(token, patch);
+    setUser(data.user);
+    return data.user;
+  }, [token]);
+
+  // Same session-clearing shape as logout() -- deleteAccountApi throws (and
+  // leaves the session untouched) if the password confirmation is wrong.
+  const deleteAccount = useCallback(async (password) => {
+    await deleteAccountApi(token, password);
+    await storage.deleteItem(TOKEN_KEY);
+    setToken(null);
+    setUser(null);
+  }, [token]);
+
+  // Covers login, signup, and session-restore-on-boot in one place -- push
+  // registration only makes sense once we have an authenticated user to
+  // associate the device token with.
+  useEffect(() => {
+    if (token) registerForPushNotifications(token);
+  }, [token]);
+
   const value = {
     user,
     token,
@@ -76,6 +116,9 @@ export function AuthProvider({ children }) {
     signup,
     login,
     logout,
+    refreshUser,
+    updateUser,
+    deleteAccount,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
