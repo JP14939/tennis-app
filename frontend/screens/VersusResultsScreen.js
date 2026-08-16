@@ -1,27 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, SafeAreaView,
-  ScrollView, ActivityIndicator, Platform,
+  ScrollView, ActivityIndicator, Platform, Modal,
 } from 'react-native';
 import { API_BASE } from '../config/api';
+import { useAuth } from '../context/AuthContext';
+import { colors, fonts, radius, spacing } from '../theme';
+import { playTapSound } from '../utils/sounds';
+import CourtBackground from '../components/CourtBackground';
 import ResultShareCard from '../components/ResultShareCard';
 import { captureAndShare } from '../utils/shareCard';
-import { ShareIcon } from '../components/icons';
-
-const GREEN  = '#4ade80';
-const YELLOW = '#facc15';
-const RED    = '#f87171';
-const DARK   = '#0d0d0d';
-const CARD   = '#141414';
-const BORDER = '#222';
-const TEXT   = '#fff';
-const MUTED  = '#888';
-
-function scoreColor(score) {
-  if (score >= 75) return GREEN;
-  if (score >= 55) return YELLOW;
-  return RED;
-}
+import { BackChevronIcon, ShareIcon } from '../components/icons';
+import ScoreCard from '../components/ScoreCard';
+import AngleRow from '../components/AngleRow';
+import PhaseBreakdown, { PHASE_LABELS, PHASE_ORDER, phaseColor } from '../components/PhaseBreakdown';
+import TipsSection from '../components/TipsSection';
 
 async function appendVideo(formData, field, videoUri) {
   if (Platform.OS === 'web') {
@@ -49,11 +42,16 @@ async function buildCompareFormData(reference, yours, shotType) {
 
 export default function VersusResultsScreen({ route, navigation }) {
   const { shotType, reference, yours } = route.params ?? {};
+  const { token } = useAuth();
 
   const [status, setStatus] = useState('loading'); // loading | error | done
   const [errorMsg, setErrorMsg] = useState('');
   const [result, setResult] = useState(null);
   const shareCardRef = useRef(null);
+  const [shareModalVisible, setShareModalVisible] = useState(false);
+  // Bumped every time the share popup opens so ResultShareCard/ScoreRing
+  // remount and the fill-up animation replays instead of only running once.
+  const [shareModalKey, setShareModalKey] = useState(0);
 
   const runComparison = async () => {
     setStatus('loading');
@@ -62,6 +60,7 @@ export default function VersusResultsScreen({ route, navigation }) {
       const formData = await buildCompareFormData(reference, yours, shotType);
       const response = await fetch(`${API_BASE}/api/compare-videos`, {
         method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
         body: formData,
       });
       const data = await response.json();
@@ -86,11 +85,13 @@ export default function VersusResultsScreen({ route, navigation }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── Loading ───────────────────────────────────────────────────────────────
   if (status === 'loading') {
     return (
       <SafeAreaView style={s.safe}>
+        <CourtBackground />
         <View style={s.centerFill}>
-          <ActivityIndicator size="large" color={GREEN} />
+          <ActivityIndicator size="large" color={colors.primary} />
           <Text style={s.loadingTitle}>Comparing your swing...</Text>
           <Text style={s.loadingSub}>Analysing both videos frame by frame</Text>
         </View>
@@ -98,11 +99,12 @@ export default function VersusResultsScreen({ route, navigation }) {
     );
   }
 
+  // ── Error ─────────────────────────────────────────────────────────────────
   if (status === 'error') {
     return (
       <SafeAreaView style={s.safe}>
+        <CourtBackground />
         <View style={s.centerFill}>
-          <Text style={s.errorIcon}>⚠️</Text>
           <Text style={s.loadingTitle}>Comparison failed</Text>
           <Text style={s.loadingSub}>{errorMsg}</Text>
           <TouchableOpacity style={s.retryBtn} onPress={runComparison}>
@@ -116,34 +118,35 @@ export default function VersusResultsScreen({ route, navigation }) {
     );
   }
 
-  const score = result.similarity;
+  // ── Results ───────────────────────────────────────────────────────────────
+  const score = result.overall_score ?? result.similarity ?? 0;
+  const phases = result.phases;
 
   return (
     <SafeAreaView style={s.safe}>
+      <CourtBackground />
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
+        <TouchableOpacity style={s.backLink} onPress={() => navigation.goBack()}>
+          <BackChevronIcon size={13} color={colors.muted} />
+          <Text style={s.backLinkText}>Back</Text>
+        </TouchableOpacity>
+
         <View style={s.headerRow}>
           <View>
-            <Text style={s.header}>Comparison Results</Text>
+            <Text style={s.header}>Comparison results</Text>
             <Text style={s.headerSub}>{shotType?.charAt(0).toUpperCase() + shotType?.slice(1)}</Text>
           </View>
           {Platform.OS !== 'web' && (
             <TouchableOpacity
               style={s.shareBtn}
-              onPress={() => captureAndShare(shareCardRef, 'Share your TennisAI comparison')}
+              onPress={() => { setShareModalKey((k) => k + 1); setShareModalVisible(true); }}
             >
-              <ShareIcon size={17} color={TEXT} />
+              <ShareIcon size={17} color={colors.ink} />
             </TouchableOpacity>
           )}
         </View>
 
-        <View style={s.scoreCard}>
-          <Text style={[s.scoreNum, { color: scoreColor(score) }]}>{score}</Text>
-          <Text style={s.scoreOutOf}>/ 100</Text>
-          <View style={s.scoreTrack}>
-            <View style={[s.scoreFill, { width: `${score}%`, backgroundColor: scoreColor(score) }]} />
-          </View>
-          <Text style={s.matchedTo}>How closely your swing matches the reference video</Text>
-        </View>
+        <ScoreCard score={score} caption="Matched to the reference video" />
 
         {result.reference_clip_url && result.your_clip_url && (
           <TouchableOpacity
@@ -151,45 +154,39 @@ export default function VersusResultsScreen({ route, navigation }) {
             onPress={() => navigation.navigate('SyncCompare', {
               videoAUrl: `${API_BASE}${result.reference_clip_url}`,
               videoBUrl: `${API_BASE}${result.your_clip_url}`,
-              croppedAUrl: result.reference_clip_cropped_url ? `${API_BASE}${result.reference_clip_cropped_url}` : null,
-              croppedBUrl: result.your_clip_cropped_url ? `${API_BASE}${result.your_clip_cropped_url}` : null,
               contactASec: result.reference_contact_time_sec ?? 0,
               contactBSec: result.your_contact_time_sec ?? 0,
               overlayA: result.reference_overlay_trajectory ?? null,
               overlayB: result.your_overlay_trajectory ?? null,
               labelA: 'Reference',
               labelB: 'You',
+              phaseMarkers: result.phase_markers ?? undefined,
             })}
           >
             <Text style={s.compareBtnText}>Compare side-by-side →</Text>
           </TouchableOpacity>
         )}
 
-        <View style={s.angleRow}>
-          <View style={s.angleCard}>
-            <Text style={s.angleLabel}>Reference angle</Text>
-            <Text style={s.angleValue}>{result.reference_angle_label ?? '—'}</Text>
-          </View>
-          <View style={s.angleCard}>
-            <Text style={s.angleLabel}>Your angle</Text>
-            <Text style={s.angleValue}>{result.your_angle_label ?? '—'}</Text>
-          </View>
-        </View>
+        <AngleRow
+          leftLabel="Your angle"
+          leftValue={result.your_angle_label ?? '—'}
+          leftSub={result.your_angle != null ? `${result.your_angle}°` : null}
+          rightLabel="Reference angle"
+          rightValue={result.reference_angle_label ?? '—'}
+          rightSub={result.reference_angle != null ? `${result.reference_angle}°` : null}
+        />
+
         {result.angle_mismatch_warning && (
           <View style={s.warnCard}>
-            <Text style={s.warnText}>⚠️ These videos were filmed from noticeably different angles — the score may be less reliable than usual.</Text>
+            <Text style={s.warnText}>⚠ These videos were filmed from noticeably different angles — the score may be less reliable than usual.</Text>
           </View>
         )}
 
-        <Text style={s.sectionTitle}>What's different</Text>
-        {result.tips.map((tip, i) => (
-          <View key={i} style={s.tipCard}>
-            <Text style={s.tipIcon}>💡</Text>
-            <Text style={s.tipText}>{tip}</Text>
-          </View>
-        ))}
+        <PhaseBreakdown phases={phases} />
 
-        <TouchableOpacity style={s.primaryBtn} onPress={() => navigation.navigate('VersusPick')}>
+        {result.tips?.length > 0 && <TipsSection tips={result.tips} />}
+
+        <TouchableOpacity style={s.primaryBtn} onPress={() => { playTapSound(); navigation.navigate('VersusPick'); }}>
           <Text style={s.primaryBtnText}>Compare another video</Text>
         </TouchableOpacity>
         <TouchableOpacity style={s.secondaryBtn} onPress={() => navigation.popToTop()}>
@@ -205,73 +202,157 @@ export default function VersusResultsScreen({ route, navigation }) {
           caption="Compared to your reference video"
         />
       </View>
+
+      <Modal
+        visible={shareModalVisible}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setShareModalVisible(false)}
+      >
+        <View style={s.shareModalBackdrop}>
+          <View style={s.shareModalCard}>
+            <View style={s.shareModalHeader}>
+              <Text style={s.shareModalTitle}>Share your result</Text>
+              <TouchableOpacity onPress={() => setShareModalVisible(false)} hitSlop={10}>
+                <Text style={s.shareModalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={s.shareModalScroll} showsVerticalScrollIndicator={false}>
+              <View style={s.shareModalPreviewWrap}>
+                <ResultShareCard
+                  key={shareModalKey}
+                  score={score}
+                  shotType={shotType}
+                  caption="Compared to your reference video"
+                  animate
+                />
+              </View>
+
+              {phases && (
+                <View style={s.shareModalBreakdown}>
+                  <Text style={s.shareModalBreakdownTitle}>Swing breakdown</Text>
+                  {PHASE_ORDER.map((key) => {
+                    const phase = phases[key];
+                    if (!phase) return null;
+                    const pScore = phase.score;
+                    return (
+                      <View key={key} style={s.shareModalPhaseRow}>
+                        <View style={s.shareModalPhaseHead}>
+                          <Text style={s.shareModalPhaseName}>{PHASE_LABELS[key]}</Text>
+                          <Text style={[s.shareModalPhaseScore, { color: phaseColor(pScore) }]}>
+                            {pScore ?? '—'}/25
+                          </Text>
+                        </View>
+                        <View style={s.phaseTrack}>
+                          <View
+                            style={[
+                              s.phaseFill,
+                              { width: `${((pScore ?? 0) / 25) * 100}%`, backgroundColor: phaseColor(pScore) },
+                            ]}
+                          />
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+            </ScrollView>
+
+            <View style={s.shareModalFooter}>
+              <TouchableOpacity
+                style={[s.secondaryBtn, s.shareModalFooterBtn]}
+                onPress={() => setShareModalVisible(false)}
+              >
+                <Text style={s.secondaryBtnText}>Close</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[s.primaryBtn, s.shareModalFooterBtn]}
+                onPress={async () => {
+                  await captureAndShare(shareCardRef, 'Share your RallyMax comparison');
+                  setShareModalVisible(false);
+                }}
+              >
+                <Text style={s.primaryBtnText}>Share image</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: DARK },
-  scroll: { padding: 20, paddingTop: 32, paddingBottom: 48 },
+  safe: { flex: 1, backgroundColor: colors.bg },
+  scroll: { padding: spacing.xl, paddingTop: 60, paddingBottom: 48 },
+
+  backLink: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 18, alignSelf: 'flex-start' },
+  backLinkText: { color: colors.muted, fontSize: 13, fontFamily: fonts.semibold },
 
   centerFill: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
-  loadingTitle: { color: TEXT, fontSize: 18, fontWeight: '700', marginTop: 20, textAlign: 'center' },
-  loadingSub: { color: MUTED, fontSize: 14, marginTop: 8, textAlign: 'center', lineHeight: 20 },
-  errorIcon: { fontSize: 40 },
-  retryBtn: { backgroundColor: GREEN, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 28, marginTop: 24 },
-  retryBtnText: { color: '#000', fontSize: 15, fontWeight: '700' },
+  loadingTitle: { color: colors.ink, fontSize: 18, fontFamily: fonts.bold, marginTop: 20, textAlign: 'center' },
+  loadingSub: { color: colors.muted, fontSize: 14, marginTop: 8, textAlign: 'center', lineHeight: 20, fontFamily: fonts.regular },
+  retryBtn: { backgroundColor: colors.primary, borderRadius: radius.md, paddingVertical: 12, paddingHorizontal: 28, marginTop: 24 },
+  retryBtnText: { color: colors.white, fontSize: 15, fontFamily: fonts.bold },
 
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  header: { color: TEXT, fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
-  headerSub: { color: MUTED, fontSize: 14, marginTop: 2, marginBottom: 24 },
+  header: { color: colors.ink, fontSize: 30, fontFamily: fonts.serifItalic },
+  headerSub: { color: colors.muted, fontSize: 14, marginTop: 2, marginBottom: 22, fontFamily: fonts.regular },
   shareBtn: {
-    width: 38, height: 38, borderRadius: 19, backgroundColor: CARD,
-    borderWidth: 1, borderColor: BORDER, alignItems: 'center', justifyContent: 'center',
+    width: 38, height: 38, borderRadius: 19, backgroundColor: colors.surface,
+    alignItems: 'center', justifyContent: 'center',
   },
   offscreen: { position: 'absolute', left: -9999, top: -9999 },
 
-  scoreCard: {
-    backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 18,
-    padding: 24, alignItems: 'center', marginBottom: 16,
-  },
-  scoreNum: { fontSize: 56, fontWeight: '800' },
-  scoreOutOf: { color: MUTED, fontSize: 14, marginTop: -8 },
-  scoreTrack: { width: '100%', height: 8, backgroundColor: '#1a1a1a', borderRadius: 4, marginTop: 16, overflow: 'hidden' },
-  scoreFill: { height: 8, borderRadius: 4 },
-  matchedTo: { color: MUTED, fontSize: 13, marginTop: 14, textAlign: 'center' },
-
   compareBtn: {
-    borderWidth: 1, borderColor: BORDER, borderRadius: 12,
-    paddingVertical: 13, alignItems: 'center', marginBottom: 16,
+    backgroundColor: colors.surface, borderRadius: radius.pill,
+    paddingVertical: 13, alignItems: 'center', marginBottom: 14,
   },
-  compareBtnText: { color: GREEN, fontSize: 14, fontWeight: '700' },
-
-  angleRow: { flexDirection: 'row', gap: 12, marginBottom: 12 },
-  angleCard: {
-    flex: 1, backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
-    borderRadius: 14, padding: 16, alignItems: 'center',
-  },
-  angleLabel: { color: MUTED, fontSize: 12 },
-  angleValue: { color: TEXT, fontSize: 17, fontWeight: '700', marginTop: 4 },
+  compareBtnText: { color: colors.primary, fontSize: 13.5, fontFamily: fonts.bold },
 
   warnCard: {
-    backgroundColor: '#241a0d', borderWidth: 1, borderColor: '#4a3a1a',
-    borderRadius: 12, padding: 14, marginBottom: 12,
+    backgroundColor: colors.amberBg, borderRadius: radius.sm, padding: 14, marginBottom: 20,
   },
-  warnText: { color: '#facc15', fontSize: 12, lineHeight: 18 },
+  warnText: { color: colors.amberText, fontSize: 12, lineHeight: 18, fontFamily: fonts.regular },
 
-  sectionTitle: { color: TEXT, fontSize: 16, fontWeight: '700', marginBottom: 12, marginTop: 12 },
-  tipCard: {
-    flexDirection: 'row', gap: 10, backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
-    borderRadius: 14, padding: 14, marginBottom: 10, alignItems: 'flex-start',
-  },
-  tipIcon: { fontSize: 16 },
-  tipText: { color: '#ccc', fontSize: 14, lineHeight: 20, flex: 1 },
+  phaseTrack: { height: 5, backgroundColor: colors.border, borderRadius: 3, overflow: 'hidden' },
+  phaseFill: { height: 5, borderRadius: 3 },
 
-  primaryBtn: { backgroundColor: GREEN, borderRadius: 12, paddingVertical: 15, alignItems: 'center', marginTop: 16 },
-  primaryBtnText: { color: '#000', fontSize: 15, fontWeight: '700' },
+  primaryBtn: { backgroundColor: colors.primary, borderRadius: radius.pill, paddingVertical: 15, alignItems: 'center', marginTop: 16 },
+  primaryBtnText: { color: colors.white, fontSize: 14.5, fontFamily: fonts.bold },
   secondaryBtn: {
-    borderWidth: 1, borderColor: BORDER, borderRadius: 12,
+    backgroundColor: colors.surface, borderRadius: radius.pill,
     paddingVertical: 14, alignItems: 'center', marginTop: 10,
   },
-  secondaryBtnText: { color: '#aaa', fontSize: 15, fontWeight: '600' },
+  secondaryBtnText: { color: colors.mutedDark, fontSize: 14.5, fontFamily: fonts.bold },
+
+  shareModalBackdrop: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center', justifyContent: 'center', padding: spacing.xl,
+  },
+  shareModalCard: {
+    width: '100%', maxWidth: 400, maxHeight: '85%',
+    backgroundColor: colors.bg, borderRadius: radius.xxl, padding: spacing.lg,
+  },
+  shareModalHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  shareModalTitle: { color: colors.ink, fontSize: 17, fontFamily: fonts.bold },
+  shareModalClose: { color: colors.muted, fontSize: 18, fontFamily: fonts.semibold, padding: 4 },
+  shareModalScroll: { alignItems: 'center', paddingBottom: spacing.sm },
+  shareModalPreviewWrap: { marginBottom: spacing.lg },
+  shareModalBreakdown: { width: '100%' },
+  shareModalBreakdownTitle: {
+    color: colors.ink, fontSize: 15, fontFamily: fonts.bold, marginBottom: spacing.sm,
+  },
+  shareModalPhaseRow: { marginBottom: spacing.sm },
+  shareModalPhaseHead: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5,
+  },
+  shareModalPhaseName: { color: colors.ink, fontSize: 13.5, fontFamily: fonts.semibold },
+  shareModalPhaseScore: { fontSize: 13.5, fontFamily: fonts.bold },
+  shareModalFooter: { flexDirection: 'row', gap: 10, marginTop: spacing.md },
+  shareModalFooterBtn: { flex: 1, marginTop: 0 },
 });

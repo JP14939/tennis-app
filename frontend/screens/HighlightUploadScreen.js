@@ -6,6 +6,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE } from '../config/api';
+import { playTapSound } from '../utils/sounds';
 
 const GREEN  = '#4ade80';
 const DARK   = '#0d0d0d';
@@ -91,7 +92,6 @@ export default function HighlightUploadScreen({ navigation }) {
     return (
       <SafeAreaView style={s.safe}>
         <View style={s.centerFill}>
-          <Text style={s.doneIcon}>✅</Text>
           <Text style={s.loadingTitle}>Upload complete</Text>
           <Text style={s.loadingSub}>We're scanning your match for rallies now — you'll get a notification when it's ready to review.</Text>
           <TouchableOpacity style={s.continueBtn} onPress={() => navigation.navigate('HighlightArchive')}>
@@ -113,14 +113,12 @@ export default function HighlightUploadScreen({ navigation }) {
         <TouchableOpacity style={s.uploadBtn} onPress={pick} disabled={picking}>
           {videoUri ? (
             <>
-              <Text style={s.uploadIcon}>✅</Text>
               <Text style={s.uploadBtnText}>Match selected</Text>
               <Text style={s.uploadBtnSub} numberOfLines={1}>{videoName}</Text>
               <Text style={s.changeText}>Tap to change</Text>
             </>
           ) : (
             <>
-              <Text style={s.uploadIcon}>🎬</Text>
               <Text style={s.uploadBtnText}>{picking ? 'Opening...' : 'Choose match video'}</Text>
               <Text style={s.uploadBtnSub}>MP4 · MOV · any length</Text>
             </>
@@ -129,7 +127,7 @@ export default function HighlightUploadScreen({ navigation }) {
 
         <TouchableOpacity
           style={[s.continueBtn, !videoUri && s.continueDisabled]}
-          onPress={startUpload}
+          onPress={() => { playTapSound(); startUpload(); }}
           disabled={!videoUri}
         >
           <Text style={s.continueBtnText}>Find my rallies →</Text>
@@ -146,7 +144,6 @@ const s = StyleSheet.create({
   centerFill: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
   loadingTitle: { color: TEXT, fontSize: 18, fontWeight: '700', marginTop: 20, textAlign: 'center' },
   loadingSub: { color: MUTED, fontSize: 14, marginTop: 8, textAlign: 'center', lineHeight: 20 },
-  doneIcon: { fontSize: 44 },
   errorText: { color: '#f87171', fontSize: 13, marginBottom: 16, textAlign: 'center' },
 
   h1:  { color: TEXT, fontSize: 26, fontWeight: '800', letterSpacing: -0.5, marginBottom: 8 },
@@ -156,7 +153,6 @@ const s = StyleSheet.create({
     backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
     borderRadius: 16, padding: 28, alignItems: 'center', gap: 6,
   },
-  uploadIcon:    { fontSize: 36, marginBottom: 4 },
   uploadBtnText: { color: TEXT, fontSize: 16, fontWeight: '600' },
   uploadBtnSub:  { color: MUTED, fontSize: 13 },
   changeText:    { color: GREEN, fontSize: 12, marginTop: 4 },

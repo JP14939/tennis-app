@@ -10,16 +10,16 @@ const CARD_H = 400;
 // frontend/utils/shareCard.js. Deliberately a purpose-built layout, not a
 // screenshot of the live results screen (which has scroll content, buttons,
 // nav chrome etc. that shouldn't end up in a shared image).
-const ResultShareCard = forwardRef(function ResultShareCard({ score, shotType, caption }, ref) {
+const ResultShareCard = forwardRef(function ResultShareCard({ score, shotType, caption, animate = false }, ref) {
   return (
     <View ref={ref} collapsable={false} style={s.card}>
       <Text style={s.shotType}>{shotType?.charAt(0).toUpperCase() + shotType?.slice(1)}</Text>
       <View style={s.ringWrap}>
-        <ScoreRing score={score} size={140} strokeWidth={10} />
+        <ScoreRing score={score} size={140} strokeWidth={10} animate={animate} />
       </View>
       <Text style={s.caption}>{caption}</Text>
       <View style={s.footer}>
-        <Text style={s.wordmark}>TennisAI</Text>
+        <Text style={s.wordmark}>RallyMax</Text>
       </View>
     </View>
   );

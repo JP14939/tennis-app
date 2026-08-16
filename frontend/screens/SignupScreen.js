@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity,
+  View, Text, TextInput, TouchableOpacity, Image,
   StyleSheet, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
+import { playTapSound } from '../utils/sounds';
+import { colors, fonts, radius, spacing } from '../theme';
 
 export default function SignupScreen({ navigation }) {
   const { signup } = useAuth();
@@ -40,7 +42,7 @@ export default function SignupScreen({ navigation }) {
         <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
 
           <View style={s.header}>
-            <Text style={s.logo}>🎾</Text>
+            <Image source={require('../assets/branding/logo-rallymax.png')} style={s.logo} resizeMode="contain" />
             <Text style={s.title}>Create account</Text>
             <Text style={s.sub}>Start analysing your swing for free</Text>
           </View>
@@ -60,7 +62,7 @@ export default function SignupScreen({ navigation }) {
               <TextInput
                 style={s.input}
                 placeholder="Roger Federer"
-                placeholderTextColor="#555"
+                placeholderTextColor={colors.muted}
                 autoCapitalize="words"
                 autoComplete="name"
                 value={name}
@@ -73,7 +75,7 @@ export default function SignupScreen({ navigation }) {
               <TextInput
                 style={s.input}
                 placeholder="you@example.com"
-                placeholderTextColor="#555"
+                placeholderTextColor={colors.muted}
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoComplete="email"
@@ -87,7 +89,7 @@ export default function SignupScreen({ navigation }) {
               <TextInput
                 style={s.input}
                 placeholder="Min. 8 characters"
-                placeholderTextColor="#555"
+                placeholderTextColor={colors.muted}
                 secureTextEntry
                 autoComplete="new-password"
                 value={password}
@@ -99,7 +101,7 @@ export default function SignupScreen({ navigation }) {
 
             <TouchableOpacity
               style={[s.btnPrimary, loading && s.btnDisabled]}
-              onPress={handleSignup}
+              onPress={() => { playTapSound(); handleSignup(); }}
               disabled={loading}
             >
               <Text style={s.btnPrimaryText}>{loading ? 'Creating account...' : 'Create free account'}</Text>
@@ -124,60 +126,61 @@ export default function SignupScreen({ navigation }) {
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#0d0d0d' },
+  safe: { flex: 1, backgroundColor: colors.bg },
   flex: { flex: 1 },
-  scroll: { flexGrow: 1, padding: 24 },
+  scroll: { flexGrow: 1, padding: spacing.xxl },
 
   header: { alignItems: 'center', marginBottom: 24 },
-  logo: { fontSize: 40, marginBottom: 14 },
-  title: { color: '#fff', fontSize: 26, fontWeight: '700', letterSpacing: -0.5, marginBottom: 6 },
-  sub: { color: '#666', fontSize: 15 },
+  logo: { width: 140, height: 46, marginBottom: 18 },
+  title: { color: colors.ink, fontSize: 32, fontFamily: fonts.serifItalic, marginBottom: 6 },
+  sub: { color: colors.muted, fontSize: 15, fontFamily: fonts.regular },
 
   perks: {
-    backgroundColor: '#111',
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#1e2e1e',
-    borderRadius: 12,
+    borderColor: colors.primarySoft,
+    borderRadius: radius.lg,
     padding: 16,
     gap: 10,
     marginBottom: 28,
   },
   perk: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  perkCheck: { color: '#4ade80', fontWeight: '700', fontSize: 15 },
-  perkText: { color: '#aaa', fontSize: 14 },
+  perkCheck: { color: colors.primary, fontFamily: fonts.bold, fontSize: 15 },
+  perkText: { color: colors.mutedDark, fontSize: 14, fontFamily: fonts.regular },
 
-  form: { gap: 16 },
-  field: { gap: 6 },
-  label: { color: '#aaa', fontSize: 13, fontWeight: '500' },
+  form: { gap: spacing.lg },
+  field: { gap: spacing.xs },
+  label: { color: colors.mutedDark, fontSize: 13, fontFamily: fonts.semibold },
   input: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#2a2a2a',
-    borderRadius: 10,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
     padding: 14,
-    color: '#fff',
+    color: colors.ink,
     fontSize: 15,
+    fontFamily: fonts.regular,
   },
 
-  error: { color: '#f87171', fontSize: 13, textAlign: 'center' },
+  error: { color: colors.coral, fontSize: 13, textAlign: 'center', fontFamily: fonts.semibold },
 
   btnPrimary: {
-    backgroundColor: '#4ade80',
-    borderRadius: 12,
+    backgroundColor: colors.primary,
+    borderRadius: radius.sm,
     padding: 15,
     alignItems: 'center',
     marginTop: 4,
   },
   btnDisabled: { opacity: 0.6 },
-  btnPrimaryText: { color: '#000', fontSize: 16, fontWeight: '700' },
+  btnPrimaryText: { color: colors.white, fontSize: 16, fontFamily: fonts.bold },
 
-  terms: { color: '#444', fontSize: 11, textAlign: 'center', lineHeight: 16 },
+  terms: { color: colors.divider, fontSize: 11, textAlign: 'center', lineHeight: 16, fontFamily: fonts.regular },
 
   footer: {
     flexDirection: 'row',
     justifyContent: 'center',
     marginTop: 32,
   },
-  footerText: { color: '#555', fontSize: 14 },
-  footerLink: { color: '#4ade80', fontSize: 14, fontWeight: '600' },
+  footerText: { color: colors.muted, fontSize: 14, fontFamily: fonts.regular },
+  footerLink: { color: colors.primary, fontSize: 14, fontFamily: fonts.bold },
 });

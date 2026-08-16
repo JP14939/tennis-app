@@ -34,6 +34,7 @@ def cropped_path_for(clip_path, shot_type):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--limit', type=int, default=None, help='Only process the first N entries (for a quick test run)')
+    parser.add_argument('--force', action='store_true', help='Re-crop even if an output file already exists (e.g. after a crop-parameter change)')
     args = parser.parse_args()
 
     with open(DB_PATH) as f:
@@ -55,7 +56,7 @@ def main():
             continue
 
         out_path = cropped_path_for(clip_path, shot_type)
-        if os.path.exists(out_path):
+        if os.path.exists(out_path) and not args.force:
             skipped += 1
             continue
 

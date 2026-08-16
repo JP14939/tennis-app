@@ -18,3 +18,7 @@ build/
 # fine-tuned, not original work, redownload automatically wherever missing)
 yolo11n.pt
 yolo11n-pose.pt
+
+# Cached pose extractions used by tune_rally_gap.py's sweep -- large,
+# regenerable from the source video, not meant to be shared/committed
+scripts/11_highlight_clipping/.tuning_cache/

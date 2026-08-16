@@ -27,6 +27,9 @@ from infer_angle import infer_camera_angle, angle_label
 from compare_swing import extract_user_poses, build_user_trajectory, similarity_score, KEY_LANDMARKS, build_overlay_trajectory
 from trajectory_compare import dtw_distance
 from select_coaching_tips import get_coaching_tips
+from build_pro_database import PRE_SEC, POST_SEC
+from track_racket_in_clip import track_racket_body, avg_racket_body_distance
+import phase_breakdown
 
 # Above this angular difference between the two videos' inferred camera
 # angles, the two clips aren't comparable — unlike the pro-database flow
@@ -94,6 +97,36 @@ def compare_videos(reference_path, your_path, shot_type, contact_a=None, contact
             'from a similar height (see the fence-mount guide) and try again.'
         )
 
+    # Phase breakdown (backswing/contact/follow-through/body-rotation), same
+    # as compare_swing.py computes for its top match -- here the reference
+    # video stands in for the "pro entry" since there's no database row to
+    # pull one from. Non-fatal: a comparison is still useful with just the
+    # overall similarity + tips if this fails.
+    phases = None
+    overall_score = None
+    phase_markers = None
+    try:
+        print('  Computing phase breakdown...', file=sys.stderr)
+        lo_a = peak_a - int(PRE_SEC * fps_a)
+        hi_a = peak_a + int(POST_SEC * fps_a)
+        ref_racket_frames = track_racket_body(reference_path, frame_range=(lo_a, hi_a))
+        ref_racket_body_distance = avg_racket_body_distance(ref_racket_frames)
+
+        lo_b = peak_b - int(PRE_SEC * fps_b)
+        hi_b = peak_b + int(POST_SEC * fps_b)
+        your_racket_frames = track_racket_body(your_path, frame_range=(lo_b, hi_b))
+        your_racket_body_distance = avg_racket_body_distance(your_racket_frames)
+
+        breakdown = phase_breakdown.compute_phase_breakdown(
+            traj_b, {'trajectory': traj_a, 'racket_body_distance': ref_racket_body_distance},
+            shot_type, your_racket_body_distance)
+        phases = {k: v for k, v in breakdown.items() if k not in ('overall_score', 'phase_markers')}
+        overall_score = breakdown['overall_score']
+        phase_markers = breakdown['phase_markers']
+        print(f'  Overall phase score: {overall_score}', file=sys.stderr)
+    except Exception as e:
+        print(f'  Phase breakdown failed (non-fatal): {e}', file=sys.stderr)
+
     return {
         'shot_type':          shot_type,
         'similarity':         score,
@@ -108,6 +141,9 @@ def compare_videos(reference_path, your_path, shot_type, contact_a=None, contact
         'angle_mismatch_deg': angle_mismatch_deg,
         'angle_mismatch_warning': angle_mismatch_deg is not None and angle_mismatch_deg > ANGLE_MISMATCH_WARNING_DEG,
         'tips': tips if tips else [{'tip_text': 'Great technique! Your form closely matches the reference video.', 'drill': None}],
+        'phases': phases,
+        'overall_score': overall_score,
+        'phase_markers': phase_markers,
     }
 
 

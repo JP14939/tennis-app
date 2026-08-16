@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, SafeAreaView,
   ScrollView, Alert, ActivityIndicator, Platform,
@@ -6,16 +6,20 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../context/AuthContext';
-import { fetchHistory, deleteHistory } from '../api/history';
+import { fetchHistory, fetchHistoryItem, deleteHistory, flagNotShot, confirmRealShot, correctShotType } from '../api/history';
 import { colors, fonts, radius, spacing, scoreColor } from '../theme';
 import CourtBackground from '../components/CourtBackground';
 import TrendChart from '../components/TrendChart';
 import ProgressShareCard from '../components/ProgressShareCard';
 import { captureAndShare } from '../utils/shareCard';
-import { TennisBallIcon, PlusIcon, VideoIcon, CheckIcon, ShareIcon } from '../components/icons';
+import { TennisBallIcon, PlusIcon, VideoIcon, CheckIcon, ShareIcon, FlagIcon } from '../components/icons';
+import { API_BASE } from '../config/api';
+import FriendPickerModal from '../components/FriendPickerModal';
+import { shareSwing } from '../api/friends';
+import DrillsSection from '../components/DrillsSection';
+import { playTapSound } from '../utils/sounds';
 
 const SHOT_TYPES = ['forehand', 'backhand', 'serve'];
-const PROGRESS_FILTERS = ['all', ...SHOT_TYPES];
 
 function ScoreBar({ value }) {
   return (
@@ -39,10 +43,15 @@ function formatDate(isoString) {
     d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
-function AnalysisCard({ item, onPress, onLongPress }) {
+function AnalysisCard({ item, onPress, onLongPress, onWatchCompare, onToggleFlag, onToggleConfirm, onCorrectType, onSendToFriend }) {
   const score = Math.round(item.similarity ?? 0);
+  const top = item.result?.matches?.[0];
+  const canWatchCompare = !!(top?.pro_clip_url && item.result?.user_clip_url);
+  const flagged = !!item.flagged_not_shot;
+  const confirmed = !!item.confirmed_real_shot;
+  const [showTypePicker, setShowTypePicker] = useState(false);
   return (
-    <TouchableOpacity style={c.card} onPress={onPress} onLongPress={onLongPress} activeOpacity={0.8}>
+    <TouchableOpacity style={[c.card, flagged && c.cardFlagged]} onPress={onPress} onLongPress={onLongPress} activeOpacity={0.8}>
       <View style={c.cardHeader}>
         <View style={c.shotBadge}>
           <TennisBallIcon size={18} color={colors.primary} />
@@ -54,14 +63,96 @@ function AnalysisCard({ item, onPress, onLongPress }) {
         </View>
       </View>
 
+      {flagged && (
+        <View style={c.flaggedBanner}>
+          <FlagIcon size={11} color={colors.coral} />
+          <Text style={c.flaggedBannerText}>Flagged: not a real shot</Text>
+        </View>
+      )}
+      {confirmed && (
+        <View style={c.confirmedBanner}>
+          <CheckIcon size={11} color={colors.primary} />
+          <Text style={c.confirmedBannerText}>Confirmed: real shot</Text>
+        </View>
+      )}
+
       <View style={c.scoreRow}>
         <Text style={c.scoreLabel}>Match score</Text>
         <Text style={c.scoreNum}>{score}<Text style={c.scoreSlash}>/100</Text></Text>
       </View>
       <ScoreBar value={score} />
 
-      <Text style={c.proId}>{formatProId(item.pro_id)}</Text>
+      <Text style={c.proId}>{formatProId(item.pro_id, top?.player_name)}</Text>
       {item.tip && <Text style={c.tip} numberOfLines={2}>{item.tip}</Text>}
+
+      {/* Real human ground truth for scripts/16_shot_verification/'s
+          teacher-student loop -- confirming or flagging is what actually
+          teaches the system, on top of Claude's own batch-verified passes. */}
+      <Text style={c.verifyLabel}>Is this actually a shot?</Text>
+      <View style={c.verifyRow}>
+        <TouchableOpacity
+          style={[c.verifyBtn, confirmed && c.verifyBtnConfirmed]}
+          onPress={(e) => { e.stopPropagation?.(); onToggleConfirm(); }}
+          activeOpacity={0.8}
+        >
+          <CheckIcon size={12} color={confirmed ? colors.white : colors.primary} />
+          <Text style={[c.verifyBtnText, confirmed && c.verifyBtnTextOn]}>Yes, real shot</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[c.verifyBtn, flagged && c.verifyBtnFlagged]}
+          onPress={(e) => { e.stopPropagation?.(); onToggleFlag(); }}
+          activeOpacity={0.8}
+        >
+          <FlagIcon size={12} color={flagged ? colors.white : colors.coral} />
+          <Text style={[c.verifyBtnText, flagged && c.verifyBtnTextOn]}>No, not a shot</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Real human ground truth for scripts/14_shot_classifier/'s
+          teacher-student loop, same idea as the verify row above but for
+          shot TYPE instead of real-vs-not-real. */}
+      <TouchableOpacity
+        style={c.wrongTypeBtn}
+        onPress={(e) => { e.stopPropagation?.(); setShowTypePicker((v) => !v); }}
+        activeOpacity={0.7}
+      >
+        <Text style={c.wrongTypeText}>{showTypePicker ? 'Cancel' : 'Wrong shot type?'}</Text>
+      </TouchableOpacity>
+      {showTypePicker && (
+        <View style={c.typePickerRow}>
+          {SHOT_TYPES.map((st) => (
+            <TouchableOpacity
+              key={st}
+              style={[c.typePickerBtn, st === item.shot_type && c.typePickerBtnActive]}
+              onPress={(e) => { e.stopPropagation?.(); setShowTypePicker(false); onCorrectType(st); }}
+              activeOpacity={0.8}
+            >
+              <Text style={[c.typePickerBtnText, st === item.shot_type && c.typePickerBtnTextActive]}>
+                {st.charAt(0).toUpperCase() + st.slice(1)}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      {canWatchCompare && (
+        <TouchableOpacity
+          style={c.watchBtn}
+          onPress={(e) => { e.stopPropagation?.(); onWatchCompare(); }}
+          activeOpacity={0.8}
+        >
+          <VideoIcon size={13} color={colors.primary} />
+          <Text style={c.watchBtnText}>Watch & compare →</Text>
+        </TouchableOpacity>
+      )}
+
+      <TouchableOpacity
+        style={c.sendBtn}
+        onPress={(e) => { e.stopPropagation?.(); onSendToFriend(); }}
+        activeOpacity={0.8}
+      >
+        <Text style={c.sendBtnText}>Send to a friend</Text>
+      </TouchableOpacity>
     </TouchableOpacity>
   );
 }
@@ -82,6 +173,54 @@ const c = StyleSheet.create({
   scoreSlash: { color: colors.divider, fontSize: 12, fontFamily: fonts.regular },
   proId:      { color: colors.muted, fontSize: 11, marginBottom: 6, fontFamily: fonts.regular },
   tip:        { color: colors.mutedDark, fontSize: 12.5, lineHeight: 18, fontFamily: fonts.regular },
+  cardFlagged: { opacity: 0.85 },
+  flaggedBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start',
+    backgroundColor: colors.coralSoft ?? '#fbe2df', borderRadius: radius.pill,
+    paddingHorizontal: 10, paddingVertical: 4, marginBottom: 10,
+  },
+  flaggedBannerText: { color: colors.coral, fontSize: 11, fontFamily: fonts.bold },
+  confirmedBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start',
+    backgroundColor: colors.primarySoft, borderRadius: radius.pill,
+    paddingHorizontal: 10, paddingVertical: 4, marginBottom: 10,
+  },
+  confirmedBannerText: { color: colors.primary, fontSize: 11, fontFamily: fonts.bold },
+  verifyLabel: { color: colors.muted, fontSize: 11, fontFamily: fonts.semibold, marginTop: 10, marginBottom: 6 },
+  verifyRow: { flexDirection: 'row', gap: 8 },
+  verifyBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    backgroundColor: colors.bg, borderRadius: radius.pill,
+    paddingHorizontal: 10, paddingVertical: 8,
+  },
+  verifyBtnConfirmed: { backgroundColor: colors.primary },
+  verifyBtnFlagged: { backgroundColor: colors.coral },
+  verifyBtnText: { color: colors.mutedDark, fontSize: 11.5, fontFamily: fonts.bold },
+  verifyBtnTextOn: { color: colors.white },
+  wrongTypeBtn: {
+    alignSelf: 'flex-start', marginTop: 10, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 6,
+  },
+  wrongTypeText: { color: colors.mutedDark, fontSize: 11.5, fontFamily: fonts.bold },
+  typePickerRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
+  typePickerBtn: {
+    flex: 1, alignItems: 'center', backgroundColor: colors.bg, borderRadius: radius.pill,
+    paddingHorizontal: 10, paddingVertical: 8,
+  },
+  typePickerBtnActive: { backgroundColor: colors.primary },
+  typePickerBtnText: { color: colors.mutedDark, fontSize: 11.5, fontFamily: fonts.bold },
+  typePickerBtnTextActive: { color: colors.white },
+  watchBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start',
+    marginTop: 10, backgroundColor: colors.primarySoft, borderRadius: radius.pill,
+    paddingHorizontal: 12, paddingVertical: 7,
+  },
+  watchBtnText: { color: colors.primary, fontSize: 12, fontFamily: fonts.bold },
+  sendBtn: {
+    alignSelf: 'flex-start', marginTop: 8, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 7,
+  },
+  sendBtnText: { color: colors.mutedDark, fontSize: 12, fontFamily: fonts.bold },
 });
 
 // ── Progress trend (derived client-side from the already-fetched history --
@@ -99,12 +238,18 @@ function ProgressSection({ analyses }) {
 
   const delta = points.length >= 2 ? points[points.length - 1].score - points[0].score : null;
   const filterLabel = filter === 'all' ? 'Overall' : filter.charAt(0).toUpperCase() + filter.slice(1);
+  const avgScore = points.length > 0
+    ? Math.round(points.reduce((sum, p) => sum + p.score, 0) / points.length)
+    : null;
 
   return (
     <View style={pg.wrap}>
       <View style={pg.header}>
         <View style={pg.headerLeft}>
-          <Text style={pg.title}>Progress</Text>
+          <Text style={pg.title}>Progress — {filterLabel}</Text>
+          {avgScore !== null && (
+            <Text style={pg.avgText}>Avg score {avgScore}/100{filter === 'all' ? '' : ` (${filter} only)`}</Text>
+          )}
           {delta !== null && (
             <Text style={[pg.delta, { color: scoreColor(points[points.length - 1].score) }]}>
               {delta >= 0 ? '+' : ''}{delta} since your first shot
@@ -114,7 +259,7 @@ function ProgressSection({ analyses }) {
         {points.length > 0 && Platform.OS !== 'web' && (
           <TouchableOpacity
             style={pg.shareBtn}
-            onPress={() => captureAndShare(shareCardRef, 'Share your TennisAI progress')}
+            onPress={() => captureAndShare(shareCardRef, 'Share your RallyMax progress')}
           >
             <ShareIcon size={15} color={colors.mutedDark} />
           </TouchableOpacity>
@@ -122,14 +267,22 @@ function ProgressSection({ analyses }) {
       </View>
 
       <View style={pg.filterRow}>
-        {PROGRESS_FILTERS.map(f => (
+        <TouchableOpacity
+          style={[pg.pill, pg.overallPill, filter === 'all' && pg.pillActive]}
+          onPress={() => setFilter('all')}
+        >
+          <Text style={[pg.pillText, filter === 'all' && pg.pillTextActive]}>Overall Improvement</Text>
+        </TouchableOpacity>
+      </View>
+      <View style={pg.filterRow}>
+        {SHOT_TYPES.map(f => (
           <TouchableOpacity
             key={f}
             style={[pg.pill, filter === f && pg.pillActive]}
             onPress={() => setFilter(f)}
           >
             <Text style={[pg.pillText, filter === f && pg.pillTextActive]}>
-              {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
+              {f.charAt(0).toUpperCase() + f.slice(1)}
             </Text>
           </TouchableOpacity>
         ))}
@@ -160,13 +313,15 @@ const pg = StyleSheet.create({
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 },
   headerLeft: { flex: 1 },
   title: { color: colors.ink, fontSize: 16, fontFamily: fonts.bold },
+  avgText: { color: colors.mutedDark, fontSize: 12, fontFamily: fonts.semibold, marginTop: 3 },
   delta: { fontSize: 12, fontFamily: fonts.bold, marginTop: 2 },
   shareBtn: {
     width: 30, height: 30, borderRadius: 15, backgroundColor: colors.bg,
     alignItems: 'center', justifyContent: 'center',
   },
-  filterRow: { flexDirection: 'row', gap: 6, marginBottom: 12 },
+  filterRow: { flexDirection: 'row', gap: 6, marginBottom: 8 },
   pill: { flex: 1, backgroundColor: colors.bg, borderRadius: radius.pill, paddingVertical: 7, alignItems: 'center' },
+  overallPill: { backgroundColor: colors.primarySoft },
   pillActive: { backgroundColor: colors.primary },
   pillText: { color: colors.mutedDark, fontSize: 11.5, fontFamily: fonts.semibold },
   pillTextActive: { color: colors.white, fontFamily: fonts.bold },
@@ -248,7 +403,7 @@ function UploadPanel({ onCancel, onUpload }) {
 
       <TouchableOpacity
         style={[up.submitBtn, !videoUri && up.submitDisabled]}
-        onPress={submit}
+        onPress={() => { playTapSound(); submit(); }}
         disabled={!videoUri}
       >
         <Text style={up.submitText}>Analyse swing →</Text>
@@ -291,12 +446,33 @@ const up = StyleSheet.create({
 });
 
 // ── Main screen ───────────────────────────────────────────────────────────────
-export default function HistoryScreen({ navigation }) {
+export default function HistoryScreen({ navigation, route }) {
   const { token, isAuthenticated, isPremium } = useAuth();
+  const [sendItem, setSendItem] = useState(null);
+  const [friendPickerVisible, setFriendPickerVisible] = useState(false);
+  const handleSendToFriend = async (friend) => {
+    setFriendPickerVisible(false);
+    try {
+      await shareSwing(token, friend.id, sendItem.id);
+      Alert.alert('Sent!', `${friend.name} can now see this swing on Friends.`);
+    } catch (err) {
+      Alert.alert('Could not send', err.message || 'Something went wrong');
+    }
+  };
+  const [segment, setSegment] = useState('history'); // history | drills
   const [showUpload, setShowUpload]   = useState(false);
   const [loading, setLoading]         = useState(true);
   const [analyses, setAnalyses]       = useState([]);
   const [limit, setLimit]             = useState(null);
+  // Seeded from Home's "Great swings" tile (navigation.navigate('MainTabs',
+  // { screen: 'History', params: { initialFilter: 'great' } })) -- re-synced
+  // whenever that param changes (e.g. tapping the tile again from Home while
+  // already on this tab), but otherwise left alone so the user's own "Clear
+  // filter" tap sticks instead of being fought by a stale param.
+  const [listFilter, setListFilter] = useState(route.params?.initialFilter ?? null);
+  useEffect(() => {
+    if (route.params?.initialFilter) setListFilter(route.params.initialFilter);
+  }, [route.params?.initialFilter]);
 
   const load = useCallback(async () => {
     if (!isAuthenticated) {
@@ -326,8 +502,68 @@ export default function HistoryScreen({ navigation }) {
     navigation.navigate('Upload', { videoUri, shotType });
   };
 
+  const handleToggleFlag = async (item) => {
+    const nextFlagged = !item.flagged_not_shot;
+    // Optimistic update -- toggling this should feel instant, and a failed
+    // request just gets corrected back on the next load() below. Mutually
+    // exclusive with confirmed_real_shot, same as the backend enforces.
+    setAnalyses((prev) => prev.map((a) => (a.id === item.id
+      ? { ...a, flagged_not_shot: nextFlagged, confirmed_real_shot: nextFlagged ? false : a.confirmed_real_shot }
+      : a)));
+    try {
+      await flagNotShot(token, item.id, nextFlagged);
+    } catch (err) {
+      Alert.alert('Could not update flag', err.message || 'Something went wrong');
+      load();
+    }
+  };
+
+  const handleToggleConfirm = async (item) => {
+    const nextConfirmed = !item.confirmed_real_shot;
+    setAnalyses((prev) => prev.map((a) => (a.id === item.id
+      ? { ...a, confirmed_real_shot: nextConfirmed, flagged_not_shot: nextConfirmed ? false : a.flagged_not_shot }
+      : a)));
+    try {
+      await confirmRealShot(token, item.id, nextConfirmed);
+    } catch (err) {
+      Alert.alert('Could not update confirmation', err.message || 'Something went wrong');
+      load();
+    }
+  };
+
+  const handleCorrectType = async (item, newShotType) => {
+    if (newShotType === item.shot_type) return;
+    const prevShotType = item.shot_type;
+    setAnalyses((prev) => prev.map((a) => (a.id === item.id ? { ...a, shot_type: newShotType } : a)));
+    try {
+      await correctShotType(token, item.id, newShotType);
+    } catch (err) {
+      Alert.alert('Could not update shot type', err.message || 'Something went wrong');
+      setAnalyses((prev) => prev.map((a) => (a.id === item.id ? { ...a, shot_type: prevShotType } : a)));
+    }
+  };
+
+  // History cards only carry a slimmed-down result (no overlay trajectories
+  // -- see backend/src/routes/history.js's serializeRowSummary), so opening
+  // a card needs the real thing fetched fresh, not whatever's already on
+  // the item.
+  const openResult = async (item) => {
+    try {
+      const full = await fetchHistoryItem(token, item.id);
+      navigation.navigate('Results', {
+        savedResult: full.result,
+        analysisId: item.id,
+        shotType: item.shot_type,
+        flaggedNotShot: item.flagged_not_shot,
+        confirmedRealShot: item.confirmed_real_shot,
+      });
+    } catch (err) {
+      Alert.alert('Could not open analysis', err.message || 'Something went wrong');
+    }
+  };
+
   const handleDelete = (item) => {
-    Alert.alert('Delete this analysis?', `${formatProId(item.pro_id)} — this can't be undone.`, [
+    Alert.alert('Delete this analysis?', `${formatProId(item.pro_id, item.result?.matches?.[0]?.player_name)} — this can't be undone.`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
@@ -345,6 +581,18 @@ export default function HistoryScreen({ navigation }) {
   };
 
   const atCap = limit != null && analyses.length >= limit;
+  const filteredAnalyses = listFilter === 'great' ? analyses.filter(a => a.similarity >= 75) : analyses;
+
+  const SegmentToggle = (
+    <View style={s.segmentRow}>
+      <TouchableOpacity style={[s.segmentBtn, segment === 'history' && s.segmentBtnActive]} onPress={() => setSegment('history')}>
+        <Text style={[s.segmentText, segment === 'history' && s.segmentTextActive]}>History</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={[s.segmentBtn, segment === 'drills' && s.segmentBtnActive]} onPress={() => setSegment('drills')}>
+        <Text style={[s.segmentText, segment === 'drills' && s.segmentTextActive]}>Drills</Text>
+      </TouchableOpacity>
+    </View>
+  );
 
   // ── Guest state ─────────────────────────────────────────────────────────
   if (!isAuthenticated) {
@@ -353,16 +601,20 @@ export default function HistoryScreen({ navigation }) {
         <CourtBackground />
         <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
           <View style={s.header}>
-            <Text style={s.title}>History</Text>
+            <Text style={s.title}>{segment === 'drills' ? 'Drills' : 'History'}</Text>
           </View>
-          <View style={s.empty}>
-            <Text style={s.emptyIcon}>🔒</Text>
-            <Text style={s.emptyTitle}>Log in to see your history</Text>
-            <Text style={s.emptySub}>Your saved analyses live on your account — log in or sign up to start building your history.</Text>
-            <TouchableOpacity style={s.emptyBtn} onPress={() => navigation.navigate('Login')}>
-              <Text style={s.emptyBtnText}>Log in →</Text>
-            </TouchableOpacity>
-          </View>
+          {SegmentToggle}
+          {segment === 'drills' ? (
+            <DrillsSection />
+          ) : (
+            <View style={s.empty}>
+              <Text style={s.emptyTitle}>Log in to see your history</Text>
+              <Text style={s.emptySub}>Your saved analyses live on your account — log in or sign up to start building your history.</Text>
+              <TouchableOpacity style={s.emptyBtn} onPress={() => navigation.navigate('Login')}>
+                <Text style={s.emptyBtnText}>Log in →</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </ScrollView>
       </SafeAreaView>
     );
@@ -375,8 +627,8 @@ export default function HistoryScreen({ navigation }) {
 
         {/* Header */}
         <View style={s.header}>
-          <Text style={s.title}>History</Text>
-          {!showUpload && (
+          <Text style={s.title}>{segment === 'drills' ? 'Drills' : 'History'}</Text>
+          {segment === 'history' && !showUpload && (
             <TouchableOpacity style={s.newBtn} onPress={() => setShowUpload(true)}>
               <PlusIcon size={13} color={colors.white} />
               <Text style={s.newBtnText}>New</Text>
@@ -384,6 +636,12 @@ export default function HistoryScreen({ navigation }) {
           )}
         </View>
 
+        {SegmentToggle}
+
+        {segment === 'drills' && <DrillsSection />}
+
+        {segment === 'history' && (
+        <>
         {/* Upload panel */}
         {showUpload && (
           <UploadPanel
@@ -431,30 +689,40 @@ export default function HistoryScreen({ navigation }) {
             {!showUpload && atCap && !isPremium && (
               <TouchableOpacity
                 style={s.capCard}
-                onPress={() => navigation.navigate('MainTabs', { screen: 'Premium' })}
+                onPress={() => navigation.navigate('Premium')}
               >
                 <Text style={s.capText}>You've saved {limit}/{limit} shots on the free plan. Delete one, or <Text style={s.capTextBold}>upgrade to save unlimited →</Text></Text>
               </TouchableOpacity>
             )}
 
+            {/* Great-swings filter banner (from Home's stat tile) */}
+            {listFilter === 'great' && (
+              <View style={s.filterBanner}>
+                <Text style={s.filterBannerText}>Showing {filteredAnalyses.length} great swing{filteredAnalyses.length === 1 ? '' : 's'} (score ≥ 75)</Text>
+                <TouchableOpacity onPress={() => setListFilter(null)}>
+                  <Text style={s.filterBannerClear}>Clear filter</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
             {/* Analysis cards */}
-            {analyses.map(item => (
+            {filteredAnalyses.map(item => (
               <AnalysisCard
                 key={item.id}
                 item={item}
-                onPress={() => navigation.navigate('Results', {
-                  savedResult: item.result,
-                  analysisId: item.id,
-                  shotType: item.shot_type,
-                })}
+                onPress={() => openResult(item)}
                 onLongPress={() => handleDelete(item)}
+                onWatchCompare={() => navigateToWatchCompare(navigation, token, item)}
+                onToggleFlag={() => handleToggleFlag(item)}
+                onToggleConfirm={() => handleToggleConfirm(item)}
+                onCorrectType={(newType) => handleCorrectType(item, newType)}
+                onSendToFriend={() => { setSendItem(item); setFriendPickerVisible(true); }}
               />
             ))}
 
             {/* Empty state */}
             {analyses.length === 0 && !showUpload && (
               <View style={s.empty}>
-                <Text style={s.emptyIcon}>🎾</Text>
                 <Text style={s.emptyTitle}>No analyses yet</Text>
                 <Text style={s.emptySub}>Upload a swing video to get matched to a pro and receive personalised coaching tips.</Text>
                 <TouchableOpacity style={s.emptyBtn} onPress={() => setShowUpload(true)}>
@@ -462,19 +730,64 @@ export default function HistoryScreen({ navigation }) {
                 </TouchableOpacity>
               </View>
             )}
+            {analyses.length > 0 && filteredAnalyses.length === 0 && (
+              <Text style={s.emptySub}>No great swings yet — keep practising, or clear the filter to see everything.</Text>
+            )}
           </>
+        )}
+        </>
         )}
 
       </ScrollView>
+
+      <FriendPickerModal
+        visible={friendPickerVisible}
+        onClose={() => setFriendPickerVisible(false)}
+        onSelect={handleSendToFriend}
+      />
     </SafeAreaView>
   );
 }
 
-function formatProId(proId) {
+// Same nav params ResultsScreen's "Compare side-by-side" button builds,
+// triggered one level earlier so a saved swing's synced video view is
+// reachable directly from the History list. Needs the full (non-slimmed)
+// result for the overlay/racket-path data, same reasoning as openResult()
+// above -- the list's own item.result has had those stripped.
+async function navigateToWatchCompare(navigation, token, item) {
+  let result;
+  try {
+    result = (await fetchHistoryItem(token, item.id)).result;
+  } catch {
+    Alert.alert('Could not open comparison', 'Something went wrong');
+    return;
+  }
+  const top = result?.matches?.[0];
+  if (!top?.pro_clip_url || !result?.user_clip_url) return;
+  navigation.navigate('SyncCompare', {
+    videoAUrl: `${API_BASE}${top.pro_clip_url}`,
+    videoBUrl: `${API_BASE}${result.user_clip_url}`,
+    contactASec: top.pro_contact_time_sec ?? 0,
+    contactBSec: result.contact_time_sec ?? 0,
+    overlayA: top.pro_overlay_trajectory ?? null,
+    overlayB: result.user_overlay_trajectory ?? null,
+    racketPathA: top.pro_racket_overlay_trajectory ?? null,
+    racketPathB: result.racket_overlay_trajectory ?? null,
+    labelA: formatProId(top.pro_id, top.player_name),
+    labelB: 'You',
+    analysisId: item.id,
+    canAddNotes: false,
+    phaseMarkers: top.phase_markers ?? undefined,
+  });
+}
+
+function formatProId(proId, playerName) {
   if (!proId) return 'Analysis';
   const [shot, num] = proId.split('_');
   if (!shot || !num) return proId;
-  return `${shot.charAt(0).toUpperCase() + shot.slice(1)} Technique #${parseInt(num, 10)}`;
+  const label = shot.charAt(0).toUpperCase() + shot.slice(1);
+  if (playerName) return `${playerName}'s ${label}`;
+  return `${label} Technique #${parseInt(num, 10)}`;
 }
 
 const s = StyleSheet.create({
@@ -486,6 +799,11 @@ const s = StyleSheet.create({
     alignItems: 'center', marginBottom: spacing.xl, paddingTop: 8,
   },
   title: { color: colors.ink, fontSize: 32, fontFamily: fonts.serifItalic },
+  segmentRow: { flexDirection: 'row', gap: 8, marginBottom: spacing.xl },
+  segmentBtn: { flex: 1, alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.pill, paddingVertical: 11 },
+  segmentBtnActive: { backgroundColor: colors.primary },
+  segmentText: { color: colors.mutedDark, fontSize: 13.5, fontFamily: fonts.bold },
+  segmentTextActive: { color: colors.white },
   newBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     backgroundColor: colors.primary, borderRadius: radius.pill,
@@ -508,8 +826,14 @@ const s = StyleSheet.create({
   capText: { color: colors.amberText, fontSize: 12.5, lineHeight: 18, fontFamily: fonts.regular },
   capTextBold: { fontFamily: fonts.bold },
 
+  filterBanner: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    backgroundColor: colors.primarySoft, borderRadius: radius.sm, padding: 13, marginBottom: spacing.lg,
+  },
+  filterBannerText: { color: colors.primary, fontSize: 12.5, fontFamily: fonts.semibold, flex: 1, marginRight: 10 },
+  filterBannerClear: { color: colors.primary, fontSize: 12.5, fontFamily: fonts.bold },
+
   empty: { alignItems: 'center', paddingVertical: 60 },
-  emptyIcon:  { fontSize: 48, marginBottom: 16 },
   emptyTitle: { color: colors.ink, fontSize: 20, fontFamily: fonts.extrabold, marginBottom: 8 },
   emptySub:   { color: colors.muted, fontSize: 14, textAlign: 'center', lineHeight: 21, marginBottom: 28, paddingHorizontal: 20, fontFamily: fonts.regular },
   emptyBtn:   { backgroundColor: colors.primary, borderRadius: radius.md, paddingVertical: 14, paddingHorizontal: 28 },

@@ -134,9 +134,14 @@ def score_backhand(peak_lm, prev_lm):
         score += 0.2
         reasons.append('wrist not overhead')
 
-    # Two-handed backhand: wrists close together
+    # Two-handed backhand: wrists close together. Threshold tightened
+    # 0.15 -> 0.09 (2026-08-11): tuned against 116 real labeled amateur
+    # swings (scripts/17_amateur_eval/tune_shot_scorers.py) after this
+    # signal was found firing on genuine one-handed forehands -- 0.15 was
+    # loose enough that noisier real-footage wrist estimates cleared it by
+    # chance; 0.09 requires a much tighter grip to credit "two-handed".
     wrist_sep = abs(rw['x'] - lw['x'])
-    if wrist_sep < 0.15:
+    if wrist_sep < 0.09:
         score += 0.35
         reasons.append(f'wrists close together (sep={wrist_sep:.3f}) = two-handed')
 
@@ -216,9 +221,19 @@ def score_serve(peak_lm, prev_lm, window_lms=None):
     if not visible(rw_peak) or not visible(rs_peak):
         return 0.3, ['insufficient landmarks at peak']
 
-    # Primary: wrist reached above shoulder at some point in window
+    # Primary: wrist reached above shoulder at some point in window.
+    # Credit formula boosted (2026-08-11, tuned against 116 real labeled
+    # amateur swings -- see tune_shot_scorers.py): real amateur serves'
+    # overhead margins cluster ~0.11-0.13, which the old min(0.55, x*2.5)
+    # only credited ~0.28-0.33 -- well under score_forehand/score_backhand's
+    # easily-reached 0.75-1.0, since those scorers only check "not overhead"
+    # at the single peak-VELOCITY frame (a serve's downswing, wrist already
+    # back down by then), not a window, so they never penalized a real
+    # serve for its earlier overhead moment. Raising the multiplier and
+    # adding a flat baseline for any positive overhead detection closes
+    # that gap without touching forehand/backhand's own logic.
     if best_overhead > 0:
-        score += min(0.55, best_overhead * 2.5)
+        score += min(0.7, 0.25 + best_overhead * 4.5)
         reasons.append(f'wrist overhead by {best_overhead:.3f} in window')
     elif best_overhead > -0.05:
         score += 0.2

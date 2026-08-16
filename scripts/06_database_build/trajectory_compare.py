@@ -7,16 +7,41 @@ the full ~20fps motion path.
 """
 import math
 
+# MediaPipe's z (rough, hip-relative monocular depth -- see
+# build_pro_database.py's normalise_landmarks() docstring) turned out to be
+# on a MUCH wider scale than x/y in practice -- measured directly against a
+# real rebuilt database: abs-median z ~1.83 (range -17.2 to 12.3) vs abs-
+# median x ~0.60. The docstring's assumption that z is "the same normalized
+# image-width units as x/y" does NOT hold empirically. A live before/after
+# test on 4 real saved swings (see this session's z-upgrade plan) showed
+# Z_WEIGHT=0.5 caused similarity scores to drop 45-75% on 3 of 4 clips --
+# z was dominating the distance metric, not contributing a minor signal.
+# DISABLED (0.0) until z is properly rescaled (e.g. normalize by its own
+# measured spread, not just divided by shoulder width like x/y) and
+# re-validated -- do not re-enable by just picking a smaller constant here
+# without re-measuring z's actual distribution first.
+Z_WEIGHT = 0.0
+
 
 def _frame_dist(a, b, key_landmarks):
-    """Average per-landmark euclidean distance between two landmark dicts."""
+    """Average per-landmark euclidean distance between two landmark dicts.
+    Includes z (down-weighted by Z_WEIGHT) when both sides have it; falls
+    back to pure 2D for any landmark missing z on either side (e.g. an
+    older cached trajectory built before z was carried through)."""
     total = 0.0
     n = 0
     for name in key_landmarks:
         pa, pb = a.get(name), b.get(name)
         if pa is None or pb is None:
             continue
-        total += math.sqrt((pa['x'] - pb['x']) ** 2 + (pa['y'] - pb['y']) ** 2)
+        dx = pa['x'] - pb['x']
+        dy = pa['y'] - pb['y']
+        za, zb = pa.get('z'), pb.get('z')
+        if za is not None and zb is not None:
+            dz = (za - zb) * Z_WEIGHT
+            total += math.sqrt(dx ** 2 + dy ** 2 + dz ** 2)
+        else:
+            total += math.sqrt(dx ** 2 + dy ** 2)
         n += 1
     if n == 0:
         return 1.5  # no shared landmarks this frame pair — treat as a poor match

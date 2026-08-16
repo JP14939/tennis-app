@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView, Image } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { fetchHistory } from '../api/history';
+import { getRank, getPlayerType } from '../api/profile';
 import { colors, fonts, radius, spacing, scoreColor } from '../theme';
 import CourtBackground from '../components/CourtBackground';
 import ScoreRing from '../components/ScoreRing';
+import PlayerCard from '../components/PlayerCard';
+import LeaderboardSection from '../components/LeaderboardSection';
 import { TennisBallIcon, ChevronRightIcon } from '../components/icons';
+import { playTapSound, playAchievementSound } from '../utils/sounds';
+import { storage } from '../utils/storage';
 
 const QUICK_SHOTS = [
   { label: 'Forehand', value: 'forehand' },
@@ -15,6 +20,19 @@ const QUICK_SHOTS = [
 ];
 
 function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+
+// Rank tiers only ever go up (earned by cumulative great-swing count, no
+// demotion mechanic exists) -- so any change from a previously-seen rank
+// name is genuinely a promotion. Guarded on `previous` existing so the
+// very first time this ever runs (nothing stored yet) doesn't fire.
+const LAST_SEEN_RANK_KEY = 'last_seen_rank';
+async function checkRankUp(rankName) {
+  const previous = await storage.getItem(LAST_SEEN_RANK_KEY).catch(() => null);
+  if (previous && previous !== rankName) {
+    playAchievementSound();
+  }
+  await storage.setItem(LAST_SEEN_RANK_KEY, rankName).catch(() => {});
+}
 
 function useCountUp(target, durationMs = 1100) {
   const [value, setValue] = useState(0);
@@ -66,27 +84,33 @@ const r = StyleSheet.create({
 export default function HomeScreen({ navigation }) {
   const { token, isAuthenticated, user } = useAuth();
   const [analyses, setAnalyses] = useState([]);
+  const [rank, setRank] = useState(null);
+  const [playerType, setPlayerType] = useState(null);
 
   useFocusEffect(useCallback(() => {
     if (!isAuthenticated) {
       setAnalyses([]);
+      setRank(null);
+      setPlayerType(null);
       return;
     }
     fetchHistory(token).then(data => setAnalyses(data.analyses)).catch(() => {});
+    getRank(token).then((data) => {
+      setRank(data);
+      if (data?.rank?.name) checkRankUp(data.rank.name);
+    }).catch(() => {});
+    getPlayerType(token).then(setPlayerType).catch(() => {});
   }, [token, isAuthenticated]));
 
   const recents = analyses.slice(0, 2);
   const avg = analyses.length
     ? Math.round(analyses.reduce((sum, a) => sum + a.similarity, 0) / analyses.length)
     : 0;
-  const great = analyses.filter(a => a.similarity >= 75).length;
 
   const analysesCount = useCountUp(analyses.length);
   const avgCount = useCountUp(avg);
-  const greatCount = useCountUp(great);
 
   const playerName = isAuthenticated ? user.name.split(' ')[0] : 'there';
-  const playerInitial = isAuthenticated ? user.name.charAt(0).toUpperCase() : '🎾';
 
   const dayLabel = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
 
@@ -100,16 +124,16 @@ export default function HomeScreen({ navigation }) {
             <Text style={s.dayLabel}>{dayLabel}</Text>
             <Text style={s.greeting}>Let's play, {playerName}.</Text>
           </View>
-          <View style={s.avatar}>
-            <Text style={s.avatarText}>{playerInitial}</Text>
-          </View>
+          <TouchableOpacity style={s.avatar} onPress={() => navigation.navigate('Profile')} activeOpacity={0.8}>
+            <Image source={require('../assets/mascot.png')} style={s.avatarImage} resizeMode="cover" />
+          </TouchableOpacity>
         </View>
 
         {/* Primary CTA */}
         <TouchableOpacity
           style={s.ctaCard}
           activeOpacity={0.9}
-          onPress={() => navigation.navigate('Upload')}
+          onPress={() => { playTapSound(); navigation.navigate('Upload'); }}
         >
           <View style={s.ctaTopRow}>
             <View style={s.ctaBadge}>
@@ -150,12 +174,18 @@ export default function HomeScreen({ navigation }) {
             <Text style={s.statNum}>{avgCount}</Text>
             <Text style={s.statLabel}>Avg score</Text>
           </View>
-          <View style={s.stat}>
-            <View style={[s.statAccent, { backgroundColor: colors.lime }]} />
-            <Text style={s.statNum}>{greatCount}</Text>
-            <Text style={s.statLabel}>Great swings</Text>
-          </View>
         </View>
+
+        {/* Rank + playing style -- great-swing count now lives here (with a
+            progress bar toward the next rank) instead of a bare stat tile. */}
+        {isAuthenticated && rank && (
+          <TouchableOpacity
+            activeOpacity={0.9}
+            onPress={() => navigation.navigate('MainTabs', { screen: 'History', params: { initialFilter: 'great' } })}
+          >
+            <PlayerCard rank={rank} playerType={playerType} />
+          </TouchableOpacity>
+        )}
 
         {/* Recent activity */}
         <View style={s.sectionHeader}>
@@ -174,6 +204,16 @@ export default function HomeScreen({ navigation }) {
         )}
         {recents.map(item => <RecentRow key={item.id} item={item} />)}
 
+        {/* Leaderboard */}
+        {isAuthenticated && (
+          <>
+            <View style={s.sectionHeader}>
+              <Text style={s.sectionTitle}>Leaderboard</Text>
+            </View>
+            <LeaderboardSection />
+          </>
+        )}
+
       </ScrollView>
     </SafeAreaView>
   );
@@ -188,10 +228,10 @@ const s = StyleSheet.create({
   greeting: { color: colors.ink, fontSize: 32, fontFamily: fonts.serifItalic, lineHeight: 36 },
   avatar: {
     width: 44, height: 44, borderRadius: 22, backgroundColor: colors.primary,
-    alignItems: 'center', justifyContent: 'center', marginTop: 4,
+    alignItems: 'center', justifyContent: 'center', marginTop: 4, overflow: 'hidden',
     shadowColor: colors.primary, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 4 },
   },
-  avatarText: { color: colors.lime, fontSize: 18, fontFamily: fonts.serif },
+  avatarImage: { width: '100%', height: '100%' },
 
   ctaCard: {
     backgroundColor: colors.primary, borderRadius: radius.xl, padding: 18, marginBottom: spacing.xl,

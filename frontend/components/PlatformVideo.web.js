@@ -14,7 +14,7 @@
 import React, { forwardRef, useImperativeHandle, useRef, useEffect } from 'react';
 
 const PlatformVideo = forwardRef(function PlatformVideo(
-  { uri, width, height, onStatusUpdate, highFrequencyUpdates },
+  { uri, width, height, onStatusUpdate, highFrequencyUpdates, onVideoSize, onError },
   ref,
 ) {
   const elRef = useRef(null);
@@ -66,12 +66,20 @@ const PlatformVideo = forwardRef(function PlatformVideo(
       push();
       stopRaf();
     };
+    const handleLoadedMetadata = () => {
+      push();
+      if (el.videoWidth && el.videoHeight) onVideoSize?.({ width: el.videoWidth, height: el.videoHeight });
+    };
+    const handleError = () => {
+      onError?.(el.error?.message || 'Video failed to load');
+    };
 
     el.addEventListener('timeupdate',    push);
     el.addEventListener('play',          handlePlay);
     el.addEventListener('pause',         handleStop);
     el.addEventListener('ended',         handleStop);
-    el.addEventListener('loadedmetadata', push);
+    el.addEventListener('loadedmetadata', handleLoadedMetadata);
+    el.addEventListener('error',         handleError);
 
     return () => {
       stopRaf();
@@ -79,9 +87,10 @@ const PlatformVideo = forwardRef(function PlatformVideo(
       el.removeEventListener('play',          handlePlay);
       el.removeEventListener('pause',         handleStop);
       el.removeEventListener('ended',         handleStop);
-      el.removeEventListener('loadedmetadata', push);
+      el.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      el.removeEventListener('error',         handleError);
     };
-  }, [onStatusUpdate, highFrequencyUpdates]);
+  }, [onStatusUpdate, highFrequencyUpdates, onVideoSize, onError]);
 
   // When URI changes, update src and reload
   useEffect(() => {

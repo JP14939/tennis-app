@@ -46,8 +46,17 @@ def _models():
     return _detector, _kp_model
 
 
-def _detect_racket_handle(frame, detector, kp_model):
-    """Returns (x, y) handle position in raw [0,1] frame-normalised coords, or None."""
+def _detect_racket_keypoints(frame, detector, kp_model):
+    """
+    Returns {point_name: (x, y)} in raw [0,1] frame-normalised coords for
+    every one of POINTS the model actually predicted (model's convention
+    for "not predicted" is (0, 0), those are dropped), or None if no racket
+    was found at all. Same crop->predict pipeline _detect_racket_handle()
+    used to do inline, generalized to read out every keypoint instead of
+    just 'handle' -- e.g. verify_shot_contact.py's contact-frame checking
+    needs 'tip'/'left_edge'/'right_edge' (near the string bed, where
+    contact actually happens), not 'handle'.
+    """
     h, w = frame.shape[:2]
     results = detector.predict(frame, classes=[RACKET_CLASS], conf=DETECT_CONF, verbose=False)
     boxes = results[0].boxes
@@ -67,13 +76,29 @@ def _detect_racket_handle(frame, detector, kp_model):
     if len(kp_results[0].keypoints) == 0 or kp_results[0].keypoints.xy.shape[1] == 0:
         return None
     kpts = kp_results[0].keypoints.xy[0].cpu().numpy()
-    handle_x, handle_y = kpts[POINTS.index('handle')]
-    if handle_x == 0 and handle_y == 0:
-        return None  # model's convention for "not predicted"
 
-    full_x = cx1 + handle_x
-    full_y = cy1 + handle_y
-    return full_x / w, full_y / h
+    points = {}
+    for name in POINTS:
+        px, py = kpts[POINTS.index(name)]
+        if px == 0 and py == 0:
+            continue  # model's convention for "not predicted"
+        # float(): kpts is a numpy array, so px/py are numpy.float32 -- fine
+        # for the existing avg_racket_body_distance() consumer (plain float
+        # math flows through round()/sum() to a native float anyway), but
+        # track_racket_path()/build_racket_overlay_trajectory() puts these
+        # tuples directly into the JSON response, and numpy.float32 isn't
+        # JSON-serializable (caught live: real TypeError running the CLI
+        # end-to-end after wiring the racket-path overlay in).
+        points[name] = (float((cx1 + px) / w), float((cy1 + py) / h))
+    return points or None
+
+
+def _detect_racket_handle(frame, detector, kp_model):
+    """Returns (x, y) handle position in raw [0,1] frame-normalised coords,
+    or None. Thin wrapper over _detect_racket_keypoints() for the existing
+    body_rotation phase-scoring call site, which only ever needed 'handle'."""
+    points = _detect_racket_keypoints(frame, detector, kp_model)
+    return points.get('handle') if points else None
 
 
 def track_racket_body(video_path, frame_range=None, landmarker=None, sample_every=3):
@@ -135,6 +160,44 @@ def track_racket_body(video_path, frame_range=None, landmarker=None, sample_ever
     cap.release()
     if own_landmarker:
         landmarker.close()
+    return results
+
+
+def track_racket_path(video_path, frame_range=None, sample_every=3):
+    """
+    Like track_racket_body() but keeps every detected racket keypoint per
+    frame (handle/throat/tip/left_edge/right_edge), not just handle+hip --
+    for tracing the racket's swing path (tip position over time), not
+    scoring body rotation. No pose/landmarker work needed here, so this is
+    cheaper per-frame than track_racket_body().
+
+    Returns [{frame, points: {name: (x,y) or None, ...}}, ...], all in raw
+    [0,1] frame-normalised coords (matches build_overlay_trajectory()'s
+    convention in compare_swing.py, so the two overlays share frontend math).
+    """
+    detector, kp_model = _models()
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise RuntimeError(f'Cannot open video: {video_path}')
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    lo, hi = frame_range if frame_range is not None else (0, total - 1)
+    lo, hi = max(0, lo), min(total - 1, hi)
+
+    results = []
+    idx = 0
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        if lo <= idx <= hi and (idx - lo) % sample_every == 0:
+            points = _detect_racket_keypoints(frame, detector, kp_model) or {}
+            results.append({'frame': idx, 'points': {name: points.get(name) for name in POINTS}})
+        idx += 1
+        if idx > hi:
+            break
+
+    cap.release()
     return results
 
 

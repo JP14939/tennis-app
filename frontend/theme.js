@@ -1,7 +1,8 @@
 // Shared design tokens for the "Pine & Lime" redesign (Home, History,
-// Premium, Profile, Upload's pick phase, Results, Live Camera). Every other
-// screen (Login, Signup, VersusPick, VersusResults, Highlight*, FenceTutorial)
-// is out of scope for this pass and keeps its own local dark-theme literals.
+// Premium, Profile, Upload's pick phase, Results, Live Camera, Login,
+// Signup, FenceTutorial). Remaining screens (VersusPick, VersusResults,
+// Highlight*) are still out of scope for this pass and keep their own
+// local dark-theme literals.
 //
 // Colors were computed from the design mockup's oklch() values via the real
 // OKLab->sRGB formula (React Native's style engine can't parse oklch()).

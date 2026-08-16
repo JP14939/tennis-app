@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Animated, Platform } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { colors, fonts } from '../theme';
-import { HomeIcon, HistoryIcon, PremiumIcon, ProfileIcon } from './icons';
+import { HomeIcon, HistoryIcon, FriendsIcon, ProfileIcon, MapPinIcon, PremiumIcon } from './icons';
 
-const ICONS = { Home: HomeIcon, History: HistoryIcon, Premium: PremiumIcon, Profile: ProfileIcon };
+const ICONS = { Home: HomeIcon, Premium: PremiumIcon, History: HistoryIcon, Friends: FriendsIcon, FindGames: MapPinIcon, Profile: ProfileIcon };
 const BAR_PAD = 8;
 
 export default function FloatingTabBar({ state, descriptors, navigation }) {

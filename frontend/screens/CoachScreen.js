@@ -7,13 +7,16 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { getInviteCode, linkCoach, listStudents, getStudentHistory } from '../api/coach';
 import { colors, fonts, radius, spacing, scoreColor } from '../theme';
+import { playTapSound, playAchievementSound } from '../utils/sounds';
 import { TennisBallIcon, BackChevronIcon } from '../components/icons';
 
-function formatProId(proId) {
+function formatProId(proId, playerName) {
   if (!proId) return 'Analysis';
   const [shot, num] = proId.split('_');
   if (!shot || !num) return proId;
-  return `${shot.charAt(0).toUpperCase() + shot.slice(1)} Technique #${parseInt(num, 10)}`;
+  const label = shot.charAt(0).toUpperCase() + shot.slice(1);
+  if (playerName) return `${playerName}'s ${label}`;
+  return `${label} Technique #${parseInt(num, 10)}`;
 }
 
 function formatDate(isoString) {
@@ -88,7 +91,7 @@ function StudentHistory({ student, navigation, onBack }) {
               <Text style={h.date}>{formatDate(item.created_at)}</Text>
             </View>
             <Text style={[h.score, { color: scoreColor(score) }]}>{score}/100</Text>
-            <Text style={h.proId}>{formatProId(item.pro_id)}</Text>
+            <Text style={h.proId}>{formatProId(item.pro_id, item.result?.matches?.[0]?.player_name)}</Text>
           </TouchableOpacity>
         );
       })}
@@ -150,6 +153,7 @@ export default function CoachScreen({ navigation }) {
     try {
       const data = await linkCoach(token, linkCodeInput.trim().toUpperCase());
       setLinkCodeInput('');
+      playAchievementSound();
       Alert.alert('Linked!', `You're now coaching ${data.student.name}.`);
       loadStudents();
     } catch (err) {
@@ -184,7 +188,7 @@ export default function CoachScreen({ navigation }) {
           {inviteCode ? (
             <Text style={s.codeDisplay}>{inviteCode}</Text>
           ) : null}
-          <TouchableOpacity style={s.actionBtn} onPress={generateCode} disabled={generating}>
+          <TouchableOpacity style={s.actionBtn} onPress={() => { playTapSound(); generateCode(); }} disabled={generating}>
             <Text style={s.actionBtnText}>
               {generating ? 'Generating...' : inviteCode ? 'Generate new code' : 'Generate invite code'}
             </Text>
@@ -203,7 +207,7 @@ export default function CoachScreen({ navigation }) {
           />
           <TouchableOpacity
             style={[s.actionBtn, !linkCodeInput.trim() && s.actionBtnDisabled]}
-            onPress={submitLink}
+            onPress={() => { playTapSound(); submitLink(); }}
             disabled={linking || !linkCodeInput.trim()}
           >
             <Text style={s.actionBtnText}>{linking ? 'Linking...' : 'Link'}</Text>

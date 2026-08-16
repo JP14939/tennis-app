@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Dimensions } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator } from 'react-native';
 import PlatformVideo from '../components/PlatformVideo';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE } from '../config/api';
+import { playTapSound } from '../utils/sounds';
+import { useWindowWidth } from '../utils/responsive';
 
 const GREEN  = '#4ade80';
 const DARK   = '#0d0d0d';
@@ -15,14 +17,22 @@ const MUTED  = '#888';
 // (winners, aces) plus a way to discard a mis-detected rally -- easy to
 // extend later, not locked in.
 const TAG_OPTIONS = [
-  { value: 'winner', label: 'Winner', icon: '🏆' },
-  { value: 'ace',    label: 'Ace',    icon: '🚀' },
-  { value: 'error',  label: 'Error',  icon: '❌' },
-  { value: 'skip',   label: 'Skip',   icon: '✕' },
+  { value: 'winner', label: 'Winner' },
+  { value: 'ace',    label: 'Ace' },
+  { value: 'error',  label: 'Error' },
+  { value: 'skip',   label: 'Skip' },
 ];
 
-const videoWidth = Math.min(Dimensions.get('window').width - 48, 500);
-const videoHeight = Math.round(videoWidth * 0.56);
+// Separate from outcome -- this is real ground truth for tuning
+// detect_rallies.py's RALLY_GAP_SEC (and detect_swings.py's
+// THRESHOLD_PERCENTILE) against actual match footage instead of guessing.
+// Optional: leaving it unset just means "didn't look closely," not "boundary
+// is correct" -- only an explicit 'ok' counts as a positive signal.
+const BOUNDARY_OPTIONS = [
+  { value: 'ok',             label: 'Boundary OK' },
+  { value: 'cut_off_early',  label: 'Cut off early' },
+  { value: 'should_split',   label: 'Should be split' },
+];
 
 function formatTime(sec) {
   const m = Math.floor(sec / 60);
@@ -30,9 +40,12 @@ function formatTime(sec) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function ClipRow({ clip, value, onTag }) {
+function ClipRow({ clip, value, onTag, boundaryValue, onBoundary }) {
   const videoRef = useRef(null);
   const [playing, setPlaying] = useState(false);
+  const windowWidth = useWindowWidth();
+  const videoWidth = Math.min(windowWidth - 48, 500);
+  const videoHeight = Math.round(videoWidth * 0.56);
 
   const toggle = () => {
     if (playing) {
@@ -73,8 +86,19 @@ function ClipRow({ clip, value, onTag }) {
             style={[r.tagPill, value === opt.value && r.tagPillActive]}
             onPress={() => onTag(opt.value)}
           >
-            <Text style={r.tagIcon}>{opt.icon}</Text>
             <Text style={[r.tagLabel, value === opt.value && r.tagLabelActive]}>{opt.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <Text style={r.boundaryLabel}>Are the start/end points right?</Text>
+      <View style={r.tagRow}>
+        {BOUNDARY_OPTIONS.map(opt => (
+          <TouchableOpacity
+            key={opt.value}
+            style={[r.tagPill, boundaryValue === opt.value && r.boundaryPillActive]}
+            onPress={() => onBoundary(opt.value)}
+          >
+            <Text style={[r.tagLabel, boundaryValue === opt.value && r.tagLabelActive]}>{opt.label}</Text>
           </TouchableOpacity>
         ))}
       </View>
@@ -98,9 +122,10 @@ const r = StyleSheet.create({
     paddingVertical: 8, alignItems: 'center', gap: 2,
   },
   tagPillActive: { backgroundColor: '#1a2e1a', borderColor: '#2a4a2a' },
-  tagIcon: { fontSize: 14 },
+  boundaryPillActive: { backgroundColor: '#1a1a2e', borderColor: '#2a2a4a' },
   tagLabel: { color: MUTED, fontSize: 10, fontWeight: '600' },
   tagLabelActive: { color: GREEN },
+  boundaryLabel: { color: MUTED, fontSize: 11, fontWeight: '600', marginBottom: 6 },
 });
 
 export default function HighlightReviewScreen({ route, navigation }) {
@@ -109,6 +134,7 @@ export default function HighlightReviewScreen({ route, navigation }) {
   const [loading, setLoading] = useState(true);
   const [rallies, setRallies] = useState([]);
   const [tags, setTags] = useState({});
+  const [boundaryNotes, setBoundaryNotes] = useState({});
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -120,10 +146,13 @@ export default function HighlightReviewScreen({ route, navigation }) {
         const data = await res.json();
         setRallies(data.rallies ?? []);
         const initialTags = {};
+        const initialBoundaryNotes = {};
         for (const clip of data.rallies ?? []) {
           if (clip.outcome_tag) initialTags[clip.id] = clip.outcome_tag;
+          if (clip.boundary_note) initialBoundaryNotes[clip.id] = clip.boundary_note;
         }
         setTags(initialTags);
+        setBoundaryNotes(initialBoundaryNotes);
       } finally {
         setLoading(false);
       }
@@ -131,22 +160,36 @@ export default function HighlightReviewScreen({ route, navigation }) {
   }, [jobId, token]);
 
   const setTag = (clipId, value) => setTags(prev => ({ ...prev, [clipId]: value }));
+  const setBoundaryNote = (clipId, value) => setBoundaryNotes(prev => ({ ...prev, [clipId]: value }));
 
-  const taggedCount = Object.values(tags).filter(v => v && v !== 'skip').length;
+  const reviewedCount = new Set([
+    ...Object.keys(tags).filter((id) => tags[id]),
+    ...Object.keys(boundaryNotes).filter((id) => boundaryNotes[id]),
+  ]).size;
 
   const save = async () => {
     setSaving(true);
     try {
+      // Union of clip ids with either an outcome tag or a boundary note set --
+      // a clip reviewed only for its boundary (no outcome opinion yet) should
+      // still get saved, and vice versa.
+      const clipIds = new Set([...Object.keys(tags), ...Object.keys(boundaryNotes)]);
       await Promise.all(
-        Object.entries(tags)
-          .filter(([, value]) => value)
-          .map(([clipId, value]) =>
-            fetch(`${API_BASE}/api/highlights/rallies/${clipId}`, {
+        [...clipIds]
+          .filter((clipId) => tags[clipId] || boundaryNotes[clipId])
+          .map((clipId) => {
+            const value = tags[clipId];
+            const body = { boundary_note: boundaryNotes[clipId] ?? undefined };
+            if (value) {
+              body.outcome_tag = value;
+              body.archived = value !== 'skip';
+            }
+            return fetch(`${API_BASE}/api/highlights/rallies/${clipId}`, {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-              body: JSON.stringify({ outcome_tag: value, archived: value !== 'skip' }),
-            })
-          )
+              body: JSON.stringify(body),
+            });
+          })
       );
       navigation.navigate('HighlightArchive');
     } finally {
@@ -166,19 +209,26 @@ export default function HighlightReviewScreen({ route, navigation }) {
     <SafeAreaView style={s.safe}>
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
         <Text style={s.h1}>Tag your rallies</Text>
-        <Text style={s.sub}>We found {rallies.length} rallies. Watch each one and mark how the point ended, or skip the ones that aren't real rallies.</Text>
+        <Text style={s.sub}>We found {rallies.length} rallies. Watch each one, mark how the point ended (or skip the ones that aren't real rallies), and flag whether the clip's start/end points look right — that helps us tune detection.</Text>
 
         {rallies.map(clip => (
-          <ClipRow key={clip.id} clip={clip} value={tags[clip.id]} onTag={(v) => setTag(clip.id, v)} />
+          <ClipRow
+            key={clip.id}
+            clip={clip}
+            value={tags[clip.id]}
+            onTag={(v) => setTag(clip.id, v)}
+            boundaryValue={boundaryNotes[clip.id]}
+            onBoundary={(v) => setBoundaryNote(clip.id, v)}
+          />
         ))}
 
         <TouchableOpacity
-          style={[s.saveBtn, (taggedCount === 0 || saving) && s.saveDisabled]}
-          onPress={save}
-          disabled={taggedCount === 0 || saving}
+          style={[s.saveBtn, (reviewedCount === 0 || saving) && s.saveDisabled]}
+          onPress={() => { playTapSound(); save(); }}
+          disabled={reviewedCount === 0 || saving}
         >
           <Text style={s.saveBtnText}>
-            {saving ? 'Saving...' : taggedCount > 0 ? `Save ${taggedCount} to archive →` : 'Tag at least one rally'}
+            {saving ? 'Saving...' : reviewedCount > 0 ? `Save ${reviewedCount} reviewed →` : 'Tag or flag at least one rally'}
           </Text>
         </TouchableOpacity>
       </ScrollView>

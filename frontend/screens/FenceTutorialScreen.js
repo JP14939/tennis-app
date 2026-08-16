@@ -1,8 +1,7 @@
 import React from 'react';
 import { SafeAreaView, StyleSheet } from 'react-native';
 import FenceTutorialContent from '../components/FenceTutorialContent';
-
-const DARK = '#0d0d0d';
+import { colors } from '../theme';
 
 export default function FenceTutorialScreen() {
   return (
@@ -13,5 +12,5 @@ export default function FenceTutorialScreen() {
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: DARK },
+  safe: { flex: 1, backgroundColor: colors.bg },
 });

@@ -16,6 +16,12 @@ export function fetchHistory(token) {
   }).then(handle);
 }
 
+export function fetchHistoryItem(token, id) {
+  return fetch(`${API_BASE}/api/history/${id}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  }).then(handle);
+}
+
 export function saveHistory(token, result, shotType) {
   return fetch(`${API_BASE}/api/history`, {
     method: 'POST',
@@ -24,6 +30,39 @@ export function saveHistory(token, result, shotType) {
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({ ...result, shotType }),
+  }).then(handle);
+}
+
+export function flagNotShot(token, id, flagged = true) {
+  return fetch(`${API_BASE}/api/history/${id}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ flagged_not_shot: flagged }),
+  }).then(handle);
+}
+
+export function confirmRealShot(token, id, confirmed = true) {
+  return fetch(`${API_BASE}/api/history/${id}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ confirmed_real_shot: confirmed }),
+  }).then(handle);
+}
+
+export function correctShotType(token, id, shotType) {
+  return fetch(`${API_BASE}/api/history/${id}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ shot_type: shotType }),
   }).then(handle);
 }
 

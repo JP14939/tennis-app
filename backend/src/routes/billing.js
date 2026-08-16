@@ -25,16 +25,39 @@ router.post('/billing/sync', requireAuth, async (req, res) => {
       `https://api.revenuecat.com/v2/projects/${projectId}/customers/${req.user.id}/active_entitlements`,
       { headers: { Authorization: `Bearer ${secretKey}` } }
     );
+    // A customer who has never made a purchase doesn't exist in RevenueCat
+    // yet -- confirmed live against the real API (a fresh test user 404s
+    // with type: "resource_missing"), and is the single most common case
+    // this endpoint will see (every free user). Not an error: no purchases
+    // means not premium, same as an empty entitlements list.
+    if (response.status === 404) {
+      db.prepare('UPDATE users SET tier = ? WHERE id = ?').run('free', req.user.id);
+      return res.json({ tier: 'free' });
+    }
     if (!response.ok) {
       throw new Error(`RevenueCat API returned ${response.status}`);
     }
     const data = await response.json();
-    // v2 list endpoints commonly wrap results in `items` -- checking both
-    // shapes since this hasn't been confirmed against a real response yet.
-    // Verify this against an actual RevenueCat account during testing and
-    // simplify to whichever key is correct.
-    const isPremium = (data.active_entitlements || data.items || [])
-      .some((e) => e.entitlement_id === ENTITLEMENT_ID);
+    // Confirmed shape (RevenueCat API v2 docs + community-reported real
+    // responses): the array is nested at active_entitlements.items, not
+    // active_entitlements itself (that's an object: {object, items,
+    // next_page, url}) -- the old `data.active_entitlements || data.items`
+    // fallback was broken, since a truthy object short-circuited past the
+    // real array and .some() was called on a plain object.
+    //
+    // Confirmed live against a real purchase: each item's `entitlement_id`
+    // is RevenueCat's internal opaque ID (e.g. "entlee4b5ca9dd"), NOT the
+    // human-readable identifier ("premium") set in the dashboard -- so
+    // comparing against ENTITLEMENT_ID here always failed, silently
+    // clobbering a correct webhook-driven grant moments after purchase
+    // (this endpoint runs right after checkout and overwrites tier).
+    // Resolving "premium" to its opaque ID needs a project_configuration
+    // read scope this key deliberately doesn't have (see the comment on
+    // REVENUECAT_SECRET_API_KEY in .env.example). Since this project only
+    // ever grants one real entitlement, "any active entitlement" is an
+    // accurate proxy -- revisit with a proper ID lookup if a second
+    // entitlement is ever added.
+    const isPremium = (data.active_entitlements?.items || data.items || []).length > 0;
 
     db.prepare('UPDATE users SET tier = ? WHERE id = ?').run(isPremium ? 'premium' : 'free', req.user.id);
     res.json({ tier: isPremium ? 'premium' : 'free' });

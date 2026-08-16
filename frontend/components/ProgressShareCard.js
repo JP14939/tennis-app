@@ -26,7 +26,7 @@ const ProgressShareCard = forwardRef(function ProgressShareCard({ points, delta,
         <TrendChart points={points} width={CHART_W} />
       </View>
       <View style={s.footer}>
-        <Text style={s.wordmark}>TennisAI</Text>
+        <Text style={s.wordmark}>RallyMax</Text>
       </View>
     </View>
   );

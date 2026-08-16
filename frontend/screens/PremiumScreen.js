@@ -11,9 +11,9 @@ function FeatureCard({ icon, title, desc, cta, locked, onPress }) {
       <View style={c.iconWrap}>{icon}</View>
       <Text style={c.title}>{title}</Text>
       <Text style={c.desc}>{desc}</Text>
-      <TouchableOpacity style={c.btn} onPress={onPress} activeOpacity={0.85}>
+      <TouchableOpacity style={[c.btn, !locked && c.btnUnlocked]} onPress={onPress} activeOpacity={0.85}>
         {locked && <LockIcon size={13} color={colors.mutedDark} />}
-        <Text style={c.btnText}>{cta}</Text>
+        <Text style={[c.btnText, !locked && c.btnTextUnlocked]}>{cta}</Text>
       </TouchableOpacity>
     </View>
   );
@@ -33,6 +33,11 @@ const c = StyleSheet.create({
     backgroundColor: colors.border, borderRadius: radius.sm, paddingVertical: 12,
   },
   btnText: { color: colors.mutedDark, fontSize: 13.5, fontFamily: fonts.bold },
+  // Unlocked (isPremium) state -- matches Home's inviting CTA treatment
+  // (colors.primary block + white bold text) instead of the same dull grey
+  // used for the locked state, so "unlocked" actually reads as unlocked.
+  btnUnlocked: { backgroundColor: colors.primary },
+  btnTextUnlocked: { color: colors.white },
 });
 
 export default function PremiumScreen({ navigation }) {

@@ -43,6 +43,44 @@ export function ProfileIcon({ size = 20, color = '#000', strokeWidth = 1.6 }) {
   );
 }
 
+export function FriendsIcon({ size = 20, color = '#000', strokeWidth = 1.6 }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 20 20">
+      <Circle cx={7} cy={6.5} r={2.6} stroke={color} strokeWidth={strokeWidth} fill="none" />
+      <Path d="M2 16c0.8-2.8 2.6-4.2 5-4.2s4.2 1.4 5 4.2" stroke={color} strokeWidth={strokeWidth} fill="none" strokeLinecap="round" />
+      <Circle cx={14.5} cy={7.5} r={2.1} stroke={color} strokeWidth={strokeWidth} fill="none" />
+      <Path d="M12.8 12.2c1.9-0.5 3.7 0.6 4.5 3" stroke={color} strokeWidth={strokeWidth} fill="none" strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+export function LeaderboardIcon({ size = 20, color = '#000', strokeWidth = 1.6 }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 20 20">
+      <Rect x={3} y={11} width={4} height={6} rx={1} stroke={color} strokeWidth={strokeWidth} fill="none" />
+      <Rect x={8} y={6} width={4} height={11} rx={1} stroke={color} strokeWidth={strokeWidth} fill="none" />
+      <Rect x={13} y={3} width={4} height={14} rx={1} stroke={color} strokeWidth={strokeWidth} fill="none" />
+    </Svg>
+  );
+}
+
+export function MapPinIcon({ size = 20, color = '#000', strokeWidth = 1.6 }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 20 20">
+      <Path d="M10 18s6-6.2 6-10.8A6 6 0 0 0 4 7.2C4 11.8 10 18 10 18z" stroke={color} strokeWidth={strokeWidth} fill="none" strokeLinejoin="round" />
+      <Circle cx={10} cy={7.2} r={2.1} stroke={color} strokeWidth={strokeWidth} fill="none" />
+    </Svg>
+  );
+}
+
+export function MessageIcon({ size = 20, color = '#000', strokeWidth = 1.6 }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 20 20">
+      <Path d="M3 4.5h14a1 1 0 0 1 1 1V13a1 1 0 0 1-1 1H8l-4 3v-3H3a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1z" stroke={color} strokeWidth={strokeWidth} fill="none" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
 export function BackChevronIcon({ size = 14, color = '#000', strokeWidth = 1.8 }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 14 14">
@@ -165,6 +203,25 @@ export function ShareIcon({ size = 18, color = '#000', strokeWidth = 1.6 }) {
     <Svg width={size} height={size} viewBox="0 0 20 20">
       <Path d="M10 13V3M10 3L6.5 6.5M10 3l3.5 3.5" stroke={color} strokeWidth={strokeWidth} fill="none" strokeLinecap="round" strokeLinejoin="round" />
       <Path d="M4 10v5.5a1.5 1.5 0 001.5 1.5h9a1.5 1.5 0 001.5-1.5V10" stroke={color} strokeWidth={strokeWidth} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+export function DrillsIcon({ size = 20, color = '#000', strokeWidth = 1.6 }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 20 20">
+      <Path d="M3 3l14 14M3 6.5L6.5 3M13.5 17L17 13.5" stroke={color} strokeWidth={strokeWidth} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      <Circle cx={5.2} cy={5.2} r={2.3} stroke={color} strokeWidth={strokeWidth} fill="none" />
+      <Circle cx={14.8} cy={14.8} r={2.3} stroke={color} strokeWidth={strokeWidth} fill="none" />
+    </Svg>
+  );
+}
+
+export function FlagIcon({ size = 13, color = '#000', strokeWidth = 1.6 }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 16 16">
+      <Path d="M3 1.5v13" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      <Path d="M3 2c2-1 4 1 6 0s4 1 4 1v6c0 0-2-1-4 0s-4-1-6 0V2z" stroke={color} strokeWidth={strokeWidth} fill="none" strokeLinejoin="round" />
     </Svg>
   );
 }

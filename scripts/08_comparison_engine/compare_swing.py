@@ -24,16 +24,17 @@ sys.path.insert(0, os.path.join(SCRIPTS_DIR, '06_database_build'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '07_ball_racket_tracking'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '09_coaching_ai'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '00_utils'))
-from infer_angle import infer_camera_angle, angle_label
+from infer_angle import infer_camera_angle, angle_label, detect_view_direction, extract_frame, create_landmarker
 from build_pro_database import normalise_landmarks, trajectory_scale, PRE_SEC, POST_SEC
 from trajectory_compare import dtw_distance
-from track_racket_in_clip import track_racket_body, avg_racket_body_distance
+from track_racket_in_clip import track_racket_body, avg_racket_body_distance, track_racket_path
 from select_coaching_tips import get_coaching_tips
 from paths import DATA_DIR
 import phase_breakdown
 
 DB_PATH         = os.path.join(DATA_DIR, '06_pro_database', 'pro_database.json')
 OVERLAY_DB_PATH = os.path.join(DATA_DIR, '06_pro_database', 'overlay_trajectories.json')
+PLAYER_NAMES_PATH = os.path.join(DATA_DIR, '06_pro_database', 'player_names.json')
 MODEL_PATH      = os.path.join(os.path.dirname(__file__), '..', 'pose_landmarker.task')
 
 KEY_LANDMARKS = [
@@ -59,6 +60,21 @@ def similarity_score(dist, scale=0.4):
     """Convert a DTW distance (avg per-landmark-per-frame error, in
     shoulder-width units) to a 0-100 similarity score."""
     return round(max(0, 100 * math.exp(-dist / scale)), 1)
+
+
+def build_racket_overlay_trajectory(racket_frames, fps):
+    """
+    Same convention as build_overlay_trajectory() but for racket keypoints
+    (handle/throat/tip/left_edge/right_edge, from track_racket_path()) rather
+    than body landmarks -- feeds the frontend's racket swing-path overlay.
+    't' is video-relative seconds computed the same way (frame / fps), so
+    both overlays sync to one shared playhead with no extra translation.
+    """
+    result = []
+    for f in racket_frames:
+        points = {name: ({'x': p[0], 'y': p[1]} if p else None) for name, p in f['points'].items()}
+        result.append({'t': round(f['frame'] / fps, 3), 'points': points})
+    return result
 
 
 def build_overlay_trajectory(frames):
@@ -192,28 +208,78 @@ def build_user_trajectory(frames, fps, contact_time_sec=None):
 
 # ── Main comparison ───────────────────────────────────────────────────────────
 
-def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=None):
+def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=None, view_direction_hint=None, frames_fps=None):
+    """
+    frames_fps: optional pre-extracted (frames, fps) tuple (same shape
+    extract_user_poses returns) to skip re-running pose extraction when the
+    caller already has it for this exact video. Defaults to None so every
+    existing caller (pro_matcher.py / the live /api/analyse route) behaves
+    exactly as before -- this is purely an opt-in fast path.
+    """
     print(f'\nAnalysing {shot_type} swing...', file=sys.stderr)
 
-    print('  Extracting poses from user video...', file=sys.stderr)
-    frames, fps = extract_user_poses(video_path)
+    if frames_fps is not None:
+        print('  Reusing already-extracted poses from user video...', file=sys.stderr)
+        frames, fps = frames_fps
+    else:
+        print('  Extracting poses from user video...', file=sys.stderr)
+        frames, fps = extract_user_poses(video_path)
     user_trajectory, peak_frame = build_user_trajectory(frames, fps, contact_time_sec)
     if contact_time_sec is not None:
         print(f'  Using user-marked contact frame {peak_frame} ({peak_frame/fps:.2f}s, requested {contact_time_sec:.2f}s)', file=sys.stderr)
     else:
         print(f'  Contact point auto-detected at frame {peak_frame} ({peak_frame/fps:.2f}s)', file=sys.stderr)
 
+    # A single shared landmarker for the angle/view-direction detection below
+    # (both accept one for exactly this reason -- see infer_angle.py's
+    # create_landmarker() docstring) instead of each creating and tearing
+    # down their own model instance.
+    shared_landmarker = create_landmarker()
+
     # Infer user camera angle at the contact frame
     print('  Inferring camera angle...', file=sys.stderr)
-    user_angle, angle_conf, angle_debug = infer_camera_angle(video_path, peak_frame)
+    user_angle, angle_conf, angle_debug = infer_camera_angle(video_path, peak_frame, landmarker=shared_landmarker)
     if user_angle is not None:
         print(f'  Camera angle: {user_angle}° ({angle_label(user_angle)}) — confidence: {angle_conf}', file=sys.stderr)
     else:
         print(f'  Camera angle: could not infer ({angle_debug})', file=sys.stderr)
 
+    # View direction (front = camera at the net facing you, back = camera
+    # behind the baseline) -- a separate signal from the angle above, since
+    # both can produce a similarly narrow net width despite mirrored pose
+    # landmarks. Server-side detection is the source of truth; the
+    # frontend's record-time picker is only used as a fallback when
+    # detection itself can't tell (contact frame not usable, net not found).
+    user_view_direction = 'unknown'
+    try:
+        contact_frame_img = extract_frame(video_path, peak_frame)
+        user_view_direction = detect_view_direction(contact_frame_img, landmarker=shared_landmarker)
+    except Exception as e:
+        print(f'  View direction detection failed (non-fatal): {e}', file=sys.stderr)
+    if user_view_direction == 'unknown' and view_direction_hint in ('front', 'back'):
+        user_view_direction = view_direction_hint
+        print(f'  View direction: could not detect, using stated hint "{view_direction_hint}"', file=sys.stderr)
+    else:
+        print(f'  View direction: {user_view_direction}', file=sys.stderr)
+
+    # Done with the shared landmarker -- release it now rather than at
+    # function end, since there's real work below (DTW over hundreds of
+    # candidates, phase breakdown) and this is called once per swing in
+    # long batch runs; no reason to hold the model loaded any longer than
+    # its actual usage window.
+    try:
+        shared_landmarker.close()
+    except Exception:
+        pass
+
     print('  Loading pro database...', file=sys.stderr)
     with open(DB_PATH) as f:
         db = json.load(f)
+
+    player_names = {}
+    if os.path.exists(PLAYER_NAMES_PATH):
+        with open(PLAYER_NAMES_PATH, encoding='utf-8') as f:
+            player_names = json.load(f)
 
     all_candidates = [e for e in db['entries'] if e['shot_type'] == shot_type]
 
@@ -234,6 +300,18 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         candidates = all_candidates
         print(f'  No angle data — comparing against all {len(candidates)} {shot_type} swings', file=sys.stderr)
 
+    # Filter by view direction on top of the angle filter, same
+    # fall-back-if-too-few-candidates shape as the angle filter above --
+    # some shot types have very few (or zero, for serve) front-view
+    # entries, so this must never leave too small a pool to compare against.
+    if user_view_direction in ('front', 'back'):
+        direction_filtered = [c for c in candidates if c.get('view_direction') == user_view_direction]
+        if len(direction_filtered) >= 5:
+            candidates = direction_filtered
+            print(f'  View-direction filter ({user_view_direction}): {len(candidates)} candidates', file=sys.stderr)
+        else:
+            print(f'  View-direction filter: only {len(direction_filtered)} matching "{user_view_direction}" — keeping the angle-filtered set', file=sys.stderr)
+
     print(f'  Comparing trajectories (DTW) against {len(candidates)} candidates...', file=sys.stderr)
     results = []
     for entry in candidates:
@@ -251,7 +329,7 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
     output = []
     for rank, (score, dist, entry) in enumerate(top, 1):
         tips_result, _ = get_coaching_tips(user_trajectory, entry['trajectory'], shot_type)
-        tips = [{'tip_text': t['tip_text'], 'drill': t.get('drill')} for t in tips_result]
+        tips = [{'id': t.get('issue_id'), 'tip_text': t['tip_text'], 'drill': t.get('drill')} for t in tips_result]
 
         print(f'\n  #{rank} — {entry["id"]}', file=sys.stderr)
         print(f'       Similarity: {score}/100', file=sys.stderr)
@@ -266,6 +344,7 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         output.append({
             'rank':       rank,
             'pro_id':     entry['id'],
+            'player_name': player_names.get(entry['id']),
             'shot_type':  shot_type,
             'similarity': score,
             'clip_path':  entry.get('clip_path'),
@@ -281,6 +360,7 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
     # only computed for the top match -- it needs per-frame racket tracking
     # on the user's video, which is too expensive to run against every
     # candidate.
+    user_racket_overlay_trajectory = None
     if top:
         print('  Computing phase breakdown (top match only)...', file=sys.stderr)
         top_entry = top[0][2]
@@ -291,11 +371,26 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
             user_racket_body_distance = avg_racket_body_distance(racket_frames)
             breakdown = phase_breakdown.compute_phase_breakdown(
                 user_trajectory, top_entry, shot_type, user_racket_body_distance)
-            output[0]['phases'] = {k: v for k, v in breakdown.items() if k != 'overall_score'}
+            output[0]['phases'] = {
+                k: v for k, v in breakdown.items() if k not in ('overall_score', 'phase_markers')
+            }
             output[0]['overall_score'] = breakdown['overall_score']
+            output[0]['phase_markers'] = breakdown['phase_markers']
             print(f'  Overall phase score: {breakdown["overall_score"]}', file=sys.stderr)
         except Exception as e:
             print(f'  Phase breakdown failed (non-fatal): {e}', file=sys.stderr)
+
+        # Racket swing-path overlay -- separate detection pass from
+        # track_racket_body() above (that one only keeps the 'handle' point,
+        # this keeps all 5, for tracing the racket tip's path over time, not
+        # scoring body rotation). Same reasoning as the skeleton overlay:
+        # user side is cheap/live since we already have the frame range;
+        # non-fatal on failure, same pattern as phase breakdown above.
+        try:
+            racket_path_frames = track_racket_path(video_path, frame_range=(lo, hi))
+            user_racket_overlay_trajectory = build_racket_overlay_trajectory(racket_path_frames, fps)
+        except Exception as e:
+            print(f'  Racket path tracking failed (non-fatal): {e}', file=sys.stderr)
 
         # Skeleton overlay data -- only for the top match, mirroring the
         # phase-breakdown-only-for-top-match pattern above. Pro side is a
@@ -312,6 +407,23 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         except Exception as e:
             print(f'  Pro overlay lookup failed (non-fatal): {e}', file=sys.stderr)
 
+        # Pro-side racket path -- unlike the skeleton overlay above, there's
+        # no precomputed database for this yet, so it's tracked live against
+        # the pro's own clip file (same one pro_clip_url is served from).
+        # Real added cost (not "already running" the way the user side is,
+        # since nothing currently tracks racket keypoints on pro clips) --
+        # acceptable for one top-match clip, non-fatal on failure.
+        try:
+            pro_clip_path = top_entry.get('clip_path')
+            if pro_clip_path and os.path.exists(pro_clip_path):
+                pro_racket_frames = track_racket_path(pro_clip_path)
+                pro_cap = cv2.VideoCapture(pro_clip_path)
+                pro_fps = pro_cap.get(cv2.CAP_PROP_FPS) or fps
+                pro_cap.release()
+                output[0]['pro_racket_overlay_trajectory'] = build_racket_overlay_trajectory(pro_racket_frames, pro_fps)
+        except Exception as e:
+            print(f'  Pro racket path tracking failed (non-fatal): {e}', file=sys.stderr)
+
     result = {
         'user_video':   video_path,
         'shot_type':    shot_type,
@@ -319,7 +431,9 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         'angle_label':  angle_label(user_angle) if user_angle is not None else None,
         'angle_conf':   angle_conf if user_angle is not None else None,
         'contact_time_sec': round(peak_frame / fps, 3),
+        'user_view_direction': user_view_direction,
         'user_overlay_trajectory': build_overlay_trajectory(frames),
+        'racket_overlay_trajectory': user_racket_overlay_trajectory,
         'matches':      output,
     }
 
@@ -337,5 +451,6 @@ if __name__ == '__main__':
     parser.add_argument('--top', type=int, default=3)
     parser.add_argument('--angle-window', type=int, default=20, help='Angle filter window in degrees (default: 20)')
     parser.add_argument('--contact-time', type=float, default=None, help='User-marked contact time in seconds (from ContactMarkingScreen). If omitted, contact is auto-detected via wrist velocity.')
+    parser.add_argument('--view-direction-hint', choices=['front', 'back'], default=None, help='User-stated filming position (from the record-time picker), used only if server-side detection is inconclusive.')
     args = parser.parse_args()
-    compare(args.video, args.shot_type, args.top, args.angle_window, args.contact_time)
+    compare(args.video, args.shot_type, args.top, args.angle_window, args.contact_time, args.view_direction_hint)

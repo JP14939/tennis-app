@@ -4,6 +4,7 @@ import { Purchases } from '@revenuecat/purchases-js';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE } from '../config/api';
 import { colors, fonts, radius, spacing } from '../theme';
+import { playTapSound } from '../utils/sounds';
 
 const RC_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_WEB_API_KEY;
 
@@ -83,7 +84,7 @@ export default function PremiumCheckout() {
 
   return (
     <View style={s.card}>
-      <Text style={s.title}>{product?.title || 'TennisAI Premium'}</Text>
+      <Text style={s.title}>{product?.title || 'RallyMax Premium'}</Text>
       {product?.description && <Text style={s.desc}>{product.description}</Text>}
       {product?.currentPrice?.formattedPrice && (
         <Text style={s.price}>{product.currentPrice.formattedPrice}</Text>
@@ -93,7 +94,7 @@ export default function PremiumCheckout() {
 
       <TouchableOpacity
         style={[s.btn, status === 'purchasing' && s.btnDisabled]}
-        onPress={purchase}
+        onPress={() => { playTapSound(); purchase(); }}
         disabled={status === 'purchasing'}
       >
         <Text style={s.btnText}>{status === 'purchasing' ? 'Processing…' : 'Subscribe'}</Text>

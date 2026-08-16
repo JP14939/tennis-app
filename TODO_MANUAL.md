@@ -22,7 +22,7 @@ this was built from for the full picture; this is just the "your turn" list.
    `REVENUECAT_ENTITLEMENT_ID=premium` already set in `backend/.env` — if
    you name it something else, update that env var to match instead).
 4. **Create a product + package + offering** for the subscription (e.g.
-   "TennisAI Premium", monthly, whatever price you want to test with) and
+   "RallyMax Premium", monthly, whatever price you want to test with) and
    attach it to the `premium` entitlement.
 5. **Grab your keys** from RevenueCat's dashboard:
    - The **public Web Billing API key** → put in `frontend/.env` (copy from

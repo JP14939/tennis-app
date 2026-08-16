@@ -41,7 +41,13 @@ CANVAS_H = 854
 BACKDROP_COLOR = (24, 24, 24)  # BGR, close to the app's dark theme background
 
 VISIBILITY_THRESHOLD = 0.5
-MARGIN = 0.35  # fraction of bbox size added on each side
+# Fraction of bbox size added on each side. The bbox itself only covers
+# body landmarks -- during a real swing the racket (and the ball, near
+# contact) extends well beyond the body silhouette, so a tight margin here
+# was cropping the racket/ball right out of frame at the moment users most
+# want to see clearly. Raised from 0.35 after that was reported as "cutting
+# too much" on real footage.
+MARGIN = 1.6
 EMA_ALPHA = 0.3  # bbox smoothing -- lower = smoother/slower to react
 
 

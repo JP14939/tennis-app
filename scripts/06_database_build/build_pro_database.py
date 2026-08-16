@@ -114,7 +114,7 @@ def get_shoulder_ref(lm_dict):
 
 
 def normalise_landmarks(lm_dict, scale=None):
-    """Return normalised (x, y) for KEY_LANDMARKS. Returns None if ref missing.
+    """Return normalised (x, y, z) for KEY_LANDMARKS. Returns None if ref missing.
 
     `scale` should be a single stable shoulder-width value shared across an
     entire trajectory (see trajectory_scale()) rather than this frame's own
@@ -122,7 +122,16 @@ def normalise_landmarks(lm_dict, scale=None):
     rotates through a swing (foreshortening), so dividing by the per-frame
     width amplifies ordinary pose-detection noise into large coordinate swings
     at exactly the frames that matter (mid-swing, near contact). Translation
-    (mid_x/mid_y) is still taken per-frame since it should track the body."""
+    (mid_x/mid_y) is still taken per-frame since it should track the body.
+
+    z: MediaPipe already reports a z per landmark (roughly hip-centered depth,
+    same normalized-image-width units as x/y) on every frame -- previously
+    captured at extraction and never read again past this function. No
+    translation offset for z (MediaPipe's own origin is already usable),
+    same `scale` divisor as x/y for consistency. Note MediaPipe's z is a
+    rougher, noisier monocular depth estimate than x/y -- callers that
+    consume it (trajectory_compare.py, phase_breakdown.py) should treat it
+    as a lower-confidence signal, not equally trustworthy to x/y."""
     mid_x, mid_y, width = get_shoulder_ref(lm_dict)
     if not mid_x or width < 0.01:
         return None
@@ -136,6 +145,7 @@ def normalise_landmarks(lm_dict, scale=None):
             result[name] = {
                 'x': round((lm['x'] - mid_x) / scale, 4),
                 'y': round((lm['y'] - mid_y) / scale, 4),
+                'z': round(lm['z'] / scale, 4) if lm.get('z') is not None else None,
             }
         else:
             result[name] = None
@@ -188,7 +198,7 @@ def extract_swing_trajectory(swing, pose_index, fps):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def build_database():
+def build_database(out_path=r'C:\Users\jackp\tennis_app\data\06_pro_database\pro_database.json'):
     all_entries = []
 
     print('Creating pose landmarker for angle inference...')
@@ -273,7 +283,6 @@ def build_database():
 
     angle_landmarker.close()
 
-    out_path = r'C:\Users\jackp\tennis_app\data\06_pro_database\pro_database.json'
     with open(out_path, 'w') as f:
         json.dump({
             'total': len(all_entries),

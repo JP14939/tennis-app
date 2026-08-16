@@ -14,7 +14,7 @@ Usage:
 
 Output (stdout): {"ok": bool, "angle": float|null, "confidence": float,
                    "height_ratio": float|null, "elevation_status": str,
-                   "message": str}
+                   "framing_status": str, "message": str}
 """
 import json
 import os
@@ -33,6 +33,22 @@ ELEVATION_MESSAGES = {
     'unknown':            "Couldn't check camera height from this clip — make sure you followed the fence-mount guide.",
 }
 
+# NOT surfaced in `message` here, deliberately -- see check_camera_setup_frame()
+# in infer_angle.py (the live pre-recording path) for where this check is
+# actually validated and live. Spot-checking this session against ~60 real
+# swing clips found shoulder_tilt_deg gives clean, tight results (0-14 deg
+# for the vast majority) when read from a frame BEFORE the swing starts
+# (the live-calibration assumption: player standing still, positioning the
+# camera) but produces real false positives when sampled from arbitrary
+# points across an already-recorded swing clip (this function's actual
+# input) -- a player rotating through their stroke gets misread as a
+# tilted camera. `framing_status`/`stance_width_ratio`/`shoulder_tilt_deg`
+# are still returned below as raw data (harmless, might be useful later),
+# just not folded into the user-facing message on this path.
+FRAMING_MESSAGES = {
+    'ok': '', 'tilted': '', 'compressed_stance': '', 'unknown': '',
+}
+
 
 def check_camera_setup(video_path):
     angle, confidence, debug = infer_camera_angle(video_path)
@@ -40,37 +56,44 @@ def check_camera_setup(video_path):
     if angle is None:
         return {
             'ok': False, 'angle': None, 'confidence': 0.0,
-            'height_ratio': None, 'elevation_status': 'unknown',
+            'height_ratio': None, 'elevation_status': 'unknown', 'framing_status': 'unknown',
             'message': "Couldn't find the net in your video — try the fence-mount guide for a clearer shot.",
         }
 
     height_ratio = debug.get('height_ratio')
     elevation_status = debug.get('elevation_status', 'unknown')
+    framing_status = debug.get('framing_status', 'unknown')
 
     if confidence < MIN_CONFIDENCE:
         return {
             'ok': False, 'angle': angle, 'confidence': confidence,
             'height_ratio': height_ratio, 'elevation_status': elevation_status,
+            'framing_status': framing_status,
             'message': f"Camera setup looks uncertain ({angle_label(angle)}, low confidence) — see the fence-mount guide.",
         }
 
     return {
         'ok': True, 'angle': angle, 'confidence': confidence,
         'height_ratio': height_ratio, 'elevation_status': elevation_status,
-        'message': f'Net detected OK ({angle_label(angle)}). {ELEVATION_MESSAGES.get(elevation_status, ELEVATION_MESSAGES["unknown"])}',
+        'framing_status': framing_status,
+        'message': (
+            f'Net detected OK ({angle_label(angle)}). '
+            f'{ELEVATION_MESSAGES.get(elevation_status, ELEVATION_MESSAGES["unknown"])}'
+            f'{FRAMING_MESSAGES.get(framing_status, "")}'
+        ),
     }
 
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
-        print(json.dumps({'ok': False, 'angle': None, 'confidence': 0.0, 'height_ratio': None, 'elevation_status': 'unknown', 'message': 'No video path given'}))
+        print(json.dumps({'ok': False, 'angle': None, 'confidence': 0.0, 'height_ratio': None, 'elevation_status': 'unknown', 'framing_status': 'unknown', 'message': 'No video path given'}))
         sys.exit(1)
     video_path = sys.argv[1]
     if not os.path.exists(video_path):
-        print(json.dumps({'ok': False, 'angle': None, 'confidence': 0.0, 'height_ratio': None, 'elevation_status': 'unknown', 'message': f'Video not found: {video_path}'}))
+        print(json.dumps({'ok': False, 'angle': None, 'confidence': 0.0, 'height_ratio': None, 'elevation_status': 'unknown', 'framing_status': 'unknown', 'message': f'Video not found: {video_path}'}))
         sys.exit(1)
     try:
         print(json.dumps(check_camera_setup(video_path)))
     except Exception as e:
-        print(json.dumps({'ok': False, 'angle': None, 'confidence': 0.0, 'height_ratio': None, 'elevation_status': 'unknown', 'message': str(e)}))
+        print(json.dumps({'ok': False, 'angle': None, 'confidence': 0.0, 'height_ratio': None, 'elevation_status': 'unknown', 'framing_status': 'unknown', 'message': str(e)}))
         sys.exit(1)

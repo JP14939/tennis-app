@@ -3,6 +3,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Alert,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { playTapSound } from '../utils/sounds';
 
 const GREEN  = '#4ade80';
 const DARK   = '#0d0d0d';
@@ -13,19 +14,17 @@ const MUTED  = '#888';
 
 const SHOT_TYPES = ['forehand', 'backhand', 'serve'];
 
-function VideoPicker({ icon, label, sub, fileName, picking, onPress }) {
+function VideoPicker({ label, sub, fileName, picking, onPress }) {
   return (
     <TouchableOpacity style={s.uploadBtn} onPress={onPress} disabled={picking}>
       {fileName ? (
         <>
-          <Text style={s.uploadIcon}>✅</Text>
           <Text style={s.uploadBtnText}>{label} selected</Text>
           <Text style={s.uploadBtnSub} numberOfLines={1}>{fileName}</Text>
           <Text style={s.changeText}>Tap to change</Text>
         </>
       ) : (
         <>
-          <Text style={s.uploadIcon}>{icon}</Text>
           <Text style={s.uploadBtnText}>{picking ? 'Opening...' : label}</Text>
           <Text style={s.uploadBtnSub}>{sub}</Text>
         </>
@@ -107,7 +106,6 @@ export default function VersusPickScreen({ navigation }) {
 
         <Text style={s.fieldLabel}>Video you want to copy</Text>
         <VideoPicker
-          icon="🎯"
           label="Choose reference video"
           sub="MP4 · MOV · any resolution"
           fileName={refName}
@@ -117,7 +115,6 @@ export default function VersusPickScreen({ navigation }) {
 
         <Text style={[s.fieldLabel, { marginTop: 20 }]}>Your video</Text>
         <VideoPicker
-          icon="📹"
           label="Choose your video"
           sub="MP4 · MOV · any resolution"
           fileName={yourName}
@@ -127,7 +124,7 @@ export default function VersusPickScreen({ navigation }) {
 
         <TouchableOpacity
           style={[s.continueBtn, !canContinue && s.continueDisabled]}
-          onPress={start}
+          onPress={() => { playTapSound(); start(); }}
           disabled={!canContinue}
         >
           <Text style={s.continueBtnText}>Continue →</Text>
@@ -158,7 +155,6 @@ const s = StyleSheet.create({
     backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
     borderRadius: 16, padding: 24, alignItems: 'center', gap: 4,
   },
-  uploadIcon:    { fontSize: 30, marginBottom: 4 },
   uploadBtnText: { color: TEXT, fontSize: 15, fontWeight: '600' },
   uploadBtnSub:  { color: MUTED, fontSize: 12 },
   changeText:    { color: GREEN, fontSize: 12, marginTop: 4 },

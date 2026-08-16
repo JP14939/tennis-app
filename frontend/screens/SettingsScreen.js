@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, Switch, Alert,
   StyleSheet, SafeAreaView, ScrollView,
@@ -6,6 +6,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { changePassword } from '../api/account';
 import { colors, fonts, radius, spacing } from '../theme';
+import { isSoundEnabled, setSoundEnabled, playTapSound } from '../utils/sounds';
 
 function Section({ title, children }) {
   return (
@@ -39,6 +40,27 @@ export default function SettingsScreen({ navigation }) {
     }
   };
 
+  // ── Username ───────────────────────────────────────────────────────────
+  const [username, setUsername] = useState(user?.username ?? '');
+  const [savingUsername, setSavingUsername] = useState(false);
+
+  const saveUsername = async () => {
+    const trimmed = username.trim().toLowerCase();
+    if (!/^[a-z0-9_]{3,20}$/.test(trimmed)) {
+      Alert.alert('Invalid username', 'Use 3-20 characters: lowercase letters, numbers, or underscores.');
+      return;
+    }
+    setSavingUsername(true);
+    try {
+      await updateUser({ username: trimmed });
+      setUsername(trimmed);
+    } catch (err) {
+      Alert.alert('Could not save', err.message || 'Something went wrong');
+    } finally {
+      setSavingUsername(false);
+    }
+  };
+
   // ── Push notifications ────────────────────────────────────────────────
   const [notifEnabled, setNotifEnabled] = useState(!!user?.notifications_enabled);
 
@@ -50,6 +72,18 @@ export default function SettingsScreen({ navigation }) {
       setNotifEnabled(!value);
       Alert.alert('Could not update', err.message || 'Something went wrong');
     }
+  };
+
+  // ── Sound effects ──────────────────────────────────────────────────────
+  // Local device preference, not synced to the backend -- unlike
+  // notifications_enabled above, nothing server-side needs to know this.
+  const [soundEnabled, setSoundEnabledState] = useState(true);
+  useEffect(() => { isSoundEnabled().then(setSoundEnabledState); }, []);
+
+  const toggleSound = async (value) => {
+    setSoundEnabledState(value);
+    await setSoundEnabled(value);
+    if (value) playTapSound(); // immediate feedback that it's back on
   };
 
   // ── Change password ───────────────────────────────────────────────────
@@ -116,10 +150,30 @@ export default function SettingsScreen({ navigation }) {
           />
           <TouchableOpacity
             style={[s.saveBtn, (savingName || !name.trim()) && s.saveBtnDisabled]}
-            onPress={saveName}
+            onPress={() => { playTapSound(); saveName(); }}
             disabled={savingName || !name.trim()}
           >
             <Text style={s.saveBtnText}>{savingName ? 'Saving...' : 'Save name'}</Text>
+          </TouchableOpacity>
+        </Section>
+
+        <Section title="Username">
+          <TextInput
+            style={s.input}
+            value={username}
+            onChangeText={(t) => setUsername(t.toLowerCase())}
+            placeholder="e.g. rally_max"
+            placeholderTextColor={colors.muted}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <Text style={s.switchSub}>Shown to friends and coaches instead of your email. 3-20 characters, lowercase letters, numbers, or underscores.</Text>
+          <TouchableOpacity
+            style={[s.saveBtn, (savingUsername || !username.trim()) && s.saveBtnDisabled]}
+            onPress={() => { playTapSound(); saveUsername(); }}
+            disabled={savingUsername || !username.trim()}
+          >
+            <Text style={s.saveBtnText}>{savingUsername ? 'Saving...' : 'Save username'}</Text>
           </TouchableOpacity>
         </Section>
 
@@ -132,6 +186,21 @@ export default function SettingsScreen({ navigation }) {
             <Switch
               value={notifEnabled}
               onValueChange={toggleNotif}
+              trackColor={{ false: colors.border, true: colors.primary }}
+              thumbColor={colors.white}
+            />
+          </View>
+        </Section>
+
+        <Section title="Sound">
+          <View style={s.switchRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.switchLabel}>Sound effects</Text>
+              <Text style={s.switchSub}>A light tap sound on primary buttons — respects your phone's silent switch</Text>
+            </View>
+            <Switch
+              value={soundEnabled}
+              onValueChange={toggleSound}
               trackColor={{ false: colors.border, true: colors.primary }}
               thumbColor={colors.white}
             />

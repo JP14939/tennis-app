@@ -1,6 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const db = require('../db');
@@ -10,6 +11,7 @@ const { DATA_DIR } = require('../config/paths');
 const router = express.Router();
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const USERNAME_RE = /^[a-z0-9_]{3,20}$/;
 const TOKEN_TTL = '30d'; // mobile app — favour staying logged in over frequent re-auth
 // Same path convention highlights.js uses for its per-user clip subdirectory.
 const HIGHLIGHT_CLIPS_DIR = path.join(DATA_DIR, 'runtime', 'highlight_clips');
@@ -27,6 +29,7 @@ function publicUser(user) {
     id: user.id,
     email: user.email,
     name: user.name,
+    username: user.username,
     tier: user.tier,
     notifications_enabled: !!user.notifications_enabled,
   };
@@ -90,10 +93,18 @@ router.get('/auth/me', requireAuth, (req, res) => {
 });
 
 router.patch('/auth/me', requireAuth, (req, res) => {
-  const { name, notifications_enabled } = req.body || {};
+  const { name, notifications_enabled, username } = req.body || {};
 
   if (name !== undefined && !name.trim()) {
     return res.status(400).json({ error: 'Name is required' });
+  }
+
+  let normalisedUsername;
+  if (username !== undefined) {
+    normalisedUsername = username.trim().toLowerCase();
+    if (!USERNAME_RE.test(normalisedUsername)) {
+      return res.status(400).json({ error: 'Username must be 3-20 characters, lowercase letters, numbers, or underscores only' });
+    }
   }
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
@@ -101,11 +112,19 @@ router.patch('/auth/me', requireAuth, (req, res) => {
     return res.status(404).json({ error: 'User no longer exists' });
   }
 
-  db.prepare('UPDATE users SET name = ?, notifications_enabled = ? WHERE id = ?').run(
-    name !== undefined ? name.trim() : user.name,
-    notifications_enabled !== undefined ? (notifications_enabled ? 1 : 0) : user.notifications_enabled,
-    user.id
-  );
+  try {
+    db.prepare('UPDATE users SET name = ?, notifications_enabled = ?, username = ? WHERE id = ?').run(
+      name !== undefined ? name.trim() : user.name,
+      notifications_enabled !== undefined ? (notifications_enabled ? 1 : 0) : user.notifications_enabled,
+      normalisedUsername !== undefined ? normalisedUsername : user.username,
+      user.id
+    );
+  } catch (err) {
+    if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      return res.status(409).json({ error: 'Username is already taken' });
+    }
+    throw err;
+  }
 
   const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
   res.json({ user: publicUser(updated) });
@@ -151,22 +170,83 @@ router.delete('/auth/me', requireAuth, async (req, res) => {
     return res.status(401).json({ error: 'Incorrect password' });
   }
 
+  // Every table below was audited against db.js's full schema (grew a lot
+  // since this endpoint was first written -- messages, friends, court
+  // activity, shared analyses, and annotations weren't handled at all,
+  // meaning any user who'd ever used those features would hit a foreign-key
+  // constraint error mid-transaction and simply be unable to delete their
+  // account). Two categories:
+  //   - Solely-owned content (their own analyses/videos, push tokens, court
+  //     watches, etc.) -- fully deleted below.
+  //   - Content shared with/by another user (messages, shared analyses they
+  //     received, annotations they drew on someone else's swing, coach
+  //     notes they wrote as a coach, match records) -- the ROW is kept so
+  //     the other party's thread/history isn't destroyed, and resolved via
+  //     the anonymized `users` row at the end instead of being deleted here.
   const deleteUser = db.transaction((userId) => {
-    // Coach-mode rows reference both users(id) and analyses(id) -- must go
-    // before the analyses/users deletes below or the FK constraints on
-    // coach_notes/coach_links/coach_invite_codes fail.
+    // Coach notes ON THE DELETED USER'S OWN analyses go with those analyses
+    // (the analysis itself is being destroyed, so a note about a specific
+    // moment of a video that no longer exists is meaningless). Coach notes
+    // the deleted user WROTE about someone else's analysis are left alone.
     db.prepare('DELETE FROM coach_notes WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?)').run(userId);
-    db.prepare('DELETE FROM coach_notes WHERE coach_id = ?').run(userId);
     db.prepare('DELETE FROM coach_links WHERE coach_id = ? OR student_id = ?').run(userId, userId);
     db.prepare('DELETE FROM coach_invite_codes WHERE student_id = ?').run(userId);
+
+    // Same reasoning as coach_notes above -- shares/annotations tied to the
+    // deleted user's OWN analyses are destroyed along with those analyses;
+    // shares/annotations they made on someone ELSE's analysis are left
+    // alone (that other user's shared swing/feedback shouldn't vanish).
+    db.prepare('DELETE FROM shared_analyses WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?)').run(userId);
+    db.prepare('DELETE FROM swing_annotations WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?)').run(userId);
     db.prepare('DELETE FROM analyses WHERE user_id = ?').run(userId);
+
     db.prepare('DELETE FROM analysis_usage WHERE user_id = ?').run(userId);
+    db.prepare('DELETE FROM reel_jobs WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM rally_clips WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM highlight_jobs WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM push_tokens WHERE user_id = ?').run(userId);
+    db.prepare('DELETE FROM court_watches WHERE user_id = ?').run(userId);
+    db.prepare('DELETE FROM court_confirmations WHERE user_id = ?').run(userId);
+    db.prepare('DELETE FROM availability_posts WHERE user_id = ?').run(userId);
+    db.prepare('DELETE FROM friend_codes WHERE user_id = ?').run(userId);
+    // Pure relationship-state records (no independent content the other
+    // party would lose) -- safe to delete outright, unlike messages.
+    db.prepare('DELETE FROM friend_links WHERE user_a_id = ? OR user_b_id = ?').run(userId, userId);
+    db.prepare('DELETE FROM user_blocks WHERE blocker_id = ? OR blocked_id = ?').run(userId, userId);
+    // message_reports is a trust-and-safety record, not personal content --
+    // left alone deliberately (same reasoning as messages/coach_notes),
+    // resolved via the anonymized users row below.
+
+    // Community data they contributed to (courts) -- kept, just
+    // disassociated from their identity; other users rely on the court
+    // itself continuing to exist.
+    db.prepare('UPDATE courts SET submitted_by = NULL WHERE submitted_by = ?').run(userId);
+    db.prepare('UPDATE courts SET cost_updated_by = NULL WHERE cost_updated_by = ?').run(userId);
+
     // Financial audit trail -- kept, just disassociated from the deleted account.
     db.prepare('UPDATE payment_events SET user_id = NULL WHERE user_id = ?').run(userId);
-    db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+
+    // Anonymize rather than delete the users row itself: messages,
+    // shared_analyses (as recipient), swing_annotations (as a guest
+    // annotator on someone else's swing), friend_matches, coach_notes (as
+    // coach), and celebrity_scores all still reference this id via a
+    // NOT NULL foreign key, so the row must keep existing -- scrubbing its
+    // personal fields is what actually fulfils "delete my account" for
+    // those relational rows without breaking the other party's data.
+    // password_hash is set to a real bcrypt hash of random bytes (not a
+    // sentinel string) so a login attempt fails cleanly through the normal
+    // bcrypt.compare() path rather than depending on how the library
+    // handles a malformed hash.
+    const deadHash = bcrypt.hashSync(crypto.randomBytes(32).toString('hex'), 10);
+    db.prepare(`
+      UPDATE users
+      SET email = 'deleted_' || id || '@rallymax.invalid',
+          password_hash = ?,
+          name = 'Deleted user',
+          username = NULL,
+          tier = 'free'
+      WHERE id = ?
+    `).run(deadHash, userId);
   });
   deleteUser(user.id);
 

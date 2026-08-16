@@ -1,17 +1,24 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet, SafeAreaView,
-  ScrollView, ActivityIndicator, Platform, Animated,
+  ScrollView, ActivityIndicator, Platform, Alert, Modal,
 } from 'react-native';
 import { API_BASE } from '../config/api';
 import { useAuth } from '../context/AuthContext';
-import { saveHistory } from '../api/history';
+import { saveHistory, flagNotShot, confirmRealShot, correctShotType } from '../api/history';
 import { getNotes, addNote } from '../api/coach';
 import { colors, fonts, radius, spacing, scoreColor } from '../theme';
 import CourtBackground from '../components/CourtBackground';
 import ResultShareCard from '../components/ResultShareCard';
 import { captureAndShare } from '../utils/shareCard';
-import { BackChevronIcon, ChevronDownIcon, ShareIcon } from '../components/icons';
+import { playTapSound, playCompleteSound, playAchievementSound } from '../utils/sounds';
+import { BackChevronIcon, ShareIcon, CheckIcon, FlagIcon } from '../components/icons';
+import ScoreCard from '../components/ScoreCard';
+import AngleRow from '../components/AngleRow';
+import PhaseBreakdown, { PHASE_LABELS, PHASE_ORDER, phaseColor } from '../components/PhaseBreakdown';
+import TipsSection from '../components/TipsSection';
+import FriendPickerModal from '../components/FriendPickerModal';
+import { shareSwing } from '../api/friends';
 
 // Coach notes attached to one phase (or general, phaseKey=null) -- shown
 // inline wherever they're relevant, with an "Add note" composer when the
@@ -81,29 +88,18 @@ const n = StyleSheet.create({
   saveText: { color: colors.primary, fontSize: 12.5, fontFamily: fonts.bold },
 });
 
-const PHASE_LABELS = {
-  backswing: 'Backswing',
-  contact: 'Contact',
-  follow_through: 'Follow-through',
-  body_rotation: 'Body Rotation',
-};
-const PHASE_ORDER = ['backswing', 'contact', 'follow_through', 'body_rotation'];
+const SHOT_TYPES = ['forehand', 'backhand', 'serve'];
 
-function phaseColor(score) {
-  if (score == null) return colors.muted;
-  if (score >= 18.75) return colors.primary;  // 75% of 25
-  if (score >= 13.75) return colors.gold;      // 55% of 25
-  return colors.coral;
-}
-
-function formatProId(proId) {
-  // "forehand_0142" -> "Forehand Technique #142"
+function formatProId(proId, playerName) {
+  // "forehand_0142" -> "Forehand Technique #142", or "<Name>'s Forehand"
+  // once that clip has been labeled (data/06_pro_database/player_names.json).
   const [shot, num] = proId.split('_');
   const label = shot.charAt(0).toUpperCase() + shot.slice(1);
+  if (playerName) return `${playerName}'s ${label}`;
   return `${label} Technique #${parseInt(num, 10)}`;
 }
 
-async function buildFormData(videoUri, shotType, contactTimeSec) {
+async function buildFormData(videoUri, shotType, contactTimeSec, viewDirectionHint) {
   const formData = new FormData();
   if (Platform.OS === 'web') {
     const response = await fetch(videoUri);
@@ -116,113 +112,17 @@ async function buildFormData(videoUri, shotType, contactTimeSec) {
   if (contactTimeSec !== undefined && contactTimeSec !== null) {
     formData.append('contactTime', String(contactTimeSec));
   }
+  if (viewDirectionHint === 'front' || viewDirectionHint === 'back') {
+    formData.append('viewDirectionHint', viewDirectionHint);
+  }
   return formData;
 }
 
-// Measured-height collapsible -- RN has no CSS max-height:auto equivalent,
-// so natural content height is measured once via onLayout then animated
-// between 0 and that value.
-function Collapsible({ open, children }) {
-  const [contentHeight, setContentHeight] = useState(0);
-  const heightAnim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(heightAnim, {
-      toValue: open ? contentHeight : 0,
-      duration: 300,
-      useNativeDriver: false,
-    }).start();
-  }, [open, contentHeight]);
-  return (
-    <Animated.View style={{ height: heightAnim, overflow: 'hidden' }}>
-      <View onLayout={(e) => setContentHeight(e.nativeEvent.layout.height)}>
-        {children}
-      </View>
-    </Animated.View>
-  );
-}
-
-function useRotate(open) {
-  const rotateAnim = useRef(new Animated.Value(open ? 1 : 0)).current;
-  useEffect(() => {
-    Animated.timing(rotateAnim, { toValue: open ? 1 : 0, duration: 250, useNativeDriver: true }).start();
-  }, [open]);
-  return rotateAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] });
-}
-
-function TipRow({ tip }) {
-  const [open, setOpen] = useState(false);
-  const rotate = useRotate(open);
-
-  if (!tip.drill) {
-    return (
-      <View style={t.row}>
-        <Text style={t.fixText}><Text style={t.fixLabel}>Fix: </Text>{tip.tip_text ?? tip}</Text>
-      </View>
-    );
-  }
-
-  return (
-    <View style={t.rowWrap}>
-      <TouchableOpacity style={t.row} onPress={() => setOpen(o => !o)} activeOpacity={0.85}>
-        <Text style={t.fixText}><Text style={t.fixLabel}>Fix: </Text>{tip.tip_text}</Text>
-        <Animated.View style={{ transform: [{ rotate }] }}>
-          <ChevronDownIcon size={12} color={colors.mutedDark} />
-        </Animated.View>
-      </TouchableOpacity>
-      <Collapsible open={open}>
-        <View style={t.drillPanel}>
-          <Text style={t.drillText}><Text style={t.drillLabel}>Drill — </Text>{tip.drill}</Text>
-        </View>
-      </Collapsible>
-    </View>
-  );
-}
-const t = StyleSheet.create({
-  rowWrap: { backgroundColor: colors.surface, borderRadius: radius.md, overflow: 'hidden', marginBottom: 9 },
-  row: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10,
-    padding: 14,
-  },
-  fixText: { flex: 1, color: colors.ink, fontSize: 13, lineHeight: 19.5, fontFamily: fonts.regular },
-  fixLabel: { fontFamily: fonts.bold },
-  drillPanel: { backgroundColor: colors.primarySoft, padding: 14 },
-  drillText: { color: colors.limeText, fontSize: 13, lineHeight: 19.5, fontFamily: fonts.regular },
-  drillLabel: { fontFamily: fonts.bold },
-});
-
-function TipsSection({ tips }) {
-  const [open, setOpen] = useState(false);
-  const rotate = useRotate(open);
-
-  return (
-    <>
-      <TouchableOpacity style={ts.toggle} onPress={() => setOpen(o => !o)} activeOpacity={0.85}>
-        <Text style={ts.toggleText}>Tips & drills to fix</Text>
-        <Animated.View style={{ transform: [{ rotate }] }}>
-          <ChevronDownIcon size={14} color={colors.mutedDark} />
-        </Animated.View>
-      </TouchableOpacity>
-      <Collapsible open={open}>
-        <View style={ts.reveal}>
-          {tips.map((tip, i) => <TipRow key={i} tip={tip} />)}
-        </View>
-      </Collapsible>
-    </>
-  );
-}
-const ts = StyleSheet.create({
-  toggle: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: colors.surface, borderRadius: radius.md, padding: 15, marginBottom: 22,
-  },
-  toggleText: { color: colors.ink, fontSize: 14.5, fontFamily: fonts.bold },
-  reveal: { marginTop: -12, paddingTop: 10 },
-});
-
 export default function ResultsScreen({ navigation, route }) {
   const {
-    videoUri, shotType, contactTimeSec,
-    savedResult, analysisId, canAddNotes,
+    videoUri, shotType, contactTimeSec, viewDirectionHint,
+    savedResult, analysisId: routeAnalysisId, canAddNotes,
+    flaggedNotShot = false, confirmedRealShot = false,
   } = route.params ?? {};
   const { token, isAuthenticated } = useAuth();
 
@@ -234,6 +134,23 @@ export default function ResultsScreen({ navigation, route }) {
   // never blocks the analysis result itself from displaying.
   const [saveStatus, setSaveStatus] = useState('idle');
   const shareCardRef = useRef(null);
+  const [shareModalVisible, setShareModalVisible] = useState(false);
+  // Bumped every time the share popup opens so ResultShareCard/ScoreRing
+  // remount and the fill-up animation replays instead of only running once.
+  const [shareModalKey, setShareModalKey] = useState(0);
+  const [friendPickerVisible, setFriendPickerVisible] = useState(false);
+
+  // A fresh analysis (route params has no analysisId yet) only gets one
+  // once saveToHistory() below actually saves it -- captured here so the
+  // verify buttons, notes, and Compare button all work for a just-analyzed
+  // result, not only when viewing an already-saved one from History.
+  const [savedAnalysisId, setSavedAnalysisId] = useState(routeAnalysisId ?? null);
+  const analysisId = savedAnalysisId;
+
+  const [flagged, setFlagged] = useState(flaggedNotShot);
+  const [confirmed, setConfirmed] = useState(confirmedRealShot);
+  const [displayShotType, setDisplayShotType] = useState(shotType);
+  const [showTypePicker, setShowTypePicker] = useState(false);
 
   const [notes, setNotes] = useState([]);
   const loadNotes = () => {
@@ -246,12 +163,57 @@ export default function ResultsScreen({ navigation, route }) {
     loadNotes();
   };
 
+  const handleSendToFriend = async (friend) => {
+    setFriendPickerVisible(false);
+    try {
+      await shareSwing(token, friend.id, analysisId);
+      Alert.alert('Sent!', `${friend.name} can now see this swing on Friends.`);
+    } catch (err) {
+      Alert.alert('Could not send', err.message || 'Something went wrong');
+    }
+  };
+
+  const handleToggleFlag = async () => {
+    const nextFlagged = !flagged;
+    setFlagged(nextFlagged);
+    if (nextFlagged) setConfirmed(false);
+    try {
+      await flagNotShot(token, analysisId, nextFlagged);
+    } catch (err) {
+      setFlagged(!nextFlagged); // revert on failure
+    }
+  };
+
+  const handleToggleConfirm = async () => {
+    const nextConfirmed = !confirmed;
+    setConfirmed(nextConfirmed);
+    if (nextConfirmed) setFlagged(false);
+    try {
+      await confirmRealShot(token, analysisId, nextConfirmed);
+    } catch (err) {
+      setConfirmed(!nextConfirmed); // revert on failure
+    }
+  };
+
+  const handleCorrectType = async (newShotType) => {
+    if (newShotType === displayShotType) { setShowTypePicker(false); return; }
+    const prevShotType = displayShotType;
+    setDisplayShotType(newShotType);
+    setShowTypePicker(false);
+    try {
+      await correctShotType(token, analysisId, newShotType);
+    } catch (err) {
+      setDisplayShotType(prevShotType);
+      Alert.alert('Could not update shot type', err.message || 'Something went wrong');
+    }
+  };
+
   const runAnalysis = async () => {
     setStatus('loading');
     setErrorMsg('');
     setErrorCode(null);
     try {
-      const formData = await buildFormData(videoUri, shotType, contactTimeSec);
+      const formData = await buildFormData(videoUri, shotType, contactTimeSec, viewDirectionHint);
       const response = await fetch(`${API_BASE}/api/analyse`, {
         method: 'POST',
         body: formData,
@@ -263,6 +225,16 @@ export default function ResultsScreen({ navigation, route }) {
       }
       setResult(data);
       setStatus('done');
+      // Great swing (>=75) gets the special achievement chime; anything
+      // else still gets a neutral "you're done" completion sound. Only
+      // reachable from a fresh analysis (see the savedResult guard below,
+      // which skips runAnalysis entirely for an already-saved result) --
+      // browsing back to an old result never replays either sound.
+      if ((data.matches?.[0]?.similarity ?? 0) >= 75) {
+        playAchievementSound();
+      } else {
+        playCompleteSound();
+      }
       saveToHistory(data);
     } catch (err) {
       setErrorMsg(err.message || 'Something went wrong');
@@ -277,7 +249,8 @@ export default function ResultsScreen({ navigation, route }) {
     }
     setSaveStatus('saving');
     try {
-      await saveHistory(token, data, shotType);
+      const saved = await saveHistory(token, data, shotType);
+      setSavedAnalysisId(saved.id);
       setSaveStatus('saved');
     } catch (err) {
       setSaveStatus(err.code === 'HISTORY_LIMIT' ? 'limit' : 'error');
@@ -318,13 +291,12 @@ export default function ResultsScreen({ navigation, route }) {
       <SafeAreaView style={s.safe}>
         <CourtBackground />
         <View style={s.centerFill}>
-          <Text style={s.errorIcon}>{isDailyLimit ? '⏳' : '⚠️'}</Text>
           <Text style={s.loadingTitle}>{isDailyLimit ? 'Daily limit reached' : 'Analysis failed'}</Text>
           <Text style={s.loadingSub}>{errorMsg}</Text>
           {isDailyLimit ? (
             <TouchableOpacity
               style={s.retryBtn}
-              onPress={() => navigation.navigate('MainTabs', { screen: 'Premium' })}
+              onPress={() => navigation.navigate('Premium')}
             >
               <Text style={s.retryBtnText}>Upgrade to Premium</Text>
             </TouchableOpacity>
@@ -359,12 +331,12 @@ export default function ResultsScreen({ navigation, route }) {
         <View style={s.headerRow}>
           <View>
             <Text style={s.header}>Your results</Text>
-            <Text style={s.headerSub}>{shotType?.charAt(0).toUpperCase() + shotType?.slice(1)}</Text>
+            <Text style={s.headerSub}>{displayShotType?.charAt(0).toUpperCase() + displayShotType?.slice(1)}</Text>
           </View>
           {top && Platform.OS !== 'web' && (
             <TouchableOpacity
               style={s.shareBtn}
-              onPress={() => captureAndShare(shareCardRef, 'Share your TennisAI result')}
+              onPress={() => { setShareModalKey((k) => k + 1); setShareModalVisible(true); }}
             >
               <ShareIcon size={17} color={colors.ink} />
             </TouchableOpacity>
@@ -374,16 +346,7 @@ export default function ResultsScreen({ navigation, route }) {
         {top ? (
           <>
             {/* Score */}
-            <View style={s.scoreCard}>
-              <View style={s.scoreTopRow}>
-                <Text style={s.scoreNum}>{score}</Text>
-                <Text style={s.scoreOutOf}>/ 100</Text>
-              </View>
-              <View style={s.scoreTrack}>
-                <View style={[s.scoreFill, { width: `${score}%`, backgroundColor: colors.lime }]} />
-              </View>
-              <Text style={s.matchedTo}>Matched to {formatProId(top.pro_id)}</Text>
-            </View>
+            <ScoreCard score={score} caption={`Matched to ${formatProId(top.pro_id, top.player_name)}`} />
 
             {top.pro_clip_url && result.user_clip_url && (
               <TouchableOpacity
@@ -391,19 +354,26 @@ export default function ResultsScreen({ navigation, route }) {
                 onPress={() => navigation.navigate('SyncCompare', {
                   videoAUrl: `${API_BASE}${top.pro_clip_url}`,
                   videoBUrl: `${API_BASE}${result.user_clip_url}`,
-                  croppedAUrl: top.pro_clip_cropped_url ? `${API_BASE}${top.pro_clip_cropped_url}` : null,
-                  croppedBUrl: result.user_clip_cropped_url ? `${API_BASE}${result.user_clip_cropped_url}` : null,
                   contactASec: top.pro_contact_time_sec ?? 0,
                   contactBSec: result.contact_time_sec ?? 0,
                   overlayA: top.pro_overlay_trajectory ?? null,
                   overlayB: result.user_overlay_trajectory ?? null,
-                  labelA: formatProId(top.pro_id),
+                  racketPathA: top.pro_racket_overlay_trajectory ?? null,
+                  racketPathB: result.racket_overlay_trajectory ?? null,
+                  labelA: formatProId(top.pro_id, top.player_name),
                   labelB: 'You',
                   analysisId,
                   canAddNotes,
+                  phaseMarkers: top.phase_markers ?? undefined,
                 })}
               >
                 <Text style={s.compareBtnText}>Compare side-by-side →</Text>
+              </TouchableOpacity>
+            )}
+
+            {analysisId && (
+              <TouchableOpacity style={s.sendBtn} onPress={() => setFriendPickerVisible(true)}>
+                <Text style={s.sendBtnText}>Send to a friend</Text>
               </TouchableOpacity>
             )}
 
@@ -421,10 +391,72 @@ export default function ResultsScreen({ navigation, route }) {
             {saveStatus === 'limit' && (
               <TouchableOpacity
                 style={s.saveBannerAction}
-                onPress={() => navigation.navigate('MainTabs', { screen: 'Premium' })}
+                onPress={() => navigation.navigate('Premium')}
               >
                 <Text style={s.saveBannerActionText}>Free plan limit reached (3/3) — upgrade to save unlimited →</Text>
               </TouchableOpacity>
+            )}
+
+            {/* Real human ground truth for scripts/16_shot_verification/'s
+                teacher-student loop -- same verify row as HistoryScreen's
+                cards, available here too since this is the first place a
+                user actually watches their swing back. */}
+            {analysisId && (
+              <View style={s.verifyWrap}>
+                {flagged && (
+                  <View style={s.flaggedBanner}>
+                    <FlagIcon size={11} color={colors.coral} />
+                    <Text style={s.flaggedBannerText}>Flagged: not a real shot</Text>
+                  </View>
+                )}
+                {confirmed && (
+                  <View style={s.confirmedBanner}>
+                    <CheckIcon size={11} color={colors.primary} />
+                    <Text style={s.confirmedBannerText}>Confirmed: real shot</Text>
+                  </View>
+                )}
+                <Text style={s.verifyLabel}>Is this actually a shot?</Text>
+                <View style={s.verifyRow}>
+                  <TouchableOpacity
+                    style={[s.verifyBtn, confirmed && s.verifyBtnConfirmed]}
+                    onPress={handleToggleConfirm}
+                    activeOpacity={0.8}
+                  >
+                    <CheckIcon size={12} color={confirmed ? colors.white : colors.primary} />
+                    <Text style={[s.verifyBtnText, confirmed && s.verifyBtnTextOn]}>Yes, real shot</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[s.verifyBtn, flagged && s.verifyBtnFlagged]}
+                    onPress={handleToggleFlag}
+                    activeOpacity={0.8}
+                  >
+                    <FlagIcon size={12} color={flagged ? colors.white : colors.coral} />
+                    <Text style={[s.verifyBtnText, flagged && s.verifyBtnTextOn]}>No, not a shot</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Same idea, but for shot TYPE -- teaches
+                    scripts/14_shot_classifier/'s teacher-student loop. */}
+                <TouchableOpacity style={s.wrongTypeBtn} onPress={() => setShowTypePicker((v) => !v)} activeOpacity={0.7}>
+                  <Text style={s.wrongTypeText}>{showTypePicker ? 'Cancel' : 'Wrong shot type?'}</Text>
+                </TouchableOpacity>
+                {showTypePicker && (
+                  <View style={s.typePickerRow}>
+                    {SHOT_TYPES.map((st) => (
+                      <TouchableOpacity
+                        key={st}
+                        style={[s.typePickerBtn, st === displayShotType && s.typePickerBtnActive]}
+                        onPress={() => handleCorrectType(st)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[s.typePickerBtnText, st === displayShotType && s.typePickerBtnTextActive]}>
+                          {st.charAt(0).toUpperCase() + st.slice(1)}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+              </View>
             )}
 
             {/* General coach notes (not tied to a phase) */}
@@ -436,56 +468,23 @@ export default function ResultsScreen({ navigation, route }) {
             )}
 
             {/* Angle info */}
-            <View style={s.angleRow}>
-              <View style={s.angleCard}>
-                <Text style={s.angleLabel}>Your angle</Text>
-                <Text style={s.angleValue}>{result.angle_label ?? '—'}</Text>
-                {result.user_angle != null && (
-                  <Text style={s.angleSub}>{result.user_angle}°</Text>
-                )}
-              </View>
-              <View style={s.angleCard}>
-                <Text style={s.angleLabel}>Pro's angle</Text>
-                <Text style={s.angleValue}>{top.pro_angle != null ? `${top.pro_angle}°` : '—'}</Text>
-              </View>
-            </View>
+            <AngleRow
+              leftLabel="Your angle"
+              leftValue={result.angle_label ?? '—'}
+              leftSub={result.user_angle != null ? `${result.user_angle}°` : null}
+              rightLabel="Pro's angle"
+              rightValue={top.pro_angle != null ? `${top.pro_angle}°` : '—'}
+            />
 
             {/* Phase breakdown */}
-            {phases && (
-              <>
-                <Text style={s.sectionTitle}>Phase breakdown</Text>
-                {PHASE_ORDER.map((key) => {
-                  const phase = phases[key];
-                  if (!phase) return null;
-                  const pScore = phase.score;
-                  return (
-                    <View key={key} style={s.phaseCard}>
-                      <View style={s.phaseHeader}>
-                        <Text style={s.phaseName}>{PHASE_LABELS[key]}</Text>
-                        <Text style={[s.phaseScore, { color: phaseColor(pScore) }]}>
-                          {pScore != null ? `${pScore}/25` : '—'}
-                        </Text>
-                      </View>
-                      <View style={s.phaseTrack}>
-                        <View
-                          style={[
-                            s.phaseFill,
-                            { width: `${((pScore ?? 0) / 25) * 100}%`, backgroundColor: phaseColor(pScore) },
-                          ]}
-                        />
-                      </View>
-                      {key === 'body_rotation' && phase.has_racket_data === false && (
-                        <Text style={s.phaseNote}>Racket not clearly visible — scored on body rotation only.</Text>
-                      )}
-                      {phase.tips?.[0] && <Text style={s.phaseTip}>{phase.tips[0]}</Text>}
-                      {analysisId && (
-                        <NotesBlock notes={notes} phaseKey={key} canAddNotes={!!canAddNotes} onAdd={handleAddNote} />
-                      )}
-                    </View>
-                  );
-                })}
-              </>
-            )}
+            <PhaseBreakdown
+              phases={phases}
+              analysisId={analysisId}
+              notes={notes}
+              canAddNotes={canAddNotes}
+              onAddNote={handleAddNote}
+              NotesBlock={NotesBlock}
+            />
 
             {/* Coaching tips */}
             {top.tips?.length > 0 && <TipsSection tips={top.tips} />}
@@ -496,7 +495,7 @@ export default function ResultsScreen({ navigation, route }) {
                 <Text style={s.sectionTitle}>Other close matches</Text>
                 {otherMatches.map((m) => (
                   <View key={m.pro_id} style={s.otherCard}>
-                    <Text style={s.otherName}>{formatProId(m.pro_id)}</Text>
+                    <Text style={s.otherName}>{formatProId(m.pro_id, m.player_name)}</Text>
                     <Text style={[s.otherScore, { color: scoreColor(m.similarity) }]}>{m.similarity}/100</Text>
                   </View>
                 ))}
@@ -509,7 +508,7 @@ export default function ResultsScreen({ navigation, route }) {
 
         <TouchableOpacity
           style={s.primaryBtn}
-          onPress={() => navigation.navigate('MainTabs', { screen: 'History' })}
+          onPress={() => { playTapSound(); navigation.navigate('MainTabs', { screen: 'History' }); }}
         >
           <Text style={s.primaryBtnText}>Try another shot</Text>
         </TouchableOpacity>
@@ -523,11 +522,96 @@ export default function ResultsScreen({ navigation, route }) {
           <ResultShareCard
             ref={shareCardRef}
             score={score}
-            shotType={shotType}
-            caption={`Matched to ${formatProId(top.pro_id)}`}
+            shotType={displayShotType}
+            caption={`Matched to ${formatProId(top.pro_id, top.player_name)}`}
           />
         </View>
       )}
+
+      {top && (
+        <Modal
+          visible={shareModalVisible}
+          animationType="fade"
+          transparent
+          onRequestClose={() => setShareModalVisible(false)}
+        >
+          <View style={s.shareModalBackdrop}>
+            <View style={s.shareModalCard}>
+              <View style={s.shareModalHeader}>
+                <Text style={s.shareModalTitle}>Share your result</Text>
+                <TouchableOpacity onPress={() => setShareModalVisible(false)} hitSlop={10}>
+                  <Text style={s.shareModalClose}>✕</Text>
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView contentContainerStyle={s.shareModalScroll} showsVerticalScrollIndicator={false}>
+                <View style={s.shareModalPreviewWrap}>
+                  <ResultShareCard
+                    key={shareModalKey}
+                    score={score}
+                    shotType={displayShotType}
+                    caption={`Matched to ${formatProId(top.pro_id, top.player_name)}`}
+                    animate
+                  />
+                </View>
+
+                {phases && (
+                  <View style={s.shareModalBreakdown}>
+                    <Text style={s.shareModalBreakdownTitle}>Swing breakdown</Text>
+                    {PHASE_ORDER.map((key) => {
+                      const phase = phases[key];
+                      if (!phase) return null;
+                      const pScore = phase.score;
+                      return (
+                        <View key={key} style={s.shareModalPhaseRow}>
+                          <View style={s.shareModalPhaseHead}>
+                            <Text style={s.shareModalPhaseName}>{PHASE_LABELS[key]}</Text>
+                            <Text style={[s.shareModalPhaseScore, { color: phaseColor(pScore) }]}>
+                              {pScore ?? '—'}/25
+                            </Text>
+                          </View>
+                          <View style={s.phaseTrack}>
+                            <View
+                              style={[
+                                s.phaseFill,
+                                { width: `${((pScore ?? 0) / 25) * 100}%`, backgroundColor: phaseColor(pScore) },
+                              ]}
+                            />
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                )}
+              </ScrollView>
+
+              <View style={s.shareModalFooter}>
+                <TouchableOpacity
+                  style={[s.secondaryBtn, s.shareModalFooterBtn]}
+                  onPress={() => setShareModalVisible(false)}
+                >
+                  <Text style={s.secondaryBtnText}>Close</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[s.primaryBtn, s.shareModalFooterBtn]}
+                  onPress={async () => {
+                    await captureAndShare(shareCardRef, 'Share your RallyMax result');
+                    setShareModalVisible(false);
+                  }}
+                >
+                  <Text style={s.primaryBtnText}>Share image</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      <FriendPickerModal
+        visible={friendPickerVisible}
+        onClose={() => setFriendPickerVisible(false)}
+        onSelect={handleSendToFriend}
+      />
     </SafeAreaView>
   );
 }
@@ -542,7 +626,6 @@ const s = StyleSheet.create({
   centerFill: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
   loadingTitle: { color: colors.ink, fontSize: 18, fontFamily: fonts.bold, marginTop: 20, textAlign: 'center' },
   loadingSub: { color: colors.muted, fontSize: 14, marginTop: 8, textAlign: 'center', lineHeight: 20, fontFamily: fonts.regular },
-  errorIcon: { fontSize: 40 },
   retryBtn: { backgroundColor: colors.primary, borderRadius: radius.md, paddingVertical: 12, paddingHorizontal: 28, marginTop: 24 },
   retryBtnText: { color: colors.white, fontSize: 15, fontFamily: fonts.bold },
 
@@ -555,22 +638,16 @@ const s = StyleSheet.create({
   },
   offscreen: { position: 'absolute', left: -9999, top: -9999 },
 
-  scoreCard: {
-    backgroundColor: colors.primary, borderRadius: radius.xxl,
-    padding: 26, alignItems: 'center', marginBottom: 14,
-  },
-  scoreTopRow: { flexDirection: 'row', alignItems: 'baseline', gap: 4 },
-  scoreNum: { fontSize: 56, fontFamily: fonts.serif, color: colors.white, lineHeight: 60 },
-  scoreOutOf: { color: 'rgba(255,255,255,0.6)', fontSize: 15, fontFamily: fonts.regular },
-  scoreTrack: { width: '100%', height: 6, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 3, marginTop: 18, marginBottom: 14, overflow: 'hidden' },
-  scoreFill: { height: 6, borderRadius: 3 },
-  matchedTo: { color: 'rgba(255,255,255,0.75)', fontSize: 13, fontFamily: fonts.regular },
-
   compareBtn: {
     backgroundColor: colors.surface, borderRadius: radius.pill,
     paddingVertical: 13, alignItems: 'center', marginBottom: 14,
   },
   compareBtnText: { color: colors.primary, fontSize: 13.5, fontFamily: fonts.bold },
+  sendBtn: {
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.pill,
+    paddingVertical: 12, alignItems: 'center', marginBottom: 14,
+  },
+  sendBtnText: { color: colors.mutedDark, fontSize: 13.5, fontFamily: fonts.bold },
   generalNotesWrap: { marginBottom: 26 },
 
   saveBanner: {
@@ -584,27 +661,50 @@ const s = StyleSheet.create({
   },
   saveBannerActionText: { color: colors.amberText, fontSize: 12.5, fontFamily: fonts.bold, textAlign: 'center' },
 
-  angleRow: { flexDirection: 'row', gap: 10, marginBottom: 26 },
-  angleCard: {
-    flex: 1, backgroundColor: colors.surface,
-    borderRadius: radius.md, padding: 15, alignItems: 'center',
+  verifyWrap: { marginBottom: 26 },
+  flaggedBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start',
+    backgroundColor: colors.coralSoft ?? '#fbe2df', borderRadius: radius.pill,
+    paddingHorizontal: 10, paddingVertical: 4, marginBottom: 10,
   },
-  angleLabel: { color: colors.muted, fontSize: 11.5, fontFamily: fonts.regular },
-  angleValue: { color: colors.ink, fontSize: 16, fontFamily: fonts.extrabold, marginTop: 4 },
-  angleSub: { color: colors.muted, fontSize: 11, marginTop: 2, fontFamily: fonts.regular },
+  flaggedBannerText: { color: colors.coral, fontSize: 11, fontFamily: fonts.bold },
+  confirmedBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start',
+    backgroundColor: colors.primarySoft, borderRadius: radius.pill,
+    paddingHorizontal: 10, paddingVertical: 4, marginBottom: 10,
+  },
+  confirmedBannerText: { color: colors.primary, fontSize: 11, fontFamily: fonts.bold },
+  verifyLabel: { color: colors.muted, fontSize: 11, fontFamily: fonts.semibold, marginBottom: 6 },
+  verifyRow: { flexDirection: 'row', gap: 8 },
+  verifyBtn: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    backgroundColor: colors.surface, borderRadius: radius.pill,
+    paddingHorizontal: 10, paddingVertical: 10,
+  },
+  verifyBtnConfirmed: { backgroundColor: colors.primary },
+  verifyBtnFlagged: { backgroundColor: colors.coral },
+  verifyBtnText: { color: colors.mutedDark, fontSize: 12.5, fontFamily: fonts.bold },
+  verifyBtnTextOn: { color: colors.white },
+  wrongTypeBtn: {
+    alignSelf: 'flex-start', marginTop: 12, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.pill, paddingHorizontal: 12, paddingVertical: 7,
+  },
+  wrongTypeText: { color: colors.mutedDark, fontSize: 12, fontFamily: fonts.bold },
+  typePickerRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
+  typePickerBtn: {
+    flex: 1, alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.pill,
+    paddingHorizontal: 10, paddingVertical: 10,
+  },
+  typePickerBtnActive: { backgroundColor: colors.primary },
+  typePickerBtnText: { color: colors.mutedDark, fontSize: 12.5, fontFamily: fonts.bold },
+  typePickerBtnTextActive: { color: colors.white },
 
   sectionTitle: { color: colors.ink, fontSize: 19, fontFamily: fonts.serif, marginBottom: 12 },
-  phaseCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.md, padding: 14, marginBottom: 9,
-  },
-  phaseHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  phaseName: { color: colors.ink, fontSize: 14, fontFamily: fonts.bold },
-  phaseScore: { fontSize: 14, fontFamily: fonts.bold },
+  // phaseTrack/phaseFill are still used directly by the share modal's own
+  // mini breakdown replay below -- the main phase-breakdown section itself
+  // now lives in components/PhaseBreakdown.js with its own copies.
   phaseTrack: { height: 5, backgroundColor: colors.border, borderRadius: 3, overflow: 'hidden' },
   phaseFill: { height: 5, borderRadius: 3 },
-  phaseTip: { color: colors.mutedDark, fontSize: 12.5, lineHeight: 18, marginTop: 9, fontFamily: fonts.regular },
-  phaseNote: { color: colors.muted, fontSize: 12, marginTop: 8, fontStyle: 'italic', fontFamily: fonts.regular },
 
   otherCard: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
@@ -621,4 +721,33 @@ const s = StyleSheet.create({
     paddingVertical: 14, alignItems: 'center', marginTop: 10,
   },
   secondaryBtnText: { color: colors.mutedDark, fontSize: 14.5, fontFamily: fonts.bold },
+
+  shareModalBackdrop: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center', justifyContent: 'center', padding: spacing.xl,
+  },
+  shareModalCard: {
+    width: '100%', maxWidth: 400, maxHeight: '85%',
+    backgroundColor: colors.bg, borderRadius: radius.xxl, padding: spacing.lg,
+  },
+  shareModalHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  shareModalTitle: { color: colors.ink, fontSize: 17, fontFamily: fonts.bold },
+  shareModalClose: { color: colors.muted, fontSize: 18, fontFamily: fonts.semibold, padding: 4 },
+  shareModalScroll: { alignItems: 'center', paddingBottom: spacing.sm },
+  shareModalPreviewWrap: { marginBottom: spacing.lg },
+  shareModalBreakdown: { width: '100%' },
+  shareModalBreakdownTitle: {
+    color: colors.ink, fontSize: 15, fontFamily: fonts.bold, marginBottom: spacing.sm,
+  },
+  shareModalPhaseRow: { marginBottom: spacing.sm },
+  shareModalPhaseHead: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5,
+  },
+  shareModalPhaseName: { color: colors.ink, fontSize: 13.5, fontFamily: fonts.semibold },
+  shareModalPhaseScore: { fontSize: 13.5, fontFamily: fonts.bold },
+  shareModalFooter: { flexDirection: 'row', gap: 10, marginTop: spacing.md },
+  shareModalFooterBtn: { flex: 1, marginTop: 0 },
 });

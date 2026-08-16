@@ -130,6 +130,220 @@ db.exec(`
     note_text     TEXT NOT NULL,
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  -- One row per highlight-reel stitch request. Same background-job shape as
+  -- highlight_jobs -- POST /highlights/jobs/:id/reel used to spawn
+  -- stitch_clips.py and block the request/response for up to REEL_TIMEOUT_MS,
+  -- with no server-side record if the client gave up waiting. Now it enqueues
+  -- a row here and returns immediately; the client polls
+  -- GET /highlights/reel-jobs/:id instead.
+  CREATE TABLE IF NOT EXISTS reel_jobs (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    highlight_job_id INTEGER NOT NULL REFERENCES highlight_jobs(id),
+    user_id          INTEGER NOT NULL REFERENCES users(id),
+    status           TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'done', 'failed')),
+    rally_ids        TEXT NOT NULL,
+    output_path      TEXT,
+    error            TEXT,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at     TEXT
+  );
+
+  -- Find Games: real-world tennis courts (seeded from OpenStreetMap via
+  -- backend/scripts/seedCourts.js, or added ad hoc by a user), plus who's
+  -- watching each court and who's posted "I'm free to play" there.
+  CREATE TABLE IF NOT EXISTS courts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL,
+    latitude        REAL NOT NULL,
+    longitude       REAL NOT NULL,
+    source          TEXT NOT NULL DEFAULT 'osm' CHECK (source IN ('osm', 'user')),
+    osm_id          TEXT UNIQUE,
+    cost_info       TEXT,
+    cost_updated_by INTEGER REFERENCES users(id),
+    cost_updated_at TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS court_watches (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id),
+    court_id   INTEGER NOT NULL REFERENCES courts(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, court_id)
+  );
+
+  -- Crowd-sourced verification for user-dropped-pin courts (OSM-seeded
+  -- courts are trusted immediately -- see courts.verified below). Each row
+  -- is one other user independently confirming a pin is a real court; once
+  -- enough distinct confirmations land, routes/courts.js flips
+  -- courts.verified to 1. UNIQUE stops one account confirming twice.
+  CREATE TABLE IF NOT EXISTS court_confirmations (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    court_id   INTEGER NOT NULL REFERENCES courts(id),
+    user_id    INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(court_id, user_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS availability_posts (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id),
+    court_id   INTEGER NOT NULL REFERENCES courts(id),
+    start_time TEXT NOT NULL,
+    end_time   TEXT,
+    note       TEXT,
+    status     TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'cancelled')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  -- A "club" is a cluster of 2+ courts close enough together to be one real
+  -- venue (a tennis club, a park with several courts) -- computed by
+  -- scripts/clusterCourts.js, not user-editable. Stored (rather than
+  -- clustered fresh on every request) so club identity -- and therefore
+  -- club_watches rows -- stays stable as new courts get added nearby later.
+  CREATE TABLE IF NOT EXISTS clubs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    latitude   REAL NOT NULL,
+    longitude  REAL NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  -- One row per court that belongs to a club. A court not in this table is
+  -- just a standalone court (no club to watch beyond the per-court watch).
+  CREATE TABLE IF NOT EXISTS club_courts (
+    club_id  INTEGER NOT NULL REFERENCES clubs(id),
+    court_id INTEGER NOT NULL REFERENCES courts(id) UNIQUE
+  );
+
+  -- Same shape as court_watches, but at the club level -- lets someone get
+  -- notified about availability at any court in a club without needing to
+  -- be friends with (or even know) whoever posts it.
+  CREATE TABLE IF NOT EXISTS club_watches (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id),
+    club_id    INTEGER NOT NULL REFERENCES clubs(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, club_id)
+  );
+
+  -- Simple 1:1 messaging. user_a_id/user_b_id are always stored as
+  -- [min(id), max(id)] (see threadPair() in routes/messages.js) so a whole
+  -- thread is one WHERE user_a_id = ? AND user_b_id = ? query regardless of
+  -- who sent which message -- sender_id carries the actual direction.
+  CREATE TABLE IF NOT EXISTS messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_a_id  INTEGER NOT NULL REFERENCES users(id),
+    user_b_id  INTEGER NOT NULL REFERENCES users(id),
+    sender_id  INTEGER NOT NULL REFERENCES users(id),
+    body       TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    read_at    TEXT
+  );
+
+  -- Blocking is directional (A blocking B doesn't mean B has blocked A),
+  -- but sending is checked against BOTH directions (routes/messages.js) --
+  -- so either party blocking the other stops new messages, while each
+  -- person's own block list only reflects decisions they made themselves.
+  CREATE TABLE IF NOT EXISTS user_blocks (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    blocker_id INTEGER NOT NULL REFERENCES users(id),
+    blocked_id INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(blocker_id, blocked_id)
+  );
+
+  -- Minimal moderation trail -- no in-app review queue/admin UI yet, just a
+  -- durable record of what was reported and why, so a human can query it
+  -- directly (e.g. via the DB) if a real complaint comes in.
+  CREATE TABLE IF NOT EXISTS message_reports (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id  INTEGER NOT NULL REFERENCES messages(id),
+    reporter_id INTEGER NOT NULL REFERENCES users(id),
+    reason      TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  -- Friends: same invite-code pattern as coach_invite_codes/coach_links
+  -- (routes/coach.js), adapted from asymmetric (coach/student) to symmetric
+  -- (friend/friend) -- redeeming a code is the mutual-consent step, no
+  -- separate accept/reject flow.
+  CREATE TABLE IF NOT EXISTS friend_codes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id),
+    code       TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    used_at    TEXT
+  );
+
+  -- user_a_id/user_b_id always stored as [min(id), max(id)] (see
+  -- sortedPair() in routes/friends.js) so a friendship is one row
+  -- regardless of who initiated it.
+  CREATE TABLE IF NOT EXISTS friend_links (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_a_id  INTEGER NOT NULL REFERENCES users(id),
+    user_b_id  INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_a_id, user_b_id)
+  );
+
+  -- Manually-logged match results between friends. sets_won/sets_lost are
+  -- always relative to logged_by, not a fixed side -- single-sided entry,
+  -- no confirmation step (see HANDOVER.md for the known limitation: two
+  -- friends separately logging the same real match isn't deduplicated).
+  CREATE TABLE IF NOT EXISTS friend_matches (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    logged_by    INTEGER NOT NULL REFERENCES users(id),
+    opponent_id  INTEGER NOT NULL REFERENCES users(id),
+    played_at    TEXT NOT NULL,
+    sets_won     INTEGER NOT NULL,
+    sets_lost    INTEGER NOT NULL,
+    score_detail TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  -- Explicit per-swing sharing -- unlike coach linking (full access once
+  -- linked), a friend only ever sees an analysis the owner actively shared
+  -- with them via this table, never their whole history.
+  CREATE TABLE IF NOT EXISTS shared_analyses (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    analysis_id INTEGER NOT NULL REFERENCES analyses(id),
+    owner_id    INTEGER NOT NULL REFERENCES users(id),
+    friend_id   INTEGER NOT NULL REFERENCES users(id),
+    shared_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(analysis_id, friend_id)
+  );
+
+  -- Persisted freehand annotations from SyncCompareScreen's AnnotationCanvas
+  -- (pen/line/arrow/circle strokes, raw pane-local pixel coords). One
+  -- upserted row per (analysis, author) -- saving again overwrites your own
+  -- previous save rather than creating a new one. Access (who may read/write
+  -- a given analysis's annotations) is checked in routes/annotations.js, not
+  -- enforced here.
+  CREATE TABLE IF NOT EXISTS swing_annotations (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    analysis_id    INTEGER NOT NULL REFERENCES analyses(id),
+    author_id      INTEGER NOT NULL REFERENCES users(id),
+    pane_a_strokes TEXT NOT NULL,
+    pane_b_strokes TEXT NOT NULL,
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(analysis_id, author_id)
+  );
+
+  -- Manually-curated pro/celebrity scores for the worldwide leaderboard --
+  -- entered by an admin (see isAdmin() in routes/leaderboard.js), not
+  -- scraped, so the worldwide leaderboard can be computed live with no
+  -- external data source or daily batch job.
+  CREATE TABLE IF NOT EXISTS celebrity_scores (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL,
+    shot_type  TEXT NOT NULL CHECK (shot_type IN ('forehand', 'backhand', 'serve')),
+    score      REAL NOT NULL,
+    note       TEXT,
+    added_by   INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 
 // No migrations framework here -- CREATE TABLE IF NOT EXISTS above is
@@ -139,6 +353,68 @@ const hasNotifCol = db.prepare("PRAGMA table_info(users)").all()
   .some((c) => c.name === 'notifications_enabled');
 if (!hasNotifCol) {
   db.exec('ALTER TABLE users ADD COLUMN notifications_enabled INTEGER NOT NULL DEFAULT 1');
+}
+
+// boundary_note: Jack's review-pass signal for whether a detected rally's
+// start/end boundaries look right ('cut_off_early' | 'should_split' | 'ok'),
+// separate from outcome_tag (which is about the point's outcome, not the
+// clip's boundaries) -- used to tune RALLY_GAP_SEC/THRESHOLD_PERCENTILE
+// against real match footage instead of guessing.
+const hasBoundaryNoteCol = db.prepare("PRAGMA table_info(rally_clips)").all()
+  .some((c) => c.name === 'boundary_note');
+if (!hasBoundaryNoteCol) {
+  db.exec('ALTER TABLE rally_clips ADD COLUMN boundary_note TEXT');
+}
+
+// flagged_not_shot: any user can mark one of their own saved analyses as
+// not actually being a real shot (camera fiddling, ball bouncing, etc.)
+// -- real human ground truth for scripts/16_shot_verification/'s
+// teacher-student loop, logged the same way Claude's own verdicts are
+// (see backend/src/routes/history.js's PATCH handler).
+const hasFlaggedNotShotCol = db.prepare("PRAGMA table_info(analyses)").all()
+  .some((c) => c.name === 'flagged_not_shot');
+if (!hasFlaggedNotShotCol) {
+  db.exec('ALTER TABLE analyses ADD COLUMN flagged_not_shot INTEGER NOT NULL DEFAULT 0');
+}
+
+// The other direction of the same feedback loop -- a user actively
+// confirming "yes, this really is a shot," not just flagging bad ones.
+// Two independent booleans (mutually exclusive at the UI/route level, not
+// enforced in the schema) rather than one tri-state column, so existing
+// flagged_not_shot data/queries don't need migrating.
+const hasConfirmedRealShotCol = db.prepare("PRAGMA table_info(analyses)").all()
+  .some((c) => c.name === 'confirmed_real_shot');
+if (!hasConfirmedRealShotCol) {
+  db.exec('ALTER TABLE analyses ADD COLUMN confirmed_real_shot INTEGER NOT NULL DEFAULT 0');
+}
+
+// username: optional, set later via Profile (not required at signup) -- a
+// separate handle from the free-text `name` display field, unique across
+// all users. Nullable so existing accounts aren't broken; SQLite treats
+// multiple NULLs as distinct under a UNIQUE index, so this is safe even
+// before anyone has set one.
+const hasUsernameCol = db.prepare("PRAGMA table_info(users)").all()
+  .some((c) => c.name === 'username');
+if (!hasUsernameCol) {
+  db.exec('ALTER TABLE users ADD COLUMN username TEXT');
+}
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)');
+
+// verified: OSM-seeded courts are trusted immediately (default 1); a
+// user-dropped pin starts at 0 and only flips to 1 once routes/courts.js
+// sees enough independent court_confirmations rows for it.
+const hasVerifiedCol = db.prepare("PRAGMA table_info(courts)").all()
+  .some((c) => c.name === 'verified');
+if (!hasVerifiedCol) {
+  db.exec('ALTER TABLE courts ADD COLUMN verified INTEGER NOT NULL DEFAULT 1');
+}
+
+// submitted_by: who dropped the pin -- needed so routes/courts.js can block
+// a submitter from confirming their own court, and null for OSM-seeded rows.
+const hasSubmittedByCol = db.prepare("PRAGMA table_info(courts)").all()
+  .some((c) => c.name === 'submitted_by');
+if (!hasSubmittedByCol) {
+  db.exec('ALTER TABLE courts ADD COLUMN submitted_by INTEGER REFERENCES users(id)');
 }
 
 module.exports = db;

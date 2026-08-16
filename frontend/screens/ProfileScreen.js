@@ -1,8 +1,11 @@
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView, ActivityIndicator } from 'react-native';
+import { useCallback, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView, ActivityIndicator, Image } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
+import { getRank } from '../api/profile';
 import { colors, fonts, radius, spacing } from '../theme';
 import CourtBackground from '../components/CourtBackground';
-import { PremiumIcon, LinesIcon, SettingsIcon, HelpIcon } from '../components/icons';
+import { PremiumIcon, LinesIcon, SettingsIcon, HelpIcon, MessageIcon } from '../components/icons';
 
 function MenuItem({ icon, label, sub, onPress, accent, danger }) {
   return (
@@ -18,7 +21,13 @@ function MenuItem({ icon, label, sub, onPress, accent, danger }) {
 }
 
 export default function ProfileScreen({ navigation }) {
-  const { user, isAuthenticated, isPremium, loading, logout } = useAuth();
+  const { user, token, isAuthenticated, isPremium, loading, logout } = useAuth();
+  const [rank, setRank] = useState(null);
+
+  useFocusEffect(useCallback(() => {
+    if (!isAuthenticated) { setRank(null); return; }
+    getRank(token).then(setRank).catch(() => {});
+  }, [token, isAuthenticated]));
 
   if (loading) {
     return (
@@ -37,15 +46,31 @@ export default function ProfileScreen({ navigation }) {
 
         <View style={s.avatarBlock}>
           <View style={s.avatar}>
-            <Text style={s.avatarText}>{isAuthenticated ? user.name.charAt(0).toUpperCase() : '🎾'}</Text>
+            <Image source={require('../assets/mascot.png')} style={s.avatarImage} resizeMode="cover" />
           </View>
           <Text style={s.name}>{isAuthenticated ? user.name : 'Guest'}</Text>
+          {isAuthenticated && (
+            user.username ? (
+              <Text style={s.username}>@{user.username}</Text>
+            ) : (
+              <TouchableOpacity onPress={() => navigation.navigate('Settings')}>
+                <Text style={s.usernamePrompt}>Set a username →</Text>
+              </TouchableOpacity>
+            )
+          )}
           <Text style={s.status}>{isAuthenticated ? user.email : 'Not signed in'}</Text>
           {isAuthenticated && (
-            <View style={[s.tierBadge, isPremium && s.tierBadgePremium]}>
-              <Text style={[s.tierBadgeText, isPremium && s.tierBadgeTextPremium]}>
-                {isPremium ? '✨ PREMIUM' : 'FREE PLAN'}
-              </Text>
+            <View style={s.badgeRow}>
+              <View style={[s.tierBadge, isPremium && s.tierBadgePremium]}>
+                <Text style={[s.tierBadgeText, isPremium && s.tierBadgeTextPremium]}>
+                  {isPremium ? 'PREMIUM' : 'FREE PLAN'}
+                </Text>
+              </View>
+              {rank && (
+                <View style={s.rankBadge}>
+                  <Text style={s.rankBadgeText}>{rank.rank.name}</Text>
+                </View>
+              )}
             </View>
           )}
         </View>
@@ -58,7 +83,7 @@ export default function ProfileScreen({ navigation }) {
                 label="Upgrade to Premium"
                 sub="1v1 comparison, unlimited history & more"
                 accent
-                onPress={() => navigation.navigate('MainTabs', { screen: 'Premium' })}
+                onPress={() => navigation.navigate('Premium')}
               />
             )}
             <MenuItem icon={<LinesIcon size={15} color={colors.coral} />} label="Log out" danger onPress={logout} />
@@ -82,6 +107,9 @@ export default function ProfileScreen({ navigation }) {
         )}
 
         <View style={s.menu}>
+          {isAuthenticated && (
+            <MenuItem icon={<MessageIcon size={15} color={colors.mutedDark} />} label="Messages" sub="Chat with players you've matched with on Find Games" onPress={() => navigation.navigate('Friends', { initialSegment: 'messages' })} />
+          )}
           <MenuItem icon={<SettingsIcon size={15} color={colors.mutedDark} />} label="Settings" onPress={() => navigation.navigate('Settings')} />
           {isAuthenticated && (
             <MenuItem icon={<LinesIcon size={15} color={colors.mutedDark} />} label="Coach mode" sub="Follow a student, or let a coach follow you" onPress={() => navigation.navigate('Coach')} />
@@ -89,7 +117,7 @@ export default function ProfileScreen({ navigation }) {
           <MenuItem icon={<HelpIcon size={15} color={colors.mutedDark} />} label="Help & support" onPress={() => navigation.navigate('FenceTutorial')} />
         </View>
 
-        <Text style={s.footer}>TennisAI · © 2026</Text>
+        <Text style={s.footer}>RallyMax · © 2026</Text>
 
       </ScrollView>
     </SafeAreaView>
@@ -104,20 +132,28 @@ const s = StyleSheet.create({
   avatarBlock: { alignItems: 'center', marginBottom: 28 },
   avatar: {
     width: 76, height: 76, borderRadius: 38, backgroundColor: colors.primary,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 12,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 12, overflow: 'hidden',
     shadowColor: colors.primary, shadowOpacity: 0.25, shadowRadius: 16, shadowOffset: { width: 0, height: 8 },
   },
-  avatarText: { fontSize: 32, color: colors.lime, fontFamily: fonts.serif },
+  avatarImage: { width: '100%', height: '100%' },
   name: { color: colors.ink, fontSize: 19, fontFamily: fonts.extrabold },
+  username: { color: colors.muted, fontSize: 13, marginTop: 2, fontFamily: fonts.semibold },
+  usernamePrompt: { color: colors.primary, fontSize: 13, marginTop: 2, fontFamily: fonts.semibold },
   status: { color: colors.muted, fontSize: 13, marginTop: 2, fontFamily: fonts.regular },
 
+  badgeRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
   tierBadge: {
-    marginTop: 12, backgroundColor: colors.border,
+    backgroundColor: colors.border,
     borderRadius: 20, paddingHorizontal: 13, paddingVertical: 5,
   },
   tierBadgePremium: { backgroundColor: colors.primarySoft },
   tierBadgeText: { color: colors.mutedDark, fontSize: 11, fontFamily: fonts.bold, letterSpacing: 0.4 },
   tierBadgeTextPremium: { color: colors.primary },
+  rankBadge: {
+    backgroundColor: colors.primary,
+    borderRadius: 20, paddingHorizontal: 13, paddingVertical: 5,
+  },
+  rankBadgeText: { color: colors.white, fontSize: 11, fontFamily: fonts.bold, letterSpacing: 0.4 },
 
   menu: {
     backgroundColor: colors.surface, borderRadius: radius.lg, marginBottom: spacing.lg, overflow: 'hidden',

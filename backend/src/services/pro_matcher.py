@@ -48,6 +48,8 @@ def main():
     parser.add_argument('--top', type=int, default=3, help='Number of pro matches to return')
     parser.add_argument('--angle-window', type=int, default=20, help='Angle filter window in degrees')
     parser.add_argument('--contact-time', type=float, default=None, help='User-marked contact time in seconds')
+    parser.add_argument('--view-direction-hint', choices=['front', 'back'], default=None,
+                         help='User-stated filming position, used only if server-side detection is inconclusive')
     args = parser.parse_args()
 
     if not os.path.exists(args.video):
@@ -56,7 +58,7 @@ def main():
 
     try:
         result = compare(args.video, args.shot_type, top_n=args.top, angle_window=args.angle_window,
-                          contact_time_sec=args.contact_time)
+                          contact_time_sec=args.contact_time, view_direction_hint=args.view_direction_hint)
         print(json.dumps(result))
     except Exception as e:
         print(json.dumps({'error': str(e)}))

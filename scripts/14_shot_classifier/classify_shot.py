@@ -29,8 +29,15 @@ SERVE_WINDOW_POST_SEC = 0.5
 SERVE_WINDOW_STEP_FRAMES = 3
 
 
-def classify(video_path, contact_time_sec):
-    frames, fps = extract_user_poses(video_path)
+def classify(video_path, contact_time_sec, frames_fps=None):
+    """
+    frames_fps: optional pre-extracted (frames, fps) tuple (same shape
+    extract_user_poses returns) to avoid re-running pose extraction when the
+    caller already has it for this exact video -- e.g. classify_shot_verified.py
+    reuses the same extraction compare_swing.compare() would otherwise redo.
+    Defaults to None so every existing caller behaves exactly as before.
+    """
+    frames, fps = frames_fps if frames_fps is not None else extract_user_poses(video_path)
     pose_index = {f['frame']: list(f['landmarks'].values()) for f in frames if f['landmarks']}
     if not pose_index:
         raise RuntimeError('No pose detected anywhere in this video')

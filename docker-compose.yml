@@ -4,6 +4,7 @@ services:
   app:
     build: .
     container_name: tennis_app_backend
+    restart: unless-stopped
     ports:
       - "5000:5000"
     env_file:
@@ -14,6 +15,21 @@ services:
       # DEPLOY.md for how to get data/ onto a fresh server.
       - ./data:/app/data
       - ./backend/data:/app/backend/data
+
+  caddy:
+    image: caddy:2
+    container_name: tennis_app_caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    command: caddy run --config /etc/caddyfile --adapter caddyfile
+    depends_on:
+      - app
 
   postgres:
     image: postgres:16-alpine
@@ -38,3 +54,5 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  caddy_data:
+  caddy_config:

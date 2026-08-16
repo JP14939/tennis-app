@@ -8,6 +8,7 @@ import PlatformVideo from '../components/PlatformVideo';
 import FenceTutorialContent from '../components/FenceTutorialContent';
 import LiveCalibrationCamera from '../components/LiveCalibrationCamera';
 import { storage } from '../utils/storage';
+import { playTapSound } from '../utils/sounds';
 import { API_BASE } from '../config/api';
 import { colors, fonts, radius, spacing } from '../theme';
 import CourtBackground from '../components/CourtBackground';
@@ -49,6 +50,8 @@ export default function ContactMarkingScreen({ navigation, route }) {
   const [roughTime, setRoughTime]   = useState(null);
   const [fineOffset, setFineOffset] = useState(0);
   const [calibration, setCalibration] = useState({ status: 'idle' }); // idle | checking | done
+  const [viewDirectionHint, setViewDirectionHint] = useState(null); // 'front' | 'back' | null (diagonal/side, no hint)
+  const [filmingTutorialVariant, setFilmingTutorialVariant] = useState(null); // set to open the tutorial from the filming-position screen
   const videoRef  = useRef(null);
   const slowMoRef = useRef(null);
   const dims = useDims();
@@ -145,7 +148,7 @@ export default function ContactMarkingScreen({ navigation, route }) {
     const fineT = roughTime + fineOffset / ASSUMED_FPS;
     const frame = Math.round(fineT * ASSUMED_FPS);
     await pause();
-    const marked = { videoUri: uri, shotType, contactFrame: frame, contactTimeSec: fineT };
+    const marked = { videoUri: uri, shotType, contactFrame: frame, contactTimeSec: fineT, viewDirectionHint };
     // Reused by flows that need contact marked on more than one video (e.g.
     // 1v1 comparison) — they pass onConfirmed instead of relying on the
     // default single-video "go to Results" behaviour.
@@ -212,7 +215,7 @@ export default function ContactMarkingScreen({ navigation, route }) {
           </TouchableOpacity>
 
           {!IS_WEB && (
-            <TouchableOpacity style={[s.uploadBtn, s.recordBtn]} onPress={() => setPhase('record')} activeOpacity={0.9}>
+            <TouchableOpacity style={[s.uploadBtn, s.recordBtn]} onPress={() => setPhase('filming-position')} activeOpacity={0.9}>
               <View style={[s.uploadIconWrap, s.recordIconWrap]}><CameraIcon size={22} color={colors.mutedDark} /></View>
               <Text style={s.uploadBtnText}>Record now</Text>
               <Text style={s.uploadBtnSub}>Live camera positioning guide</Text>
@@ -220,8 +223,79 @@ export default function ContactMarkingScreen({ navigation, route }) {
           )}
 
           <TouchableOpacity style={s.tipLink} onPress={() => setPhase('tutorial')}>
-            <Text style={s.tipLinkText}>🔗 How to mount your phone (rubber band method)</Text>
+            <Text style={s.tipLinkText}>How to mount your phone (rubber band method)</Text>
           </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  // ── FILMING TUTORIAL (opened from the position picker below) ───────────────
+  if (phase === 'filming-tutorial') {
+    return (
+      <SafeAreaView style={s.safe}>
+        <FenceTutorialContent
+          variant={filmingTutorialVariant}
+          onDismiss={() => setPhase('filming-position')}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  // ── FILMING POSITION ─────────────────────────────────────────────────────
+  // Where the camera is physically mounted determines which way the swing
+  // is seen from (front-on at the net vs. from-behind at the fence) — both
+  // land in the pro database, but the two are mirrored in pose landmarks,
+  // so knowing which one this is helps match against the right clips.
+  if (phase === 'filming-position') {
+    const options = [
+      {
+        key: 'front', title: 'At the net',
+        sub: "Front-on — we'll see your face and the front of your swing",
+      },
+      {
+        key: 'back', title: 'Behind the baseline fence',
+        sub: "From behind — we'll see your back as you swing",
+      },
+      {
+        key: null, title: 'Beside the court',
+        sub: 'Diagonal or side-on view',
+      },
+    ];
+    return (
+      <SafeAreaView style={s.safe}>
+        <CourtBackground />
+        <ScrollView contentContainerStyle={s.pickScroll} showsVerticalScrollIndicator={false}>
+          <TouchableOpacity style={s.backLinkTop} onPress={() => setPhase('pick')}>
+            <BackChevronIcon size={13} color={colors.muted} />
+            <Text style={s.backLinkTopText}>Back</Text>
+          </TouchableOpacity>
+
+          <Text style={s.h1}>Where's your camera?</Text>
+          <Text style={s.sub}>This helps us match you against the right pro footage.</Text>
+
+          {options.map((opt) => (
+            <TouchableOpacity
+              key={opt.title}
+              style={s.positionCard}
+              activeOpacity={0.85}
+              onPress={() => { setViewDirectionHint(opt.key); setPhase('record'); }}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={s.positionTitle}>{opt.title}</Text>
+                <Text style={s.positionSub}>{opt.sub}</Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+
+          <View style={s.tipLinkRow}>
+            <TouchableOpacity onPress={() => { setFilmingTutorialVariant('net'); setPhase('filming-tutorial'); }}>
+              <Text style={s.tipLinkText}>Net setup tips</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => { setFilmingTutorialVariant('fence'); setPhase('filming-tutorial'); }}>
+              <Text style={s.tipLinkText}>Fence setup tips</Text>
+            </TouchableOpacity>
+          </View>
         </ScrollView>
       </SafeAreaView>
     );
@@ -355,7 +429,7 @@ export default function ContactMarkingScreen({ navigation, route }) {
               <TouchableOpacity style={s.btnGhost} onPress={playSlowMo}>
                 <Text style={s.btnGhostText}>0.25× slow-mo</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={s.btnPrimary2} onPress={confirmFrame}>
+              <TouchableOpacity style={s.btnPrimary2} onPress={() => { playTapSound(); confirmFrame(); }}>
                 <Text style={s.btnPrimaryText}>This is it ✓</Text>
               </TouchableOpacity>
             </View>
@@ -404,6 +478,15 @@ const s = StyleSheet.create({
 
   tipLink:     { alignItems: 'center', marginTop: 18 },
   tipLinkText: { color: colors.muted, fontSize: 12.5, fontFamily: fonts.semibold },
+  tipLinkRow:  { flexDirection: 'row', justifyContent: 'center', gap: 24, marginTop: 22 },
+
+  positionCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 14,
+    backgroundColor: colors.surface, borderRadius: radius.lg,
+    padding: 18, marginBottom: 12,
+  },
+  positionTitle: { color: colors.ink, fontSize: 15.5, fontFamily: fonts.bold, marginBottom: 3 },
+  positionSub:   { color: colors.muted, fontSize: 12.5, fontFamily: fonts.regular },
 
   playHint: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   playHintText: { color: 'rgba(255,255,255,0.35)', fontSize: 52 },

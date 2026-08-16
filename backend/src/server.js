@@ -6,6 +6,7 @@ const { spawn } = require('child_process');
 require('dotenv').config();
 
 const { SCRIPTS_DIR, DATA_DIR, PYTHON } = require('./config/paths');
+const db = require('./db');
 const analyseRouter = require('./routes/analyse');
 const authRouter = require('./routes/auth');
 const calibrationRouter = require('./routes/calibration');
@@ -15,6 +16,12 @@ const billingRouter = require('./routes/billing');
 const webhooksRouter = require('./routes/webhooks');
 const highlightsRouter = require('./routes/highlights');
 const coachRouter = require('./routes/coach');
+const profileRouter = require('./routes/profile');
+const courtsRouter = require('./routes/courts');
+const messagesRouter = require('./routes/messages');
+const friendsRouter = require('./routes/friends');
+const annotationsRouter = require('./routes/annotations');
+const leaderboardRouter = require('./routes/leaderboard');
 
 const app = express();
 app.use(cors());
@@ -33,6 +40,12 @@ app.use('/api', billingRouter);
 app.use('/api', webhooksRouter);
 app.use('/api', highlightsRouter);
 app.use('/api', coachRouter);
+app.use('/api', profileRouter);
+app.use('/api', courtsRouter);
+app.use('/api', messagesRouter);
+app.use('/api', friendsRouter);
+app.use('/api', annotationsRouter);
+app.use('/api', leaderboardRouter);
 
 // Rally clips need to be watchable from the app after the request that
 // created them is long gone -- first real use of static file serving in
@@ -52,23 +65,42 @@ app.use('/comparison-clips', express.static(path.join(DATA_DIR, 'runtime', 'comp
 // dirs older than a day so /user-clips and /comparison-clips don't grow
 // forever. Pro clips (04_clips, 04_clips_cropped) are never swept -- those
 // are the shared database, not per-request uploads.
+//
+// user_clips is NOT purely ephemeral, though: analyse.js persists every
+// upload there and stores its /user-clips/<dir>/... URL in a saved History
+// row's result_json, and History rows are meant to stay watchable for as
+// long as the row exists (retention is tier-limited via FREE_TIER_LIMIT, not
+// time-limited). A flat 24h age sweep silently deleted the file out from
+// under still-existing History rows -- every saved analysis older than a day
+// showed "Video unavailable" in Sync Compare (found live: nothing had been
+// analysed in the last 24h, so 100% of History was broken). comparison_clips
+// (Versus mode) has no such row -- VersusResultsScreen only ever reads it
+// once, immediately after the compare request, so it's genuinely safe to
+// sweep on age alone.
+const USER_CLIPS_DIR_FOR_SWEEP = path.join(DATA_DIR, 'runtime', 'user_clips');
 const RUNTIME_SWEEP_DIRS = [
-  path.join(DATA_DIR, 'runtime', 'user_clips'),
-  path.join(DATA_DIR, 'runtime', 'comparison_clips'),
+  { dir: USER_CLIPS_DIR_FOR_SWEEP, checkHistoryReference: true },
+  { dir: path.join(DATA_DIR, 'runtime', 'comparison_clips'), checkHistoryReference: false },
 ];
 const RUNTIME_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
+function isReferencedByHistory(dirName) {
+  const row = db.prepare('SELECT 1 FROM analyses WHERE result_json LIKE ? LIMIT 1')
+    .get(`%/user-clips/${dirName}/%`);
+  return !!row;
+}
+
 function sweepOldRuntimeDirs() {
-  for (const dir of RUNTIME_SWEEP_DIRS) {
+  for (const { dir, checkHistoryReference } of RUNTIME_SWEEP_DIRS) {
     fs.readdir(dir, (err, entries) => {
       if (err) return; // dir may not exist yet -- fine, nothing to sweep
       for (const entry of entries) {
         const entryPath = path.join(dir, entry);
         fs.stat(entryPath, (statErr, stat) => {
           if (statErr || !stat.isDirectory()) return;
-          if (Date.now() - stat.mtimeMs > RUNTIME_MAX_AGE_MS) {
-            fs.rm(entryPath, { recursive: true, force: true }, () => {});
-          }
+          if (Date.now() - stat.mtimeMs <= RUNTIME_MAX_AGE_MS) return;
+          if (checkHistoryReference && isReferencedByHistory(entry)) return;
+          fs.rm(entryPath, { recursive: true, force: true }, () => {});
         });
       }
     });

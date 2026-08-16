@@ -1,8 +1,11 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import PlatformVideo from '../components/PlatformVideo';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE } from '../config/api';
+import { playTapSound } from '../utils/sounds';
+import { useWindowWidth } from '../utils/responsive';
 
 const GREEN  = '#4ade80';
 const YELLOW = '#facc15';
@@ -12,12 +15,9 @@ const BORDER = '#222';
 const TEXT   = '#fff';
 const MUTED  = '#888';
 
-const TAG_ICONS = { winner: '🏆', ace: '🚀', error: '❌' };
-
 function ArchiveRow({ clip }) {
   return (
     <View style={r.card}>
-      <Text style={r.icon}>{TAG_ICONS[clip.outcome_tag] ?? '🎾'}</Text>
       <View style={r.body}>
         <Text style={r.title}>{clip.outcome_tag.charAt(0).toUpperCase() + clip.outcome_tag.slice(1)}</Text>
         <Text style={r.meta}>{clip.duration_sec.toFixed(1)}s · {new Date(clip.created_at.includes('Z') ? clip.created_at : `${clip.created_at.replace(' ', 'T')}Z`).toLocaleDateString()}</Text>
@@ -40,7 +40,6 @@ const r = StyleSheet.create({
     backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
     borderRadius: 14, padding: 14, marginBottom: 10,
   },
-  icon: { fontSize: 22 },
   body: { flex: 1 },
   title: { color: TEXT, fontSize: 14, fontWeight: '700' },
   meta: { color: MUTED, fontSize: 12, marginTop: 2 },
@@ -49,6 +48,97 @@ const r = StyleSheet.create({
     borderRadius: 10, paddingVertical: 8, paddingHorizontal: 14,
   },
   analyseBtnText: { color: GREEN, fontSize: 12, fontWeight: '700' },
+});
+
+// The stitch itself runs as a background job server-side (see
+// backend/src/routes/highlights.js) rather than blocking the request --
+// POST just enqueues it, then the caller polls for completion. Avoids
+// leaving the user with no way to know whether a slow stitch actually
+// finished if a single request happened to time out or the app got
+// backgrounded.
+const REEL_POLL_INTERVAL_MS = 2000;
+
+function ReelCard({ job, token }) {
+  const [building, setBuilding] = useState(false);
+  const [reelUrl, setReelUrl] = useState(null);
+  const [error, setError] = useState(null);
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
+  const windowWidth = useWindowWidth();
+  const reelWidth = Math.min(windowWidth - 48, 500);
+  const reelHeight = Math.round(reelWidth * 0.56);
+
+  const createReel = async () => {
+    setBuilding(true);
+    setError(null);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/highlights/jobs/${job.id}/reel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ top: 3 }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to build reel');
+      const { reelJobId } = data;
+
+      while (mountedRef.current) {
+        await new Promise((resolve) => setTimeout(resolve, REEL_POLL_INTERVAL_MS));
+        if (!mountedRef.current) break;
+        const pollRes = await fetch(`${API_BASE}/api/highlights/reel-jobs/${reelJobId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const pollData = await pollRes.json();
+        if (!pollRes.ok) throw new Error(pollData.error || 'Failed to check reel status');
+
+        if (pollData.status === 'done') {
+          if (mountedRef.current) setReelUrl(pollData.reel_url);
+          break;
+        }
+        if (pollData.status === 'failed') {
+          throw new Error(pollData.error || 'Failed to build reel');
+        }
+        // pending/processing -- keep polling
+      }
+    } catch (err) {
+      if (mountedRef.current) setError(err.message || 'Something went wrong');
+    } finally {
+      if (mountedRef.current) setBuilding(false);
+    }
+  };
+
+  return (
+    <View style={rc.card}>
+      {reelUrl ? (
+        <View style={rc.videoWrap}>
+          <PlatformVideo uri={`${API_BASE}${reelUrl}`} width={reelWidth} height={reelHeight} />
+        </View>
+      ) : (
+        <>
+          <Text style={rc.title}>Highlight reel</Text>
+          <Text style={rc.meta}>Stitches your top 3 longest rallies from this match into one clip.</Text>
+          {error && <Text style={rc.error}>{error}</Text>}
+          <TouchableOpacity style={rc.btn} onPress={() => { playTapSound(); createReel(); }} disabled={building}>
+            {building
+              ? <ActivityIndicator size="small" color="#000" />
+              : <Text style={rc.btnText}>Create highlight reel</Text>}
+          </TouchableOpacity>
+        </>
+      )}
+    </View>
+  );
+}
+const rc = StyleSheet.create({
+  card: {
+    backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
+    borderRadius: 14, padding: 14, marginBottom: 12,
+  },
+  title: { color: TEXT, fontSize: 14, fontWeight: '700', marginBottom: 4 },
+  meta: { color: MUTED, fontSize: 12, marginBottom: 12 },
+  error: { color: '#f87171', fontSize: 12, marginBottom: 10 },
+  btn: { backgroundColor: GREEN, borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
+  btnText: { color: '#000', fontSize: 13, fontWeight: '700' },
+  videoWrap: { borderRadius: 10, overflow: 'hidden', backgroundColor: '#000' },
 });
 
 export default function HighlightArchiveScreen({ navigation }) {
@@ -81,6 +171,7 @@ export default function HighlightArchiveScreen({ navigation }) {
   const processingJobs = jobs.filter(j => j.status === 'pending' || j.status === 'processing');
   const readyToReview = jobs.filter(j => j.status === 'done' && j.pending_review > 0);
   const failedJobs = jobs.filter(j => j.status === 'failed');
+  const doneJobs = jobs.filter(j => j.status === 'done');
 
   return (
     <SafeAreaView style={s.safe}>
@@ -113,6 +204,8 @@ export default function HighlightArchiveScreen({ navigation }) {
           </TouchableOpacity>
         ))}
 
+        {doneJobs.map(job => <ReelCard key={job.id} job={job} token={token} />)}
+
         {failedJobs.length > 0 && (
           <View style={s.failedBanner}>
             <Text style={s.failedBannerText}>
@@ -125,7 +218,6 @@ export default function HighlightArchiveScreen({ navigation }) {
           <ActivityIndicator size="large" color={GREEN} style={{ marginTop: 40 }} />
         ) : clips.length === 0 && jobs.length === 0 ? (
           <View style={s.empty}>
-            <Text style={s.emptyIcon}>🎬</Text>
             <Text style={s.emptyTitle}>No clips yet</Text>
             <Text style={s.emptySub}>Upload a match to start building your archive.</Text>
           </View>
@@ -166,7 +258,6 @@ const s = StyleSheet.create({
   failedBannerText: { color: '#f87171', fontSize: 13, textAlign: 'center' },
 
   empty: { alignItems: 'center', paddingVertical: 60 },
-  emptyIcon: { fontSize: 44, marginBottom: 14 },
   emptyTitle: { color: TEXT, fontSize: 18, fontWeight: '700', marginBottom: 6 },
   emptySub: { color: MUTED, fontSize: 13, textAlign: 'center' },
 });

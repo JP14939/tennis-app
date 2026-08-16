@@ -31,6 +31,8 @@ MODEL_PATH = os.path.join(os.path.dirname(__file__), '..', 'pose_landmarker.task
 IDX = {
     'left_shoulder':  11,
     'right_shoulder': 12,
+    'left_hip':       23,
+    'right_hip':      24,
     'left_ankle':     27,
     'right_ankle':    28,
 }
@@ -372,13 +374,21 @@ def _angle_from_frame(frame, landmarker):
     """
     Compute camera angle from a single frame.
     Returns (net_width, net_center_x, net_y, player_x, player_vis, post_height_frac,
-    ankle_y, used_keypoints, height_ratio) or None if net not found.
+    ankle_y, used_keypoints, height_ratio, stance_width_ratio, shoulder_tilt_deg)
+    or None if net not found.
     post_height_frac/ankle_y are the older, raw/uncalibrated Hough-based vertical
     signal; height_ratio is the newer, validated keypoint-model-based one (only
     available when used_keypoints is True and a post base was detected).
     used_keypoints is True when the trained net-keypoint model found the net
     (preferred, more reliable); False means it fell back to the older
     Hough-line heuristic for this frame.
+
+    stance_width_ratio/shoulder_tilt_deg (both None if hips/shoulders aren't
+    both visible) are a supplementary pose-geometry signal for camera
+    perpendicularity/tilt -- see check_camera_setup_frame()'s framing_status
+    for how they're used. Appended at the end rather than inserted so
+    existing positional unpacking of the first 9 values elsewhere in this
+    file doesn't need to change field order.
     """
     kp = run_net_keypoint_model(frame)
     used_keypoints = 'net_top_left' in kp and 'net_top_right' in kp
@@ -413,13 +423,116 @@ def _angle_from_frame(frame, landmarker):
         if ankle_ys:
             ankle_y = sum(ankle_ys) / len(ankle_ys)
 
-    return net_width, net_center_x, net_y, player_x, player_vis, post_height_frac, ankle_y, used_keypoints, height_ratio
+    stance_width_ratio = None
+    shoulder_tilt_deg = None
+    if mp_landmarks is not None:
+        lh = mp_landmarks[IDX['left_hip']]
+        rh = mp_landmarks[IDX['right_hip']]
+        if ls.visibility > 0.3 and rs.visibility > 0.3 and lh.visibility > 0.3 and rh.visibility > 0.3:
+            dx = rs.x - ls.x
+            dy = rs.y - ls.y
+            shoulder_width = abs(dx)
+            hip_width = abs(rh.x - lh.x)
+            if shoulder_width > 1e-4:
+                stance_width_ratio = round(hip_width / shoulder_width, 3)
+            # A line's orientation only means something mod 180 deg, so wrap
+            # into [0, 90] (0 = horizontal, 90 = vertical) rather than
+            # leaving atan2's raw [-180, 180] output as-is. Confirmed
+            # empirically necessary: real swing-clip frames sampled
+            # mid-rotation, or back-view frames where MediaPipe's anatomical
+            # left/right flips which shoulder appears on-screen-left,
+            # otherwise produced nonsense >90 deg "tilt" values on footage
+            # that was never actually tilted (see this session's spot-check).
+            raw = abs(math.degrees(math.atan2(dy, dx))) % 180
+            wrapped = min(raw, 180 - raw)
+            # Only trust this as a CAMERA-tilt reading when the shoulder
+            # line is still closer to horizontal than vertical -- once the
+            # player's body is rotated enough that dy dominates dx, a large
+            # "tilt" reflects body rotation (mid-swing, or just turned to
+            # the side), not the camera being canted, and reporting it as
+            # camera advice would be actively wrong.
+            shoulder_tilt_deg = round(wrapped, 1) if abs(dx) >= abs(dy) else None
+
+    return (net_width, net_center_x, net_y, player_x, player_vis, post_height_frac, ankle_y,
+            used_keypoints, height_ratio, stance_width_ratio, shoulder_tilt_deg)
+
+
+# View-direction margin: fraction of the player's own on-screen height
+# (shoulder_y to ankle_y) used as tolerance around that span when deciding
+# whether the net's y-position falls "within" it -- scales with how big the
+# player appears in frame instead of a fixed pixel-space value.
+VIEW_DIRECTION_MARGIN_FRAC = 0.15
+
+
+def detect_view_direction(frame, landmarker=None):
+    """
+    Distinguish a genuine FRONT view (camera at/near the net, facing the far
+    player -- you see their face) from a BACK view (camera behind a
+    baseline, facing the near player -- you see their back). Both can
+    produce a similarly narrow apparent net width and land in the same
+    low camera_angle bucket from _angle_from_frame()/infer_camera_angle(),
+    even though the pose landmarks are essentially mirrored between them --
+    this is a separate signal, not a replacement for that angle.
+
+    Key visual distinction: in a back view the net sits BEHIND the player
+    in the frame (between their own body and the far side), so its y
+    falls within the player's own on-screen vertical span (shoulders to
+    ankles). In a front view the net is close to the camera -- low in
+    frame, at/below the player's feet -- and what's behind the player
+    instead is the far fence/billboards, not the net.
+
+    Returns 'front', 'back', or 'unknown' (net or pose not confidently
+    detected, or the net falls outside both bands -- e.g. an elevated
+    camera -- where this heuristic isn't calibrated to guess).
+    """
+    kp = run_net_keypoint_model(frame)
+    if 'net_top_left' in kp and 'net_top_right' in kp:
+        net_y = (kp['net_top_left'][1] + kp['net_top_right'][1]) / 2
+    else:
+        net = detect_net_endpoints(frame)
+        if net is None:
+            return 'unknown'
+        _, _, net_y = net
+
+    mp_landmarks = _run_landmarker(frame, landmarker) if landmarker is not None else detect_pose(frame)
+    if mp_landmarks is None:
+        return 'unknown'
+
+    ls = mp_landmarks[IDX['left_shoulder']]
+    rs = mp_landmarks[IDX['right_shoulder']]
+    la = mp_landmarks[IDX['left_ankle']]
+    ra = mp_landmarks[IDX['right_ankle']]
+
+    shoulder_ys = [s.y for s in (ls, rs) if s.visibility > 0.3]
+    ankle_ys = [a.y for a in (la, ra) if a.visibility > 0.3]
+    if not shoulder_ys or not ankle_ys:
+        return 'unknown'
+
+    shoulder_y = sum(shoulder_ys) / len(shoulder_ys)
+    ankle_y = sum(ankle_ys) / len(ankle_ys)
+    span = ankle_y - shoulder_y
+    if span <= 0.01:
+        return 'unknown'
+
+    margin = span * VIEW_DIRECTION_MARGIN_FRAC
+    if shoulder_y - margin <= net_y <= ankle_y + margin:
+        return 'back'
+    if net_y > ankle_y + margin:
+        return 'front'
+    return 'unknown'
 
 
 # Mirrors check_camera_setup.py's ELEVATION_MESSAGES, but shorter -- meant for
 # a small live overlay badge during camera positioning, not a full results
 # banner. Kept separate/duplicated deliberately: same signal, different
 # framing for a tighter UI space.
+LIVE_FRAMING_MESSAGES = {
+    'ok':                 '',
+    'tilted':             ' Camera looks tilted — try leveling it.',
+    'compressed_stance':  ' Stance looks compressed — try moving more front-on.',
+    'unknown':            '',
+}
+
 LIVE_ELEVATION_MESSAGES = {
     'level':              'Camera height looks good.',
     'uncertain':          'Height roughly OK — not fully confident.',
@@ -441,17 +554,18 @@ def check_camera_setup_frame(frame, landmarker=None):
     resamples on its own cadence anyway.
 
     Returns the same shape check_camera_setup.py returns: {ok, angle,
-    confidence, height_ratio, elevation_status, message}.
+    confidence, height_ratio, elevation_status, framing_status, message}.
     """
     result = _angle_from_frame(frame, landmarker)
     if result is None:
         return {
             'ok': False, 'angle': None, 'confidence': 0.0,
-            'height_ratio': None, 'elevation_status': 'unknown',
+            'height_ratio': None, 'elevation_status': 'unknown', 'framing_status': 'unknown',
             'message': "Can't find the net — try stepping back or check the fence-mount guide.",
         }
 
-    net_width, net_center_x, net_y, player_x, player_vis, post_height_frac, ankle_y, used_keypoints, height_ratio = result
+    (net_width, net_center_x, net_y, player_x, player_vis, post_height_frac, ankle_y,
+     used_keypoints, height_ratio, stance_width_ratio, shoulder_tilt_deg) = result
 
     apparent_ratio = min(net_width / FULL_NET_FRACTION, 1.0)
     angle = math.degrees(math.acos(max(apparent_ratio, 0.001)))
@@ -461,18 +575,24 @@ def check_camera_setup_frame(frame, landmarker=None):
     confidence = round(min(base_confidence + player_vis * 0.3, 1.0), 3)
 
     elevation_status = elevation_label(height_ratio)
+    framing_status = framing_label(stance_width_ratio, shoulder_tilt_deg)
 
     if confidence < LIVE_MIN_CONFIDENCE:
         return {
             'ok': False, 'angle': angle, 'confidence': confidence,
             'height_ratio': height_ratio, 'elevation_status': elevation_status,
+            'framing_status': framing_status,
             'message': f'Uncertain ({angle_label(angle)}, low confidence).',
         }
 
     return {
         'ok': True, 'angle': angle, 'confidence': confidence,
         'height_ratio': height_ratio, 'elevation_status': elevation_status,
-        'message': f'{angle_label(angle)}. {LIVE_ELEVATION_MESSAGES.get(elevation_status, LIVE_ELEVATION_MESSAGES["unknown"])}',
+        'framing_status': framing_status,
+        'message': (
+            f'{angle_label(angle)}. {LIVE_ELEVATION_MESSAGES.get(elevation_status, LIVE_ELEVATION_MESSAGES["unknown"])}'
+            f'{LIVE_FRAMING_MESSAGES.get(framing_status, "")}'
+        ),
     }
 
 
@@ -524,7 +644,8 @@ def infer_camera_angle(video_path, frame_number=None, landmarker=None):
 
     # Use the measurement closest to the median width
     best = min(measurements, key=lambda m: abs(m[0] - median_width))
-    net_width, net_center_x, net_y, player_x, player_vis, post_height_frac, ankle_y, used_keypoints, _ = best
+    (net_width, net_center_x, net_y, player_x, player_vis, post_height_frac, ankle_y,
+     used_keypoints, _, stance_width_ratio, shoulder_tilt_deg) = best
     n_keypoint_frames = sum(1 for m in measurements if m[7])
 
     # Vertical elevation: median height_ratio across whichever sampled frames
@@ -532,6 +653,10 @@ def infer_camera_angle(video_path, frame_number=None, landmarker=None):
     # `best` frame -- more robust than relying on a single sample.
     height_ratios = sorted(m[8] for m in measurements if m[8] is not None)
     median_height_ratio = height_ratios[len(height_ratios) // 2] if height_ratios else None
+
+    # Stance/tilt: same "closest-to-median-net-width" frame's values as the
+    # rest of `best` -- these two are read straight from the player's own
+    # pose in that one frame, not medianed across samples like height_ratio.
 
     debug = {
         'frames_sampled':  candidate_frames,
@@ -557,6 +682,9 @@ def infer_camera_angle(video_path, frame_number=None, landmarker=None):
         'post_height_frac': round(post_height_frac, 4) if post_height_frac is not None else None,
         'ankle_y':           round(ankle_y, 4) if ankle_y is not None else None,
         'elevation_gap':     round(ankle_y - net_y, 4) if ankle_y is not None else None,
+        'stance_width_ratio': stance_width_ratio,
+        'shoulder_tilt_deg':  shoulder_tilt_deg,
+        'framing_status':     framing_label(stance_width_ratio, shoulder_tilt_deg),
     }
 
     # --- Primary: angle from net foreshortening ---
@@ -651,7 +779,8 @@ def infer_angle_from_source(source_video_path, peak_time_sec, landmarker=None):
         return None, 0.0, f'Source video detection unreliable: consistent wide line (w={median_width:.2f})'
 
     best = min(measurements, key=lambda m: abs(m[0] - median_width))
-    net_width, net_center_x, net_y, player_x, player_vis, post_height_frac, ankle_y, used_keypoints, _ = best
+    (net_width, net_center_x, net_y, player_x, player_vis, post_height_frac, ankle_y,
+     used_keypoints, _, _stance_width_ratio, _shoulder_tilt_deg) = best
     height_ratios = sorted(m[8] for m in measurements if m[8] is not None)
     median_height_ratio = height_ratios[len(height_ratios) // 2] if height_ratios else None
 
@@ -717,6 +846,34 @@ def angle_label(angle):
 # 'uncertain' covers the overlap zone rather than forcing a confident call.
 ELEVATION_LEVEL_MIN = 0.065
 ELEVATION_LOW_MAX = 0.050
+
+
+# Provisional thresholds for the new pose-geometry framing check -- see
+# this module's spot-check script/comment for what real footage was
+# actually measured before these were set (same discipline as
+# ELEVATION_LEVEL_MIN/ELEVATION_LOW_MAX above: don't trust an ungrounded
+# geometric threshold, this session already found three that looked
+# reasonable and failed on real data). Deliberately wide/conservative --
+# only flags a clearly-off frame, not a borderline one.
+STANCE_WIDTH_RATIO_LOW = 0.30   # hip-width / shoulder-width below this -- stance reads unusually compressed
+SHOULDER_TILT_MAX_DEG = 15.0    # shoulder line more than this many degrees off horizontal
+
+
+def framing_label(stance_width_ratio, shoulder_tilt_deg):
+    """
+    Supplementary signal to elevation_label() -- flags likely camera
+    perpendicularity/tilt issues from the player's own pose geometry
+    (shoulders/hips), independent of the net-based angle/elevation checks.
+    Returns 'unknown' | 'ok' | 'tilted' | 'compressed_stance'. Checks tilt
+    first since a canted camera is the more actionable, unambiguous fix.
+    """
+    if stance_width_ratio is None and shoulder_tilt_deg is None:
+        return 'unknown'
+    if shoulder_tilt_deg is not None and shoulder_tilt_deg > SHOULDER_TILT_MAX_DEG:
+        return 'tilted'
+    if stance_width_ratio is not None and stance_width_ratio < STANCE_WIDTH_RATIO_LOW:
+        return 'compressed_stance'
+    return 'ok'
 
 
 def elevation_label(height_ratio):
