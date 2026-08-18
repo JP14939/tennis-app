@@ -149,6 +149,40 @@ goes live.
   reviewers need a working backend during review, and won't be on your
   home Wi-Fi.
 
-**Not yet committed to git**: today's payments work (webhooks.js,
-billing.js, PremiumCheckout, db schema changes) is sitting uncommitted.
-Not something for this list — just ask me to commit whenever you're ready.
+~~**Not yet committed to git**~~ — resolved 2026-08-18, everything through
+that session's Drills & Lessons/theme/DB-audit work is now committed.
+
+---
+
+## New from the 2026-08-18 session
+
+**Click through today's UI changes for real** — all verified via API calls
+and the Metro bundler (compiles cleanly, real curl/database checks), but
+none of it was actually clicked through as a live user this session:
+- Swing Review's new rough-pick contact-marking step (History... actually
+  Dev Page → Swing Review → pick a job → mark a real shot → confirm the
+  rough scrub feels right before the fine ±50 slider takes over).
+- Rally Boundary Review's lazy video loading (Dev Page → Rally Boundary
+  Review on a job with several pending clips — confirm videos only start
+  loading once tapped, not all at once).
+- Drills & Lessons: History → Drills segment should now show 30 real
+  drills instead of "coming soon"; try adding a test lesson via Dev Page →
+  Drills & Lessons Editor and confirm the Lessons segment/Premium page
+  entry behave as expected for a free vs. premium account.
+
+**Seeing the new Android icon/splash for real needs a native build.** The
+new mascot-based `android-icon-*.png`/`splash-icon.png` files are correct
+on disk (verified by re-reading them), but Android icon/splash rendering
+only happens at native-build time — you won't see them in Expo Go. Needs
+an Expo prebuild or EAS build to actually check (same build step already
+needed for App Store prep above — worth doing together).
+
+**Data-quality: `coaching_tips_database.json` has a mojibake encoding
+bug.** Found while seeding Drills content from it — em-dashes and similar
+punctuation in the tip/drill text render as mangled characters (e.g. "â€""
+instead of "—"). This is in the source JSON file itself (pre-existing, not
+introduced by the Drills seeding), and it was already affecting the
+per-analysis tips shown on `ResultsScreen.js` — now also visible in the
+new Drills library. Worth a cleanup pass re-encoding that file correctly
+(likely a one-time UTF-8-read-as-Latin1-then-rewritten bug in whatever
+originally generated it).
