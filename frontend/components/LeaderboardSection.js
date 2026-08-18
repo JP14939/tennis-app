@@ -1,21 +1,17 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, TextInput, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { getFriendsLeaderboard, getWorldwideLeaderboard, addCelebrity } from '../api/leaderboard';
 import { colors, fonts, radius } from '../theme';
 import { playTapSound } from '../utils/sounds';
+import { isAdmin } from '../utils/isAdmin';
 
 const SHOT_TYPES = [
   { label: 'Forehand', value: 'forehand' },
   { label: 'Backhand', value: 'backhand' },
   { label: 'Serve', value: 'serve' },
 ];
-
-// UI-only convenience check (mirrors the backend's default ADMIN_EMAILS) --
-// the real gate is server-side in routes/leaderboard.js; this just decides
-// whether to show the add-celebrity form at all.
-const ADMIN_EMAILS = ['jack.p14370@gmail.com'];
 
 function Row({ rank, name, score, badge, highlighted }) {
   return (
@@ -63,18 +59,25 @@ export default function LeaderboardSection() {
   const [celebNote, setCelebNote] = useState('');
   const [submittingCeleb, setSubmittingCeleb] = useState(false);
 
+  // load() re-runs on every tab/shotType change -- without this guard,
+  // rapidly tapping between shot-type filter pills could let an older,
+  // slower response overwrite the list after a newer selection's response
+  // already landed.
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
+
   const load = useCallback(() => {
     setLoading(true);
     const fetcher = tab === 'friends' ? getFriendsLeaderboard : getWorldwideLeaderboard;
     fetcher(token, shotType)
-      .then((data) => setLeaderboard(data.leaderboard))
+      .then((data) => { if (mountedRef.current) setLeaderboard(data.leaderboard); })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => { if (mountedRef.current) setLoading(false); });
   }, [token, tab, shotType]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const isAdmin = ADMIN_EMAILS.includes((user?.email ?? '').toLowerCase());
+  const userIsAdmin = isAdmin(user);
 
   const submitCelebrity = async () => {
     const score = parseFloat(celebScore);
@@ -140,7 +143,7 @@ export default function LeaderboardSection() {
         ))
       )}
 
-      {tab === 'worldwide' && isAdmin && (
+      {tab === 'worldwide' && userIsAdmin && (
         <View style={s.adminForm}>
           <Text style={s.adminTitle}>Add a pro/celebrity score</Text>
           <TextInput

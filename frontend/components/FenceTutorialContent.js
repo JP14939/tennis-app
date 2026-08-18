@@ -6,20 +6,16 @@ import { colors, fonts, radius, spacing } from '../theme';
 
 const FENCE_STEPS = [
   {
-    title: 'Find the right fence',
-    body: "Use the shorter divider fence between courts (roughly 3-4ft / waist-to-chest height), not the tall perimeter fence around the whole facility — that one puts the camera well above head height and skews every angle measurement.",
+    title: 'Find the diamond mesh',
+    body: "The fences around most courts are made of diamond-shaped wire mesh — that's your mount.",
   },
   {
-    title: 'Two rubber bands, crossed',
-    body: "Loop one band around the phone lengthwise (top to bottom) and one crosswise (side to side), so they cross in an X on the back of the phone. Snug enough that the phone can't slide or droop under its own weight, but not so tight it strains the case or bends thin mesh wire.",
+    title: 'Wrap it with two elastic bands',
+    body: "Wrap two elastic bands around your phone and hook them into the mesh at roughly eye level — any orientation that holds the court in frame works. No tripod needed.",
   },
   {
-    title: 'Height and distance',
-    body: "Hook the X over a diamond of the fence mesh at roughly sternum height — not eye height, that tilts the shot down and throws off the angle reading. Set it a few feet behind the baseline, level with the center of the court, so your full swing (racket above your head on a serve included) stays in frame.",
-  },
-  {
-    title: 'Check it worked',
-    body: "Before recording a real swing, open \"Record now\" and watch the live positioning badge — it'll tell you directly if the height or angle is off, rather than finding out after the fact. No tripod needed either way; a fixed fence mount is steadier than holding it by hand.",
+    title: 'Make sure it\'s tight',
+    body: "Wrap it tight and firm so the phone can't slip or fall while you're recording.",
   },
 ];
 

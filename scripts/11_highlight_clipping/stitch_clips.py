@@ -48,6 +48,13 @@ def stitch_clips(clip_paths, output_path):
             continue
 
         fps = cap.get(cv2.CAP_PROP_FPS)
+        if fps <= 0:
+            # Some clips (mis-parsed container/codec) report fps=0 -- used
+            # unguarded below both as the VideoWriter's fps and as the
+            # duration_sec divisor, the latter crashing with
+            # ZeroDivisionError. 30 matches this pipeline's ASSUMED_FPS
+            # elsewhere (e.g. frontend/screens/ContactMarkingScreen.js).
+            fps = 30.0
         w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 

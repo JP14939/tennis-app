@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, Image,
-  StyleSheet, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView,
+  StyleSheet, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, Alert, Linking,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { playTapSound } from '../utils/sounds';
@@ -80,7 +80,21 @@ export default function LoginScreen({ navigation }) {
               <Text style={s.btnPrimaryText}>{loading ? 'Logging in...' : 'Log in'}</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={s.forgotWrap}>
+            {/* No self-serve password reset flow exists yet -- this used to
+                be a dead button with no onPress handler at all. Points to
+                support instead of silently doing nothing, until a real
+                reset flow (email + token) is built. */}
+            <TouchableOpacity
+              style={s.forgotWrap}
+              onPress={() => Alert.alert(
+                'Forgot your password?',
+                'Password reset isn\'t self-serve yet — email support@rallymax.app and we\'ll help you back in.',
+                [
+                  { text: 'Email support', onPress: () => Linking.openURL('mailto:support@rallymax.app') },
+                  { text: 'OK', style: 'cancel' },
+                ]
+              )}
+            >
               <Text style={s.forgot}>Forgot password?</Text>
             </TouchableOpacity>
           </View>

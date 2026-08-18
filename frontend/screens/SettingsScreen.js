@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { changePassword } from '../api/account';
 import { colors, fonts, radius, spacing } from '../theme';
 import { isSoundEnabled, setSoundEnabled, playTapSound } from '../utils/sounds';
+import { isAdmin } from '../utils/isAdmin';
 
 function Section({ title, children }) {
   return (
@@ -247,6 +248,14 @@ export default function SettingsScreen({ navigation }) {
             </View>
           )}
         </Section>
+
+        {isAdmin(user) && (
+          <Section title="Developer">
+            <TouchableOpacity style={s.toggleRow} onPress={() => { playTapSound(); navigation.navigate('DevDashboard'); }}>
+              <Text style={s.toggleRowText}>Dev Page →</Text>
+            </TouchableOpacity>
+          </Section>
+        )}
 
         <View style={[sec.wrap, s.dangerWrap]}>
           <Text style={[sec.title, s.dangerTitle]}>Delete account</Text>

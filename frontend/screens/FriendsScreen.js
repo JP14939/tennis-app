@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet,
-  SafeAreaView, ScrollView, ActivityIndicator, Alert,
+  SafeAreaView, ScrollView, ActivityIndicator, Alert, Share,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -51,15 +52,23 @@ function FriendDetail({ friend, onBack, onRecordChanged, navigation }) {
 
   const [shared, setShared] = useState([]);
   const [loadingShared, setLoadingShared] = useState(true);
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   const load = useCallback(() => {
     setLoading(true);
-    getMatches(token, friend.id).then((data) => setMatches(data.matches)).catch(() => {}).finally(() => setLoading(false));
+    getMatches(token, friend.id)
+      .then((data) => { if (mountedRef.current) setMatches(data.matches); })
+      .catch(() => {})
+      .finally(() => { if (mountedRef.current) setLoading(false); });
   }, [token, friend.id]);
 
   const loadShared = useCallback(() => {
     setLoadingShared(true);
-    getSharedSwings(token, friend.id).then((data) => setShared(data.shared)).catch(() => {}).finally(() => setLoadingShared(false));
+    getSharedSwings(token, friend.id)
+      .then((data) => { if (mountedRef.current) setShared(data.shared); })
+      .catch(() => {})
+      .finally(() => { if (mountedRef.current) setLoadingShared(false); });
   }, [token, friend.id]);
 
   useFocusEffect(useCallback(() => { load(); loadShared(); }, [load, loadShared]));
@@ -237,13 +246,15 @@ export default function FriendsScreen({ navigation, route }) {
   const [friends, setFriends] = useState([]);
   const [loadingFriends, setLoadingFriends] = useState(true);
   const [selectedFriend, setSelectedFriend] = useState(null);
+  const mainMountedRef = useRef(true);
+  useEffect(() => () => { mainMountedRef.current = false; }, []);
 
   const loadFriends = useCallback(() => {
     setLoadingFriends(true);
     getFriends(token)
-      .then((data) => setFriends(data.friends))
+      .then((data) => { if (mainMountedRef.current) setFriends(data.friends); })
       .catch(() => {})
-      .finally(() => setLoadingFriends(false));
+      .finally(() => { if (mainMountedRef.current) setLoadingFriends(false); });
   }, [token]);
 
   useFocusEffect(useCallback(() => { loadFriends(); }, [loadFriends]));
@@ -258,6 +269,17 @@ export default function FriendsScreen({ navigation, route }) {
     } finally {
       setGenerating(false);
     }
+  };
+
+  const copyCode = async () => {
+    await Clipboard.setStringAsync(inviteCode);
+    playTapSound();
+    Alert.alert('Copied', 'Your friend code is on your clipboard.');
+  };
+
+  const shareCode = () => {
+    playTapSound();
+    Share.share({ message: `Add me on RallyMax! My friend code is ${inviteCode}` });
   };
 
   const submitLink = async () => {
@@ -333,6 +355,16 @@ export default function FriendsScreen({ navigation, route }) {
             <Section title="Your friend code">
               <Text style={s.helpText}>Share this with a friend so they can add you.</Text>
               {inviteCode ? <Text style={s.codeDisplay}>{inviteCode}</Text> : null}
+              {inviteCode && (
+                <View style={s.codeActionsRow}>
+                  <TouchableOpacity style={s.codeActionBtn} onPress={copyCode}>
+                    <Text style={s.codeActionBtnText}>Copy</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={s.codeActionBtn} onPress={shareCode}>
+                    <Text style={s.codeActionBtnText}>Share</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
               <TouchableOpacity style={s.actionBtn} onPress={() => { playTapSound(); generateCode(); }} disabled={generating}>
                 <Text style={s.actionBtnText}>
                   {generating ? 'Generating...' : inviteCode ? 'Generate new code' : 'Generate friend code'}
@@ -409,6 +441,12 @@ const s = StyleSheet.create({
     backgroundColor: colors.bg, borderRadius: radius.sm, paddingHorizontal: 14, paddingVertical: 12,
     color: colors.ink, fontSize: 14, fontFamily: fonts.regular, marginBottom: 10, letterSpacing: 1,
   },
+  codeActionsRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  codeActionBtn: {
+    flex: 1, alignItems: 'center', borderWidth: 1, borderColor: colors.primary,
+    borderRadius: radius.pill, paddingVertical: 11,
+  },
+  codeActionBtnText: { color: colors.primary, fontSize: 13, fontFamily: fonts.bold },
   actionBtn: { backgroundColor: colors.primary, borderRadius: radius.pill, paddingVertical: 12, alignItems: 'center' },
   actionBtnDisabled: { opacity: 0.4 },
   actionBtnText: { color: colors.white, fontSize: 13.5, fontFamily: fonts.bold },

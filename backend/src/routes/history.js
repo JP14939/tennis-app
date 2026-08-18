@@ -122,31 +122,41 @@ router.post('/history', requireAuth, (req, res) => {
 
   const tier = currentTier(req.user.id);
   const limit = limitForTier(tier);
-  if (limit !== null) {
-    const { count } = db.prepare('SELECT COUNT(*) AS count FROM analyses WHERE user_id = ?').get(req.user.id);
-    if (count >= limit) {
-      return res.status(403).json({
-        error: `Free plan is limited to ${limit} saved shots — upgrade to Premium to save unlimited.`,
-        code: 'HISTORY_LIMIT',
-      });
+  const top = result.matches?.[0] || {};
+
+  // Check-then-insert wrapped as one synchronous transaction (better-sqlite3
+  // transactions are synchronous) so the count check and the insert can't be
+  // split by a concurrent request against the same user -- was previously
+  // two separate statements with no such guarantee.
+  const LIMIT_EXCEEDED = Symbol('LIMIT_EXCEEDED');
+  const insertAnalysis = db.transaction(() => {
+    if (limit !== null) {
+      const { count } = db.prepare('SELECT COUNT(*) AS count FROM analyses WHERE user_id = ?').get(req.user.id);
+      if (count >= limit) return LIMIT_EXCEEDED;
     }
+    return db.prepare(
+      `INSERT INTO analyses (user_id, shot_type, similarity, pro_id, angle_label, tip, result_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      req.user.id,
+      shotType,
+      top.overall_score ?? top.similarity ?? 0,
+      top.pro_id ?? null,
+      result.angle_label ?? null,
+      top.tips?.[0]?.tip_text ?? null,
+      JSON.stringify(result)
+    ).lastInsertRowid;
+  });
+
+  const outcome = insertAnalysis();
+  if (outcome === LIMIT_EXCEEDED) {
+    return res.status(403).json({
+      error: `Free plan is limited to ${limit} saved shots — upgrade to Premium to save unlimited.`,
+      code: 'HISTORY_LIMIT',
+    });
   }
 
-  const top = result.matches?.[0] || {};
-  const info = db.prepare(
-    `INSERT INTO analyses (user_id, shot_type, similarity, pro_id, angle_label, tip, result_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    req.user.id,
-    shotType,
-    top.overall_score ?? top.similarity ?? 0,
-    top.pro_id ?? null,
-    result.angle_label ?? null,
-    top.tips?.[0]?.tip_text ?? null,
-    JSON.stringify(result)
-  );
-
-  const row = db.prepare('SELECT * FROM analyses WHERE id = ?').get(info.lastInsertRowid);
+  const row = db.prepare('SELECT * FROM analyses WHERE id = ?').get(outcome);
   res.status(201).json(serializeRow(row));
 });
 

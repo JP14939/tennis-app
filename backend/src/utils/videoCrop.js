@@ -51,7 +51,15 @@ async function persistAndCrop(uploadPath, destDir) {
   fs.mkdirSync(destDir, { recursive: true });
   const ext = path.extname(uploadPath) || '.mp4';
   const originalPath = path.join(destDir, `original${ext}`);
-  fs.renameSync(uploadPath, originalPath);
+  // renameSync (not copy) worked fine in local dev where uploads and
+  // data/ live on the same filesystem, but fails hard in the hosted
+  // container: multer's upload dir is inside the container's own layer
+  // while data/ is a separate bind-mounted volume, and rename()/EXDEV
+  // can't cross filesystem boundaries. Confirmed live: every real
+  // /api/analyse request 500'd on this exact error post-hosting. Copy +
+  // unlink works across filesystems and is the standard fix for EXDEV.
+  fs.copyFileSync(uploadPath, originalPath);
+  fs.unlinkSync(uploadPath);
   const croppedPath = await cropToSubject(originalPath, path.join(destDir, 'cropped.mp4'));
   return { originalPath, croppedPath };
 }
@@ -64,7 +72,29 @@ async function croppedProClipPath(clipPath, shotType) {
   const outPath = path.join(PRO_CLIPS_CROPPED_DIR, shotType, path.basename(clipPath));
   if (fs.existsSync(outPath)) return outPath;
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
-  return cropToSubject(clipPath, outPath);
+
+  // Crop to a per-request temp path, then rename into place -- two
+  // concurrent requests for the same (never-before-cropped) pro clip used to
+  // both spawn a crop writing straight to outPath, risking one request
+  // reading a partially-written file mid-write. rename() is atomic on the
+  // same filesystem, so a reader either sees the old (absent) file or the
+  // fully-written one, never a partial one.
+  const tmpPath = path.join(path.dirname(outPath), `.tmp-${process.pid}-${Date.now()}-${path.basename(outPath)}`);
+  const result = await cropToSubject(clipPath, tmpPath);
+  if (!result) {
+    fs.unlink(tmpPath, () => {});
+    return null;
+  }
+  try {
+    fs.renameSync(tmpPath, outPath);
+  } catch {
+    // A concurrent request already finished and renamed into place first
+    // (Windows' rename throws EEXIST here; POSIX rename would have silently
+    // overwritten) -- either way, that other result is equally valid, so
+    // just clean up ours and use it.
+    fs.unlink(tmpPath, () => {});
+  }
+  return outPath;
 }
 
 function toUrl(mount, root, absPath) {

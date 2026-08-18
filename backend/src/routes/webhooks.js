@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const db = require('../db');
 
 const router = express.Router();
@@ -20,9 +21,22 @@ const ENTITLEMENT_ID = process.env.REVENUECAT_ENTITLEMENT_ID || 'premium';
 // Auth is a custom Authorization header value you set in the RevenueCat
 // dashboard and here -- simpler than HMAC signature verification, and
 // sufficient given this is the only thing that ever calls this route.
+// Constant-time comparison so a byte-by-byte timing side-channel can't help
+// an attacker brute-force REVENUECAT_WEBHOOK_SECRET. timingSafeEqual throws
+// on mismatched buffer lengths rather than returning false, so that has to
+// be checked first (a length mismatch is safe to reveal -- it's the
+// content match that must be constant-time).
+function safeEqual(a, b) {
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 router.post('/webhooks/revenuecat', (req, res) => {
   const expected = process.env.REVENUECAT_WEBHOOK_SECRET;
-  if (!expected || req.headers.authorization !== expected) {
+  const provided = req.headers.authorization;
+  if (!expected || typeof provided !== 'string' || !safeEqual(provided, expected)) {
     return res.status(401).json({ error: 'Invalid webhook authorization' });
   }
 

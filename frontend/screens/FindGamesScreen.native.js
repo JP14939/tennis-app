@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet, SafeAreaView,
   Modal, ScrollView, ActivityIndicator, Alert, Animated, PanResponder,
@@ -297,18 +297,45 @@ export default function FindGamesScreen({ navigation }) {
   const [courts, setCourts] = useState([]);
   const [watchedIds, setWatchedIds] = useState(new Set());
   const [loading, setLoading] = useState(true);
+  // Tracks the last lat/lng loadCourts was called with, purely so the retry
+  // button can re-issue the same request without re-running the location
+  // permission flow.
+  const lastLoadArgs = useRef(null);
+  const [loadError, setLoadError] = useState(false);
   const [locationDenied, setLocationDenied] = useState(false);
   const [selectedCourt, setSelectedCourt] = useState(null);
   const [draftPin, setDraftPin] = useState(null); // { latitude, longitude } while placing a new court
   const [draftName, setDraftName] = useState('');
   const [submittingPin, setSubmittingPin] = useState(false);
+  // Guards loadCourts' promise callbacks -- the surrounding useFocusEffect
+  // already tracks its own `cancelled` flag, but loadCourts can also be
+  // called directly from retryLoadCourts(), and its .then/.catch/.finally
+  // chain never checked either flag, so a stale/slow request could still
+  // overwrite state after a newer one already resolved (e.g. rapidly
+  // re-focusing the screen, or mashing retry).
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   const loadCourts = useCallback((lat, lng) => {
+    lastLoadArgs.current = { lat, lng };
     getCourts(token, { lat, lng, radiusKm: 20 })
-      .then((data) => setCourts(data.courts))
-      .catch(() => {})
-      .finally(() => setLoading(false));
+      .then((data) => {
+        if (!mountedRef.current) return;
+        setCourts(data.courts);
+        setLoadError(false);
+      })
+      // Previously swallowed silently, which looked identical to "no courts
+      // nearby" -- a slow/timed-out request (the actual failure mode this
+      // was masking) now surfaces a real retry affordance instead.
+      .catch(() => { if (mountedRef.current) setLoadError(true); })
+      .finally(() => { if (mountedRef.current) setLoading(false); });
   }, [token]);
+
+  const retryLoadCourts = () => {
+    if (!lastLoadArgs.current) return;
+    setLoading(true);
+    loadCourts(lastLoadArgs.current.lat, lastLoadArgs.current.lng);
+  };
 
   useFocusEffect(useCallback(() => {
     let cancelled = false;
@@ -399,6 +426,13 @@ export default function FindGamesScreen({ navigation }) {
 
       {loading ? (
         <View style={s.centerFill}><ActivityIndicator size="large" color={colors.primary} /></View>
+      ) : loadError ? (
+        <View style={s.centerFill}>
+          <Text style={s.errorText}>Couldn't load courts — check your connection.</Text>
+          <TouchableOpacity style={s.retryBtn} onPress={retryLoadCourts}>
+            <Text style={s.retryBtnText}>Try again</Text>
+          </TouchableOpacity>
+        </View>
       ) : (
         <MapView
           style={s.map}
@@ -502,6 +536,9 @@ const s = StyleSheet.create({
   hint: { color: colors.muted, fontSize: 12, marginTop: 4, fontFamily: fonts.regular },
   map: { flex: 1 },
   centerFill: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
+  errorText: { color: colors.muted, fontSize: 13.5, fontFamily: fonts.regular, textAlign: 'center', marginBottom: 14 },
+  retryBtn: { backgroundColor: colors.primary, borderRadius: radius.pill, paddingHorizontal: 20, paddingVertical: 11 },
+  retryBtnText: { color: colors.white, fontSize: 13.5, fontFamily: fonts.bold },
 
   sheetBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   sheetCard: {

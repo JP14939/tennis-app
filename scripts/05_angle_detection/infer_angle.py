@@ -101,7 +101,7 @@ def extract_frame(video_path, frame_number):
 
 # ── Net detection ─────────────────────────────────────────────────────────────
 
-NET_KEYPOINT_MODEL_PATH = os.path.join(DATA_DIR, '10_net_detection', 'yolo_pose_run_v3', 'weights', 'best.pt')
+NET_KEYPOINT_MODEL_PATH = os.path.join(DATA_DIR, '10_net_detection', 'yolo_pose_run_v4', 'weights', 'best.pt')
 NET_KEYPOINT_CONF_MIN = 0.4
 _net_kp_model = None
 
@@ -571,7 +571,15 @@ def check_camera_setup_frame(frame, landmarker=None):
     angle = math.degrees(math.acos(max(apparent_ratio, 0.001)))
     angle = round(max(0.0, min(90.0, angle)), 1)
 
-    base_confidence = 0.85 if used_keypoints else 0.7
+    # Hough-fallback base lowered from 0.7 -- this session proved the v4
+    # keypoint model (trained on real negatives for the first time) reliably
+    # abstains on non-tennis scenes, so a low/no fallback confidence without
+    # player-pose corroboration is no longer "no signal," it's a real
+    # not-a-net signal on its own. 0.35 alone can't clear LIVE_MIN_CONFIDENCE
+    # (0.5); needs player_vis >= ~0.5 (a real player, clearly visible, is in
+    # frame) to cross it -- real swing footage always has this, an empty
+    # street photo never does. used_keypoints stays at 0.85, untouched.
+    base_confidence = 0.85 if used_keypoints else 0.35
     confidence = round(min(base_confidence + player_vis * 0.3, 1.0), 3)
 
     elevation_status = elevation_label(height_ratio)
@@ -717,11 +725,21 @@ def infer_camera_angle(video_path, frame_number=None, landmarker=None):
 
     angle_deg = round(max(0.0, min(90.0, angle_deg)), 1)
 
-    # Confidence: net detected consistently (base 0.7, penalty for high spread).
+    # Confidence: net detected consistently (penalty for high spread).
     # Higher base when the keypoint model found the net directly -- validated
     # this session as much more reliable than the Hough-line fallback, which
-    # frequently locks onto backdrop boards instead of the net.
-    base_confidence = 0.85 if used_keypoints else 0.7
+    # frequently locks onto backdrop boards (or, proven this session, street
+    # furniture/rooflines on non-tennis footage) instead of the net.
+    #
+    # Fallback base lowered 0.7 -> 0.35 this session: the v4 keypoint model
+    # (first ever trained on real negative/no-net examples) was validated to
+    # reliably abstain on non-tennis scenes rather than guess, so when it's
+    # the Hough fallback firing instead, that's a weaker signal than it used
+    # to be treated as. 0.35 alone can't clear MIN_CONFIDENCE (0.5) in
+    # check_camera_setup.py; needs real player-pose corroboration
+    # (player_vis >= ~0.5) to cross it -- present in any genuine swing video,
+    # absent in a street photo with no player in frame.
+    base_confidence = 0.85 if used_keypoints else 0.35
     spread_penalty = min(width_spread / 0.2, 0.3)
     confidence = round(min(base_confidence - spread_penalty + player_vis * 0.3, 1.0), 3)
 

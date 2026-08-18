@@ -7,13 +7,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE } from '../config/api';
 import { playTapSound } from '../utils/sounds';
-
-const GREEN  = '#4ade80';
-const DARK   = '#0d0d0d';
-const CARD   = '#141414';
-const BORDER = '#222';
-const TEXT   = '#fff';
-const MUTED  = '#888';
+import { colors, fonts, radius, spacing } from '../theme';
 
 async function uploadMatch(videoUri, token) {
   const formData = new FormData();
@@ -80,7 +74,7 @@ export default function HighlightUploadScreen({ navigation }) {
     return (
       <SafeAreaView style={s.safe}>
         <View style={s.centerFill}>
-          <ActivityIndicator size="large" color={GREEN} />
+          <ActivityIndicator size="large" color={colors.primary} />
           <Text style={s.loadingTitle}>Uploading your match...</Text>
           <Text style={s.loadingSub}>Rally detection runs in the background — this can take a while for a full match.</Text>
         </View>
@@ -138,26 +132,26 @@ export default function HighlightUploadScreen({ navigation }) {
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: DARK },
-  scroll: { padding: 24, paddingTop: 24, paddingBottom: 48, flexGrow: 1 },
+  safe: { flex: 1, backgroundColor: colors.bg },
+  scroll: { padding: spacing.xl, paddingTop: 24, paddingBottom: 48, flexGrow: 1 },
 
   centerFill: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
-  loadingTitle: { color: TEXT, fontSize: 18, fontWeight: '700', marginTop: 20, textAlign: 'center' },
-  loadingSub: { color: MUTED, fontSize: 14, marginTop: 8, textAlign: 'center', lineHeight: 20 },
-  errorText: { color: '#f87171', fontSize: 13, marginBottom: 16, textAlign: 'center' },
+  loadingTitle: { color: colors.ink, fontSize: 18, fontFamily: fonts.bold, marginTop: 20, textAlign: 'center' },
+  loadingSub: { color: colors.muted, fontSize: 14, marginTop: 8, textAlign: 'center', lineHeight: 20, fontFamily: fonts.regular },
+  errorText: { color: colors.coral, fontSize: 13, marginBottom: 16, textAlign: 'center', fontFamily: fonts.regular },
 
-  h1:  { color: TEXT, fontSize: 26, fontWeight: '800', letterSpacing: -0.5, marginBottom: 8 },
-  sub: { color: MUTED, fontSize: 14, lineHeight: 21, marginBottom: 28 },
+  h1:  { color: colors.ink, fontSize: 26, fontFamily: fonts.bold, letterSpacing: -0.5, marginBottom: 8 },
+  sub: { color: colors.muted, fontSize: 14, lineHeight: 21, marginBottom: 28, fontFamily: fonts.regular },
 
   uploadBtn: {
-    backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
-    borderRadius: 16, padding: 28, alignItems: 'center', gap: 6,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.lg, padding: 28, alignItems: 'center', gap: 6,
   },
-  uploadBtnText: { color: TEXT, fontSize: 16, fontWeight: '600' },
-  uploadBtnSub:  { color: MUTED, fontSize: 13 },
-  changeText:    { color: GREEN, fontSize: 12, marginTop: 4 },
+  uploadBtnText: { color: colors.ink, fontSize: 16, fontFamily: fonts.semibold },
+  uploadBtnSub:  { color: colors.muted, fontSize: 13, fontFamily: fonts.regular },
+  changeText:    { color: colors.primary, fontSize: 12, marginTop: 4, fontFamily: fonts.semibold },
 
-  continueBtn: { backgroundColor: GREEN, borderRadius: 12, paddingVertical: 15, alignItems: 'center', marginTop: 24 },
+  continueBtn: { backgroundColor: colors.primary, borderRadius: radius.md, paddingVertical: 15, alignItems: 'center', marginTop: 24 },
   continueDisabled: { opacity: 0.4 },
-  continueBtnText: { color: '#000', fontSize: 15, fontWeight: '700' },
+  continueBtnText: { color: colors.white, fontSize: 15, fontFamily: fonts.bold },
 });

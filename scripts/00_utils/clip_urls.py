@@ -62,7 +62,11 @@ def attach_clip_urls(result, source_clip_path, dest_key):
 
     top = (result.get('matches') or [None])[0]
     if top and top.get('clip_path'):
-        top['pro_clip_url'] = to_url('/pro-clips', PRO_CLIPS_DIR, top['clip_path'])
+        # top['clip_path'] is stored relative to 04_clips (see
+        # relative_clip_path() in build_pro_database.py) -- resolve to a
+        # real path on this machine before handing it to to_url().
+        pro_clip_abs_path = os.path.join(PRO_CLIPS_DIR, top['clip_path'])
+        top['pro_clip_url'] = to_url('/pro-clips', PRO_CLIPS_DIR, pro_clip_abs_path)
         shot_type = top.get('shot_type') or result.get('shot_type') or result.get('shotType')
         pro_cropped_path = os.path.join(PRO_CLIPS_CROPPED_DIR, shot_type, os.path.basename(top['clip_path']))
         if os.path.exists(pro_cropped_path):

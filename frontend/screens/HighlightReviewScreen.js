@@ -1,37 +1,30 @@
 import { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import PlatformVideo from '../components/PlatformVideo';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE } from '../config/api';
 import { playTapSound } from '../utils/sounds';
 import { useWindowWidth } from '../utils/responsive';
+import { colors, fonts, radius, spacing } from '../theme';
 
-const GREEN  = '#4ade80';
-const DARK   = '#0d0d0d';
-const CARD   = '#141414';
-const BORDER = '#222';
-const TEXT   = '#fff';
-const MUTED  = '#888';
-
-// First-pass outcome vocabulary covering what was actually asked for
-// (winners, aces) plus a way to discard a mis-detected rally -- easy to
-// extend later, not locked in.
+// Outcome vocabulary: who won the point, not how -- in tennis, almost every
+// non-ace point ends in an error by the losing side anyway ("winner (this
+// side)" already implies the other side missed the return), so a separate
+// Error button would mostly just re-describe the same event from the other
+// angle. 'skip' keeps its original value for backward compatibility with
+// anything already saved under the old 4-option set (winner/ace/error/skip)
+// -- only the label changed, so previously-saved 'skip' tags still show as
+// selected under their new "Not a rally" label.
+//
+// Rally BOUNDARY review (was start/end points right?) moved to the hidden
+// Dev Page (DevRallyBoundaryReviewScreen.js) -- that's ML training-data
+// collection, not something a real user should be asked to judge. This
+// screen only ever reads/writes outcome_tag now, never boundary_note.
 const TAG_OPTIONS = [
-  { value: 'winner', label: 'Winner' },
-  { value: 'ace',    label: 'Ace' },
-  { value: 'error',  label: 'Error' },
-  { value: 'skip',   label: 'Skip' },
-];
-
-// Separate from outcome -- this is real ground truth for tuning
-// detect_rallies.py's RALLY_GAP_SEC (and detect_swings.py's
-// THRESHOLD_PERCENTILE) against actual match footage instead of guessing.
-// Optional: leaving it unset just means "didn't look closely," not "boundary
-// is correct" -- only an explicit 'ok' counts as a positive signal.
-const BOUNDARY_OPTIONS = [
-  { value: 'ok',             label: 'Boundary OK' },
-  { value: 'cut_off_early',  label: 'Cut off early' },
-  { value: 'should_split',   label: 'Should be split' },
+  { value: 'ace',                label: 'Ace' },
+  { value: 'winner_this_side',   label: 'Winner (this side)' },
+  { value: 'winner_other_side',  label: 'Winner (other side)' },
+  { value: 'skip',               label: 'Not a rally' },
 ];
 
 function formatTime(sec) {
@@ -40,7 +33,7 @@ function formatTime(sec) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function ClipRow({ clip, value, onTag, boundaryValue, onBoundary }) {
+function ClipRow({ clip, value, onTag }) {
   const videoRef = useRef(null);
   const [playing, setPlaying] = useState(false);
   const windowWidth = useWindowWidth();
@@ -90,108 +83,108 @@ function ClipRow({ clip, value, onTag, boundaryValue, onBoundary }) {
           </TouchableOpacity>
         ))}
       </View>
-      <Text style={r.boundaryLabel}>Are the start/end points right?</Text>
-      <View style={r.tagRow}>
-        {BOUNDARY_OPTIONS.map(opt => (
-          <TouchableOpacity
-            key={opt.value}
-            style={[r.tagPill, boundaryValue === opt.value && r.boundaryPillActive]}
-            onPress={() => onBoundary(opt.value)}
-          >
-            <Text style={[r.tagLabel, boundaryValue === opt.value && r.tagLabelActive]}>{opt.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
     </View>
   );
 }
 const r = StyleSheet.create({
   card: {
-    backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
-    borderRadius: 16, padding: 14, marginBottom: 12,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.lg, padding: 14, marginBottom: 12,
   },
-  videoWrap: { borderRadius: 10, overflow: 'hidden', backgroundColor: '#000', marginBottom: 10 },
+  videoWrap: { borderRadius: radius.sm, overflow: 'hidden', backgroundColor: '#000', marginBottom: 10 },
   playHint: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   playHintText: { color: 'rgba(255,255,255,0.75)', fontSize: 40 },
   metaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 },
-  time: { color: TEXT, fontSize: 15, fontWeight: '700' },
-  duration: { color: MUTED, fontSize: 12 },
+  time: { color: colors.ink, fontSize: 15, fontFamily: fonts.bold },
+  duration: { color: colors.muted, fontSize: 12, fontFamily: fonts.regular },
   tagRow: { flexDirection: 'row', gap: 6 },
   tagPill: {
-    flex: 1, borderWidth: 1, borderColor: BORDER, borderRadius: 12,
+    flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm,
     paddingVertical: 8, alignItems: 'center', gap: 2,
   },
-  tagPillActive: { backgroundColor: '#1a2e1a', borderColor: '#2a4a2a' },
-  boundaryPillActive: { backgroundColor: '#1a1a2e', borderColor: '#2a2a4a' },
-  tagLabel: { color: MUTED, fontSize: 10, fontWeight: '600' },
-  tagLabelActive: { color: GREEN },
-  boundaryLabel: { color: MUTED, fontSize: 11, fontWeight: '600', marginBottom: 6 },
+  tagPillActive: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
+  tagLabel: { color: colors.muted, fontSize: 10, fontFamily: fonts.semibold },
+  tagLabelActive: { color: colors.primary },
+  errorText: { color: colors.muted, fontSize: 13.5, textAlign: 'center', marginBottom: 14, paddingHorizontal: 24, fontFamily: fonts.regular },
+  retryBtn: { backgroundColor: colors.primary, borderRadius: radius.pill, paddingHorizontal: 20, paddingVertical: 11 },
+  retryBtnText: { color: colors.white, fontSize: 13.5, fontFamily: fonts.bold },
 });
 
 export default function HighlightReviewScreen({ route, navigation }) {
   const { jobId } = route.params ?? {};
   const { token } = useAuth();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [rallies, setRallies] = useState([]);
   const [tags, setTags] = useState({});
-  const [boundaryNotes, setBoundaryNotes] = useState({});
   const [saving, setSaving] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
+    setLoading(true);
+    setLoadError(false);
     (async () => {
       try {
         const res = await fetch(`${API_BASE}/api/highlights/jobs/${jobId}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
+        if (!res.ok) throw new Error(`Request failed (${res.status})`);
         const data = await res.json();
-        setRallies(data.rallies ?? []);
+        // Already-outcome-tagged clips don't reappear -- otherwise every
+        // reviewed clip resurfaced on every reload, and nothing ever left
+        // the queue.
+        const pending = (data.rallies ?? []).filter((clip) => !clip.outcome_tag);
+        setRallies(pending);
         const initialTags = {};
-        const initialBoundaryNotes = {};
-        for (const clip of data.rallies ?? []) {
+        for (const clip of pending) {
           if (clip.outcome_tag) initialTags[clip.id] = clip.outcome_tag;
-          if (clip.boundary_note) initialBoundaryNotes[clip.id] = clip.boundary_note;
         }
         setTags(initialTags);
-        setBoundaryNotes(initialBoundaryNotes);
+      } catch {
+        // A failed/unparseable response used to be an unhandled rejection --
+        // rallies stayed [], loading still went false via finally, so the
+        // user just saw "We found 0 rallies" with no error and no retry.
+        setLoadError(true);
       } finally {
         setLoading(false);
       }
     })();
-  }, [jobId, token]);
+  }, [jobId, token, reloadKey]);
 
   const setTag = (clipId, value) => setTags(prev => ({ ...prev, [clipId]: value }));
-  const setBoundaryNote = (clipId, value) => setBoundaryNotes(prev => ({ ...prev, [clipId]: value }));
 
-  const reviewedCount = new Set([
-    ...Object.keys(tags).filter((id) => tags[id]),
-    ...Object.keys(boundaryNotes).filter((id) => boundaryNotes[id]),
-  ]).size;
+  const reviewedCount = Object.keys(tags).filter((id) => tags[id]).length;
 
   const save = async () => {
     setSaving(true);
     try {
-      // Union of clip ids with either an outcome tag or a boundary note set --
-      // a clip reviewed only for its boundary (no outcome opinion yet) should
-      // still get saved, and vice versa.
-      const clipIds = new Set([...Object.keys(tags), ...Object.keys(boundaryNotes)]);
-      await Promise.all(
-        [...clipIds]
-          .filter((clipId) => tags[clipId] || boundaryNotes[clipId])
-          .map((clipId) => {
+      const results = await Promise.all(
+        Object.keys(tags)
+          .filter((clipId) => tags[clipId])
+          .map(async (clipId) => {
             const value = tags[clipId];
-            const body = { boundary_note: boundaryNotes[clipId] ?? undefined };
-            if (value) {
-              body.outcome_tag = value;
-              body.archived = value !== 'skip';
-            }
-            return fetch(`${API_BASE}/api/highlights/rallies/${clipId}`, {
+            const res = await fetch(`${API_BASE}/api/highlights/rallies/${clipId}`, {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-              body: JSON.stringify(body),
+              body: JSON.stringify({ outcome_tag: value, archived: value !== 'skip' }),
             });
+            return { clipId, ok: res.ok };
           })
       );
+      // Previously never checked res.ok -- a failed PATCH (expired token,
+      // validation error, 500) was silent, and navigation to the archive
+      // proceeded as if every tag had saved.
+      const failedCount = results.filter((r) => !r.ok).length;
+      if (failedCount > 0) {
+        Alert.alert(
+          'Some tags didn\'t save',
+          `${failedCount} of ${results.length} clip${results.length === 1 ? '' : 's'} failed to save — try again before leaving.`
+        );
+        return;
+      }
       navigation.navigate('HighlightArchive');
+    } catch {
+      Alert.alert('Could not save', 'Something went wrong saving your tags — try again.');
     } finally {
       setSaving(false);
     }
@@ -200,7 +193,30 @@ export default function HighlightReviewScreen({ route, navigation }) {
   if (loading) {
     return (
       <SafeAreaView style={s.safe}>
-        <View style={s.centerFill}><ActivityIndicator size="large" color={GREEN} /></View>
+        <View style={s.centerFill}><ActivityIndicator size="large" color={colors.primary} /></View>
+      </SafeAreaView>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <SafeAreaView style={s.safe}>
+        <View style={s.centerFill}>
+          <Text style={r.errorText}>Couldn't load these rallies — check your connection.</Text>
+          <TouchableOpacity style={r.retryBtn} onPress={() => setReloadKey((k) => k + 1)}>
+            <Text style={r.retryBtnText}>Try again</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (rallies.length === 0) {
+    return (
+      <SafeAreaView style={s.safe}>
+        <View style={s.centerFill}>
+          <Text style={r.errorText}>All caught up — every rally in this match has been reviewed.</Text>
+        </View>
       </SafeAreaView>
     );
   }
@@ -209,7 +225,7 @@ export default function HighlightReviewScreen({ route, navigation }) {
     <SafeAreaView style={s.safe}>
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
         <Text style={s.h1}>Tag your rallies</Text>
-        <Text style={s.sub}>We found {rallies.length} rallies. Watch each one, mark how the point ended (or skip the ones that aren't real rallies), and flag whether the clip's start/end points look right — that helps us tune detection.</Text>
+        <Text style={s.sub}>{rallies.length} left to review. Watch each one and mark how the point ended (or flag the ones that aren't real rallies).</Text>
 
         {rallies.map(clip => (
           <ClipRow
@@ -217,8 +233,6 @@ export default function HighlightReviewScreen({ route, navigation }) {
             clip={clip}
             value={tags[clip.id]}
             onTag={(v) => setTag(clip.id, v)}
-            boundaryValue={boundaryNotes[clip.id]}
-            onBoundary={(v) => setBoundaryNote(clip.id, v)}
           />
         ))}
 
@@ -228,7 +242,7 @@ export default function HighlightReviewScreen({ route, navigation }) {
           disabled={reviewedCount === 0 || saving}
         >
           <Text style={s.saveBtnText}>
-            {saving ? 'Saving...' : reviewedCount > 0 ? `Save ${reviewedCount} reviewed →` : 'Tag or flag at least one rally'}
+            {saving ? 'Saving...' : reviewedCount > 0 ? `Save ${reviewedCount} reviewed →` : 'Tag at least one rally'}
           </Text>
         </TouchableOpacity>
       </ScrollView>
@@ -237,14 +251,14 @@ export default function HighlightReviewScreen({ route, navigation }) {
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: DARK },
-  scroll: { padding: 20, paddingTop: 24, paddingBottom: 48 },
+  safe: { flex: 1, backgroundColor: colors.bg },
+  scroll: { padding: spacing.xl, paddingTop: 24, paddingBottom: 48 },
   centerFill: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
-  h1:  { color: TEXT, fontSize: 24, fontWeight: '800', letterSpacing: -0.5, marginBottom: 6 },
-  sub: { color: MUTED, fontSize: 13, lineHeight: 19, marginBottom: 20 },
+  h1:  { color: colors.ink, fontSize: 24, fontFamily: fonts.bold, letterSpacing: -0.5, marginBottom: 6 },
+  sub: { color: colors.muted, fontSize: 13, lineHeight: 19, marginBottom: 20, fontFamily: fonts.regular },
 
-  saveBtn: { backgroundColor: GREEN, borderRadius: 12, paddingVertical: 15, alignItems: 'center', marginTop: 8 },
+  saveBtn: { backgroundColor: colors.primary, borderRadius: radius.md, paddingVertical: 15, alignItems: 'center', marginTop: 8 },
   saveDisabled: { opacity: 0.4 },
-  saveBtnText: { color: '#000', fontSize: 15, fontWeight: '700' },
+  saveBtnText: { color: colors.white, fontSize: 15, fontFamily: fonts.bold },
 });

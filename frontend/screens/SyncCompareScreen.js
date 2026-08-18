@@ -13,14 +13,15 @@ import { useAuth } from '../context/AuthContext';
 import { getNotes, addNote } from '../api/coach';
 import { getAnnotations, saveAnnotations } from '../api/annotations';
 import { useWindowWidth } from '../utils/responsive';
+import { colors, fonts, radius, spacing } from '../theme';
 
-const GREEN  = '#4ade80';
-const GOLD   = '#fbbf24';
-const DARK   = '#0d0d0d';
-const CARD   = '#141414';
-const BORDER = '#222';
-const TEXT   = '#fff';
-const MUTED  = '#888';
+// Trajectory-overlay/scrubber accent colors -- distinct from each other so
+// the two videos' skeleton/racket-path overlays stay tellable apart against
+// a live video frame, so these stay bright theme accents (gold/lime) rather
+// than the app's dark primary green, which would be nearly invisible
+// overlaid on video.
+const GREEN = colors.lime;
+const GOLD  = colors.gold;
 
 // Shared relative-time window around contact (t=0) that both videos are
 // scrubbed over. Fixed rather than derived per-clip -- swing clips in this
@@ -184,18 +185,18 @@ function VideoPane({
 }
 const p = StyleSheet.create({
   wrap: { flex: 1 },
-  label: { color: MUTED, fontSize: 12, fontWeight: '700', marginBottom: 6, textAlign: 'center' },
-  videoBox: { borderRadius: 12, overflow: 'hidden', backgroundColor: '#000', position: 'relative' },
+  label: { color: colors.muted, fontSize: 12, fontFamily: fonts.bold, marginBottom: 6, textAlign: 'center' },
+  videoBox: { borderRadius: radius.sm, overflow: 'hidden', backgroundColor: '#000', position: 'relative' },
   annotateActions: { position: 'absolute', top: 6, right: 6, flexDirection: 'row', gap: 6 },
   annotateActionBtn: {
     backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4,
   },
-  annotateActionText: { color: '#fff', fontSize: 10.5, fontWeight: '700' },
+  annotateActionText: { color: '#fff', fontSize: 10.5, fontFamily: fonts.bold },
   errorOverlay: {
     ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.6)',
   },
-  errorText: { color: '#f87171', fontSize: 12.5, fontWeight: '700' },
+  errorText: { color: colors.coral, fontSize: 12.5, fontFamily: fonts.bold },
 });
 
 export default function SyncCompareScreen({ route, navigation }) {
@@ -697,7 +698,7 @@ export default function SyncCompareScreen({ route, navigation }) {
               value={noteText}
               onChangeText={setNoteText}
               placeholder="Note at this moment..."
-              placeholderTextColor={MUTED}
+              placeholderTextColor={colors.muted}
               multiline
             />
             <View style={s.noteComposerBtns}>
@@ -721,115 +722,115 @@ export default function SyncCompareScreen({ route, navigation }) {
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: DARK },
+  safe: { flex: 1, backgroundColor: colors.bg },
   scrollContent: { paddingBottom: 40 },
 
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8,
+    paddingHorizontal: spacing.xl, paddingTop: 12, paddingBottom: 8,
   },
-  backText: { color: MUTED, fontSize: 14, fontWeight: '600' },
-  title: { color: TEXT, fontSize: 16, fontWeight: '700' },
+  backText: { color: colors.muted, fontSize: 14, fontFamily: fonts.semibold },
+  title: { color: colors.ink, fontSize: 16, fontFamily: fonts.bold },
 
   videosRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 20, marginTop: 8 },
 
   zoomRow: { paddingHorizontal: 28, marginTop: 16 },
-  zoomLabel: { color: MUTED, fontSize: 12, fontWeight: '700', marginBottom: 8 },
+  zoomLabel: { color: colors.muted, fontSize: 12, fontFamily: fonts.bold, marginBottom: 8 },
   zoomTrack: { height: 32, justifyContent: 'center' },
   zoomTrackLine: {
     position: 'absolute', left: 0, right: 0, height: 4, borderRadius: 2,
-    backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
   },
   zoomHandle: {
     position: 'absolute', left: -9, width: 18, height: 18, borderRadius: 9,
-    backgroundColor: GOLD, borderWidth: 2, borderColor: DARK,
+    backgroundColor: GOLD, borderWidth: 2, borderColor: colors.surface,
   },
 
   toolsRow: { flexDirection: 'row', justifyContent: 'center', gap: 10, marginTop: 16, paddingHorizontal: 20 },
   toggleChip: {
-    borderWidth: 1, borderColor: BORDER, borderRadius: 8,
-    paddingVertical: 8, paddingHorizontal: 14, backgroundColor: CARD,
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm,
+    paddingVertical: 8, paddingHorizontal: 14, backgroundColor: colors.surface,
   },
   toggleChipActive: { borderColor: GOLD, backgroundColor: GOLD },
-  toggleChipText: { color: MUTED, fontSize: 12.5, fontWeight: '700' },
-  toggleChipTextActive: { color: '#000' },
+  toggleChipText: { color: colors.muted, fontSize: 12.5, fontFamily: fonts.bold },
+  toggleChipTextActive: { color: colors.ink },
 
   annotateToolbar: {
-    marginTop: 12, marginHorizontal: 20, backgroundColor: CARD, borderRadius: 12,
-    borderWidth: 1, borderColor: BORDER, padding: 12,
+    marginTop: 12, marginHorizontal: 20, backgroundColor: colors.surface, borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.border, padding: 12,
   },
   toolBtnRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
   toolBtn: {
-    flex: 1, alignItems: 'center', borderRadius: 8, paddingVertical: 8,
-    backgroundColor: DARK, borderWidth: 1, borderColor: BORDER,
+    flex: 1, alignItems: 'center', borderRadius: radius.sm, paddingVertical: 8,
+    backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.border,
   },
-  toolBtnActive: { borderColor: GREEN, backgroundColor: GREEN },
-  toolBtnText: { color: MUTED, fontSize: 12, fontWeight: '700' },
-  toolBtnTextActive: { color: '#000' },
+  toolBtnActive: { borderColor: colors.primary, backgroundColor: colors.primary },
+  toolBtnText: { color: colors.muted, fontSize: 12, fontFamily: fonts.bold },
+  toolBtnTextActive: { color: colors.white },
   colorRow: { flexDirection: 'row', justifyContent: 'center', gap: 12 },
   colorSwatch: { width: 26, height: 26, borderRadius: 13, borderWidth: 2, borderColor: 'transparent' },
-  colorSwatchActive: { borderColor: TEXT },
+  colorSwatchActive: { borderColor: colors.ink },
   saveAnnotationBtn: {
-    marginTop: 12, backgroundColor: GREEN, borderRadius: 8, paddingVertical: 10, alignItems: 'center',
+    marginTop: 12, backgroundColor: colors.primary, borderRadius: radius.sm, paddingVertical: 10, alignItems: 'center',
   },
-  saveAnnotationBtnText: { color: '#000', fontSize: 12.5, fontWeight: '700' },
+  saveAnnotationBtnText: { color: colors.white, fontSize: 12.5, fontFamily: fonts.bold },
 
   annotatorRow: {
     flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap',
     marginTop: 12, marginHorizontal: 20,
   },
-  annotatorLabel: { color: MUTED, fontSize: 12, fontWeight: '700' },
+  annotatorLabel: { color: colors.muted, fontSize: 12, fontFamily: fonts.bold },
   annotatorChip: {
-    backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 14,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.pill,
     paddingHorizontal: 10, paddingVertical: 5,
   },
-  annotatorChipText: { color: TEXT, fontSize: 11.5, fontWeight: '700' },
+  annotatorChipText: { color: colors.ink, fontSize: 11.5, fontFamily: fonts.bold },
 
-  tHint: { color: MUTED, fontSize: 12, textAlign: 'center', marginTop: 14 },
+  tHint: { color: colors.muted, fontSize: 12, textAlign: 'center', marginTop: 14 },
 
   track: {
     height: 40, marginHorizontal: 28, marginTop: 8, justifyContent: 'center',
   },
   trackLine: {
     position: 'absolute', left: 0, right: 0, height: 4, borderRadius: 2,
-    backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
   },
   phaseMarkTouch: { position: 'absolute', marginLeft: -8, padding: 8, alignItems: 'center', justifyContent: 'center' },
   phaseMark: { width: 2, height: 16, backgroundColor: GOLD },
-  phaseMarkContact: { backgroundColor: '#f87171', width: 2.5, height: 20 },
-  phaseLegend: { color: MUTED, fontSize: 10.5, textAlign: 'center', marginTop: 4 },
+  phaseMarkContact: { backgroundColor: colors.coral, width: 2.5, height: 20 },
+  phaseLegend: { color: colors.muted, fontSize: 10.5, textAlign: 'center', marginTop: 4 },
   handle: {
     position: 'absolute', left: -11, width: 22, height: 22, borderRadius: 11,
-    backgroundColor: GREEN, borderWidth: 2, borderColor: DARK,
+    backgroundColor: colors.primary, borderWidth: 2, borderColor: colors.surface,
   },
 
   speedRow: { flexDirection: 'row', justifyContent: 'center', gap: 10, marginTop: 18 },
   speedBtn: {
-    borderWidth: 1, borderColor: BORDER, borderRadius: 8,
-    paddingVertical: 6, paddingHorizontal: 16, backgroundColor: CARD,
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm,
+    paddingVertical: 6, paddingHorizontal: 16, backgroundColor: colors.surface,
   },
-  speedBtnActive: { borderColor: GREEN, backgroundColor: GREEN },
-  speedBtnText: { color: MUTED, fontSize: 13, fontWeight: '700' },
-  speedBtnTextActive: { color: '#000' },
+  speedBtnActive: { borderColor: colors.primary, backgroundColor: colors.primary },
+  speedBtnText: { color: colors.muted, fontSize: 13, fontFamily: fonts.bold },
+  speedBtnTextActive: { color: colors.white },
 
   playBtn: {
-    backgroundColor: GREEN, borderRadius: 12, paddingVertical: 14,
+    backgroundColor: colors.primary, borderRadius: radius.md, paddingVertical: 14,
     alignItems: 'center', marginHorizontal: 20, marginTop: 20,
   },
-  playBtnText: { color: '#000', fontSize: 15, fontWeight: '700' },
-  playNote: { color: MUTED, fontSize: 11.5, lineHeight: 16, textAlign: 'center', paddingHorizontal: 28, marginTop: 12 },
+  playBtnText: { color: colors.white, fontSize: 15, fontFamily: fonts.bold },
+  playNote: { color: colors.muted, fontSize: 11.5, lineHeight: 16, textAlign: 'center', paddingHorizontal: 28, marginTop: 12 },
 
   noteMark: { position: 'absolute', top: -14, marginLeft: -5 },
-  noteMarkDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#4ade80', borderWidth: 2, borderColor: '#0d0d0d' },
+  noteMarkDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.primary, borderWidth: 2, borderColor: colors.surface },
 
   addNoteBtn: { alignItems: 'center', marginTop: 16 },
-  addNoteBtnText: { color: GOLD, fontSize: 13, fontWeight: '700' },
+  addNoteBtnText: { color: GOLD, fontSize: 13, fontFamily: fonts.bold },
   noteComposer: { marginHorizontal: 20, marginTop: 16 },
   noteInput: {
-    backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 10,
-    padding: 12, color: TEXT, fontSize: 13.5, minHeight: 60, textAlignVertical: 'top',
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm,
+    padding: 12, color: colors.ink, fontSize: 13.5, minHeight: 60, textAlignVertical: 'top',
   },
   noteComposerBtns: { flexDirection: 'row', justifyContent: 'flex-end', gap: 20, marginTop: 8 },
-  noteCancelText: { color: MUTED, fontSize: 13, fontWeight: '600' },
-  noteSaveText: { color: GREEN, fontSize: 13, fontWeight: '700' },
+  noteCancelText: { color: colors.muted, fontSize: 13, fontFamily: fonts.semibold },
+  noteSaveText: { color: colors.primary, fontSize: 13, fontFamily: fonts.bold },
 });

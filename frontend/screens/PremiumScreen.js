@@ -1,4 +1,4 @@
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView, Alert, Platform } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import PremiumCheckout from '../components/PremiumCheckout';
 import { colors, fonts, radius, spacing } from '../theme';
@@ -56,9 +56,20 @@ export default function PremiumScreen({ navigation }) {
       );
       return;
     }
+    // Native has no purchase UI yet (PremiumCheckout.native.js is a stub
+    // pending an EAS dev-client build) -- say so honestly rather than
+    // implying "upgrade your plan" is something that can be done here.
+    if (Platform.OS === 'web') {
+      Alert.alert(
+        'Premium feature',
+        'This is a Premium feature — upgrade your plan to unlock it.',
+        [{ text: 'Upgrade', onPress: () => navigation.navigate('Premium') }, { text: 'Cancel', style: 'cancel' }]
+      );
+      return;
+    }
     Alert.alert(
       'Premium feature',
-      'This is a Premium feature — upgrade your plan to unlock it.',
+      "This is a Premium feature. Purchasing Premium currently requires the web version of RallyMax — open the app in a browser to upgrade.",
       [{ text: 'OK', style: 'cancel' }]
     );
   };
@@ -92,7 +103,12 @@ export default function PremiumScreen({ navigation }) {
           desc="Upload a full match and we'll automatically clip every shot into your personal swing archive, ready to tag and analyse."
           cta="Upload a match"
           locked={!isPremium}
-          onPress={() => gated('HighlightUpload')}
+          // Was hardcoded straight to a new upload -- HighlightArchiveScreen
+          // is the correct landing spot (existing pending-review jobs, an
+          // empty state, AND its own "upload a match" button), and was
+          // otherwise unreachable from anywhere in the app except the
+          // "Go to Archive" button shown after finishing a brand-new upload.
+          onPress={() => gated('HighlightArchive')}
         />
 
       </ScrollView>

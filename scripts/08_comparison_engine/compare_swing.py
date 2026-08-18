@@ -224,9 +224,33 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
     else:
         print('  Extracting poses from user video...', file=sys.stderr)
         frames, fps = extract_user_poses(video_path)
+    if not frames:
+        # find_peak_wrist_frame's fallback (len(frames)//2) and the
+        # contact_time_sec min() below both index/reduce over `frames` --
+        # on an empty list that's an unhandled IndexError/ValueError instead
+        # of a clear error. Happens on a corrupt/undecodable upload where
+        # cv2 opens the file but every single cap.read() fails.
+        raise RuntimeError('No frames could be decoded from the uploaded video')
     user_trajectory, peak_frame = build_user_trajectory(frames, fps, contact_time_sec)
+    if not user_trajectory:
+        # Same guard compare_videos.py already has for the equivalent case --
+        # without it, DTW against every pro candidate returns inf, similarity
+        # collapses to 0 for all of them, and the caller gets a normal-looking
+        # HTTP 200 "0% similarity to every pro" instead of a clear error that
+        # pose extraction effectively failed (e.g. player barely visible,
+        # very oblique angle, poor lighting).
+        raise RuntimeError('Could not extract a usable pose trajectory from the video — try a clearer angle or better lighting.')
     if contact_time_sec is not None:
         print(f'  Using user-marked contact frame {peak_frame} ({peak_frame/fps:.2f}s, requested {contact_time_sec:.2f}s)', file=sys.stderr)
+        # Free, ongoing training data for the previously-untrained
+        # find_contact_frame() detector (see contact_frame_training_log.py)
+        # -- deliberately NOT run inline here. Measured this session: the
+        # racket/ball tracking pass alone takes ~5s regardless of outcome,
+        # real added latency on a synchronous user-facing response for a
+        # step that provides zero value to the user. backend/src/routes/
+        # analyse.js instead spawns log_user_contact_frame_cli.py as a
+        # detached background process AFTER the response is already sent --
+        # this function does not touch it at all.
     else:
         print(f'  Contact point auto-detected at frame {peak_frame} ({peak_frame/fps:.2f}s)', file=sys.stderr)
 
@@ -414,7 +438,12 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         # since nothing currently tracks racket keypoints on pro clips) --
         # acceptable for one top-match clip, non-fatal on failure.
         try:
-            pro_clip_path = top_entry.get('clip_path')
+            # entry['clip_path'] is stored relative to 04_clips (not an
+            # absolute path -- see relative_clip_path() in
+            # build_pro_database.py), so it has to be resolved against this
+            # machine's own DATA_DIR before it's a real file.
+            pro_clip_path_rel = top_entry.get('clip_path')
+            pro_clip_path = os.path.join(DATA_DIR, '04_clips', pro_clip_path_rel) if pro_clip_path_rel else None
             if pro_clip_path and os.path.exists(pro_clip_path):
                 pro_racket_frames = track_racket_path(pro_clip_path)
                 pro_cap = cv2.VideoCapture(pro_clip_path)

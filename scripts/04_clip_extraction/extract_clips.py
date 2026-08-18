@@ -285,11 +285,17 @@ def nearest_pose(index, target_frame, search_range=9):
 # ── Clip extractor ────────────────────────────────────────────────────────────
 
 def extract_clip(cap, start_frame, end_frame, out_path, fps, fourcc):
+    """start_frame/end_frame are both inclusive frame indices -- callers
+    (detect_rallies.py etc.) compute end_frame as the last frame to include,
+    e.g. `min(total_frames - 1, int(end_sec * fps))`."""
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     writer = cv2.VideoWriter(out_path, fourcc, fps, (w, h))
-    for _ in range(end_frame - start_frame):
+    # +1: end_frame is inclusive, so a clip from frame 10 to 10 (a single
+    # frame) needs exactly 1 read, not 0 -- was previously off by one,
+    # silently truncating every extracted clip's last frame.
+    for _ in range(end_frame - start_frame + 1):
         ret, frame = cap.read()
         if not ret:
             break

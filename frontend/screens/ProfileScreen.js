@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView, ActivityIndicator, Image } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
@@ -23,10 +23,12 @@ function MenuItem({ icon, label, sub, onPress, accent, danger }) {
 export default function ProfileScreen({ navigation }) {
   const { user, token, isAuthenticated, isPremium, loading, logout } = useAuth();
   const [rank, setRank] = useState(null);
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   useFocusEffect(useCallback(() => {
     if (!isAuthenticated) { setRank(null); return; }
-    getRank(token).then(setRank).catch(() => {});
+    getRank(token).then((r) => { if (mountedRef.current) setRank(r); }).catch(() => {});
   }, [token, isAuthenticated]));
 
   if (loading) {

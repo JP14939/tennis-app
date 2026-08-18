@@ -20,13 +20,20 @@ LANDMARK_NAMES = [
 def extract_poses(video_path, output_path, sample_every=3):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print(f"Error: could not open {video_path}")
-        sys.exit(1)
+        # Was sys.exit(1) -- raises SystemExit, which callers' "except
+        # Exception" blocks (crop_to_subject.py, detect_rallies.py) do NOT
+        # catch, so a corrupt/unreadable upload made the whole process exit
+        # with no JSON error printed at all, contradicting the documented
+        # "never raises for a detection failure" contract those callers rely on.
+        raise RuntimeError(f"Could not open video: {video_path}")
 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS)
     print(f"Video: {os.path.basename(video_path)}")
-    print(f"Frames: {total_frames}, FPS: {fps:.1f}, Duration: {total_frames/fps:.1f}s")
+    if fps > 0:
+        print(f"Frames: {total_frames}, FPS: {fps:.1f}, Duration: {total_frames/fps:.1f}s")
+    else:
+        print(f"Frames: {total_frames}, FPS: unknown (reported 0)")
     print(f"Sampling every {sample_every} frames...")
 
     base_options = python.BaseOptions(model_asset_path=MODEL_PATH)

@@ -17,6 +17,7 @@ import { API_BASE } from '../config/api';
 import FriendPickerModal from '../components/FriendPickerModal';
 import { shareSwing } from '../api/friends';
 import DrillsSection from '../components/DrillsSection';
+import LessonsSection from '../components/LessonsSection';
 import { playTapSound } from '../utils/sounds';
 
 const SHOT_TYPES = ['forehand', 'backhand', 'serve'];
@@ -459,7 +460,7 @@ export default function HistoryScreen({ navigation, route }) {
       Alert.alert('Could not send', err.message || 'Something went wrong');
     }
   };
-  const [segment, setSegment] = useState('history'); // history | drills
+  const [segment, setSegment] = useState('history'); // history | drills | lessons
   const [showUpload, setShowUpload]   = useState(false);
   const [loading, setLoading]         = useState(true);
   const [analyses, setAnalyses]       = useState([]);
@@ -474,6 +475,9 @@ export default function HistoryScreen({ navigation, route }) {
     if (route.params?.initialFilter) setListFilter(route.params.initialFilter);
   }, [route.params?.initialFilter]);
 
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
+
   const load = useCallback(async () => {
     if (!isAuthenticated) {
       setLoading(false);
@@ -482,13 +486,14 @@ export default function HistoryScreen({ navigation, route }) {
     setLoading(true);
     try {
       const data = await fetchHistory(token);
+      if (!mountedRef.current) return;
       setAnalyses(data.analyses);
       setLimit(data.limit);
     } catch {
       // Leave whatever was previously loaded rather than blanking the screen
       // on a transient network failure.
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   }, [token, isAuthenticated]);
 
@@ -591,6 +596,9 @@ export default function HistoryScreen({ navigation, route }) {
       <TouchableOpacity style={[s.segmentBtn, segment === 'drills' && s.segmentBtnActive]} onPress={() => setSegment('drills')}>
         <Text style={[s.segmentText, segment === 'drills' && s.segmentTextActive]}>Drills</Text>
       </TouchableOpacity>
+      <TouchableOpacity style={[s.segmentBtn, segment === 'lessons' && s.segmentBtnActive]} onPress={() => setSegment('lessons')}>
+        <Text style={[s.segmentText, segment === 'lessons' && s.segmentTextActive]}>Lessons</Text>
+      </TouchableOpacity>
     </View>
   );
 
@@ -601,11 +609,13 @@ export default function HistoryScreen({ navigation, route }) {
         <CourtBackground />
         <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
           <View style={s.header}>
-            <Text style={s.title}>{segment === 'drills' ? 'Drills' : 'History'}</Text>
+            <Text style={s.title}>{segment === 'drills' ? 'Drills' : segment === 'lessons' ? 'Lessons' : 'History'}</Text>
           </View>
           {SegmentToggle}
           {segment === 'drills' ? (
-            <DrillsSection />
+            <DrillsSection navigation={navigation} />
+          ) : segment === 'lessons' ? (
+            <LessonsSection navigation={navigation} />
           ) : (
             <View style={s.empty}>
               <Text style={s.emptyTitle}>Log in to see your history</Text>
@@ -627,7 +637,7 @@ export default function HistoryScreen({ navigation, route }) {
 
         {/* Header */}
         <View style={s.header}>
-          <Text style={s.title}>{segment === 'drills' ? 'Drills' : 'History'}</Text>
+          <Text style={s.title}>{segment === 'drills' ? 'Drills' : segment === 'lessons' ? 'Lessons' : 'History'}</Text>
           {segment === 'history' && !showUpload && (
             <TouchableOpacity style={s.newBtn} onPress={() => setShowUpload(true)}>
               <PlusIcon size={13} color={colors.white} />
@@ -638,7 +648,8 @@ export default function HistoryScreen({ navigation, route }) {
 
         {SegmentToggle}
 
-        {segment === 'drills' && <DrillsSection />}
+        {segment === 'drills' && <DrillsSection navigation={navigation} />}
+        {segment === 'lessons' && <LessonsSection navigation={navigation} />}
 
         {segment === 'history' && (
         <>

@@ -17,6 +17,7 @@ check_camera_setup.py's shape (see infer_angle.check_camera_setup_frame).
 import json
 import os
 import sys
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import cv2
@@ -24,9 +25,23 @@ import numpy as np
 
 SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '05_angle_detection'))
-from infer_angle import check_camera_setup_frame, _get_net_kp_model  # noqa: E402
+from infer_angle import check_camera_setup_frame, create_landmarker, _get_net_kp_model  # noqa: E402
 
 DEFAULT_PORT = 5055
+
+# This module's whole documented purpose is to avoid reloading models
+# per-request -- but check_camera_setup_frame() was always called with
+# landmarker=None, which makes _angle_from_frame() build a brand-new
+# MediaPipe PoseLandmarker FROM DISK on every single request; only the YOLO
+# net-keypoint model (_get_net_kp_model(), warmed below) was actually
+# cached. Created once at startup and reused, same as the YOLO model.
+# MediaPipe's PoseLandmarker isn't documented as safe for concurrent
+# detect() calls from multiple threads, and ThreadingHTTPServer handles
+# each connection on its own thread -- _LANDMARKER_LOCK serializes access
+# to the single shared instance rather than risk a race in the underlying
+# C++ inference graph.
+_landmarker = None
+_LANDMARKER_LOCK = threading.Lock()
 
 
 class CalibrationHandler(BaseHTTPRequestHandler):
@@ -49,7 +64,8 @@ class CalibrationHandler(BaseHTTPRequestHandler):
             if frame is None:
                 raise ValueError('Could not decode image')
 
-            result = check_camera_setup_frame(frame)
+            with _LANDMARKER_LOCK:
+                result = check_camera_setup_frame(frame, landmarker=_landmarker)
             payload = json.dumps(result).encode('utf-8')
 
             self.send_response(200)
@@ -81,11 +97,14 @@ class SingleInstanceServer(ThreadingHTTPServer):
 
 
 def main():
+    global _landmarker
     port = int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PORT
 
     print('[calibration_server] loading net-keypoint model...', flush=True)
     _get_net_kp_model()  # warm the model once at startup, not on first request
-    print(f'[calibration_server] model loaded, listening on 127.0.0.1:{port}', flush=True)
+    print('[calibration_server] loading pose landmarker...', flush=True)
+    _landmarker = create_landmarker()
+    print(f'[calibration_server] models loaded, listening on 127.0.0.1:{port}', flush=True)
 
     try:
         server = SingleInstanceServer(('127.0.0.1', port), CalibrationHandler)

@@ -30,7 +30,24 @@ router.post('/billing/sync', requireAuth, async (req, res) => {
     // with type: "resource_missing"), and is the single most common case
     // this endpoint will see (every free user). Not an error: no purchases
     // means not premium, same as an empty entitlements list.
+    //
+    // But a 404 for a DIFFERENT reason (wrong projectId, transient RevenueCat
+    // issue that happens to 404) would otherwise silently downgrade a
+    // genuinely premium user with no visibility into why -- check the
+    // documented error `type` field before treating it as "no purchases",
+    // and at least log loudly when a 404 doesn't match that shape so a
+    // misconfiguration is noticeable instead of just quietly downgrading
+    // users.
     if (response.status === 404) {
+      let errType = null;
+      try { errType = (await response.json())?.error?.type ?? null; } catch { /* non-JSON body */ }
+      if (errType && errType !== 'resource_missing') {
+        console.error(`[billing] unexpected 404 type "${errType}" from RevenueCat for user ${req.user.id} -- not treating as "no purchases"`);
+        throw new Error(`RevenueCat API returned unexpected 404 (type: ${errType})`);
+      }
+      if (!errType) {
+        console.error(`[billing] 404 from RevenueCat for user ${req.user.id} had no recognizable error type -- proceeding as "no purchases" but flagging for visibility`);
+      }
       db.prepare('UPDATE users SET tier = ? WHERE id = ?').run('free', req.user.id);
       return res.json({ tier: 'free' });
     }

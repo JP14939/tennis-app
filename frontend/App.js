@@ -35,6 +35,13 @@ import CoachScreen from './screens/CoachScreen';
 import FindGamesScreen from './screens/FindGamesScreen';
 import FriendsScreen from './screens/FriendsScreen';
 import MessageThreadScreen from './screens/MessageThreadScreen';
+import DevDashboardScreen from './screens/DevDashboardScreen';
+import DevMLStatusScreen from './screens/DevMLStatusScreen';
+import DevRallyJobsScreen from './screens/DevRallyJobsScreen';
+import LessonDetailScreen from './screens/LessonDetailScreen';
+import DevDrillsEditorScreen from './screens/DevDrillsEditorScreen';
+import DevRallyBoundaryReviewScreen from './screens/DevRallyBoundaryReviewScreen';
+import DevSwingReviewScreen from './screens/DevSwingReviewScreen';
 import { AuthProvider } from './context/AuthContext';
 
 const DARK   = '#0d0d0d';
@@ -86,6 +93,7 @@ export default function App() {
             <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false }} />
             <Stack.Screen name="Upload" component={ContactMarkingScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Results" component={ResultsScreen} options={{ headerShown: false }} />
+            <Stack.Screen name="LessonDetail" component={LessonDetailScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Login" component={LoginScreen} options={{ title: 'Log In' }} />
             <Stack.Screen name="Signup" component={SignupScreen} options={{ title: 'Sign Up' }} />
             <Stack.Screen name="VersusPick" component={VersusPickScreen} options={{ title: 'Compare Videos' }} />
@@ -97,8 +105,25 @@ export default function App() {
             <Stack.Screen name="FenceTutorial" component={FenceTutorialScreen} options={{ title: 'Camera Setup' }} />
             <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
             <Stack.Screen name="Coach" component={CoachScreen} options={{ title: 'Coach Mode' }} />
-            <Stack.Screen name="Premium" component={PremiumScreen} options={{ title: 'Premium' }} />
+            {/* No separate top-level "Premium" stack screen -- it used to be
+                registered here AND as a tab (MainTabs above), so
+                navigate('Premium') from a screen registered directly on
+                this stack (e.g. ResultsScreen) resolved to THIS one instead
+                of the tabbed version, landing on a headered screen with no
+                floating tab bar. Those call sites now explicitly target
+                the tab via navigate('MainTabs', { screen: 'Premium' }). */}
             <Stack.Screen name="MessageThread" component={MessageThreadScreen} options={{ headerShown: false }} />
+            {/* Hidden dev tools (Profile -> Settings -> Dev Page) -- gated by
+                frontend/utils/isAdmin.js on the entry point only; real access
+                control is server-side (every /api/dev/* route requires
+                requireAdmin). Registered as ordinary flat Stack.Screens like
+                everything else here, not a separate navigator. */}
+            <Stack.Screen name="DevDashboard" component={DevDashboardScreen} options={{ title: 'Dev Page' }} />
+            <Stack.Screen name="DevMLStatus" component={DevMLStatusScreen} options={{ title: 'ML Reliability' }} />
+            <Stack.Screen name="DevRallyJobs" component={DevRallyJobsScreen} options={{ title: 'Rally Boundary Review' }} />
+            <Stack.Screen name="DevRallyBoundaryReview" component={DevRallyBoundaryReviewScreen} options={{ title: 'Review Boundaries' }} />
+            <Stack.Screen name="DevSwingReview" component={DevSwingReviewScreen} options={{ title: 'Swing Review' }} />
+            <Stack.Screen name="DevDrillsEditor" component={DevDrillsEditorScreen} options={{ title: 'Drills & Lessons Editor' }} />
           </Stack.Navigator>
         </NavigationContainer>
       </AuthProvider>

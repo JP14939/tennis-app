@@ -20,7 +20,29 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '05_angle_detection'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '00_utils'))
 from infer_angle import infer_camera_angle, infer_angle_from_source, create_landmarker
+from paths import DATA_DIR
+
+PRO_CLIPS_DIR = os.path.join(DATA_DIR, '04_clips')
+
+
+def relative_clip_path(clip_path):
+    """
+    Stored clip_path used to be the raw absolute path extract_clips.py wrote
+    (e.g. C:\\Users\\jackp\\...\\04_clips\\forehand\\swing_0004.mp4) -- fine
+    on the machine that built the database, but backend/src/utils/videoCrop.js's
+    toUrl() does path.relative() against that absolute string on whatever OS
+    is actually serving the file, which silently breaks the moment the built
+    database is deployed to a different machine (confirmed live: Linux server
+    couldn't resolve a Windows path, every pro-clip video 404'd as "Video
+    unavailable"). Storing a path relative to 04_clips instead means every
+    consumer (this script, compare_swing.py, clip_urls.py, videoCrop.js) can
+    just join it onto their own DATA_DIR, with no OS-specific parsing at all.
+    """
+    if not clip_path:
+        return clip_path
+    return os.path.relpath(clip_path, PRO_CLIPS_DIR).replace('\\', '/')
 
 # Upper-body landmarks used for comparison (ignore legs)
 KEY_LANDMARKS = [
@@ -133,7 +155,12 @@ def normalise_landmarks(lm_dict, scale=None):
     consume it (trajectory_compare.py, phase_breakdown.py) should treat it
     as a lower-confidence signal, not equally trustworthy to x/y."""
     mid_x, mid_y, width = get_shoulder_ref(lm_dict)
-    if not mid_x or width < 0.01:
+    # mid_x can legitimately be 0.0 (shoulder midpoint sitting exactly at the
+    # frame's left edge) -- `not mid_x` treated that as "missing" the same as
+    # get_shoulder_ref()'s real missing-ref case (None), incorrectly
+    # dropping a valid frame. width is never a valid 0.0 (two distinct
+    # shoulder points), so `width < 0.01` alone still correctly guards that.
+    if mid_x is None or width < 0.01:
         return None
     if scale is None:
         scale = width
@@ -268,7 +295,7 @@ def build_database(out_path=r'C:\Users\jackp\tennis_app\data\06_pro_database\pro
                 # when playing clip_path. This is the one that should be used
                 # for that purpose.
                 'clip_contact_time_sec': round((sw['peak_frame'] - sw['start_frame']) / fps, 3),
-                'clip_path':        clip_path,
+                'clip_path':        relative_clip_path(clip_path),
                 'camera_angle':     camera_angle,
                 'angle_confidence': angle_confidence,
                 'trajectory':       trajectory,

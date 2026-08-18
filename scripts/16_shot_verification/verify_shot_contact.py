@@ -85,7 +85,7 @@ def track_racket_and_ball_cropped(video_path, frames_by_idx, frame_range, model=
         ret, frame = cap.read()
         if not ret:
             break
-        crop, _scale, _x0, _y0 = _crop_and_upscale(frame, frames_by_idx.get(idx))
+        crop, scale, x0, y0 = _crop_and_upscale(frame, frames_by_idx.get(idx))
         results = model.predict(crop, classes=[RACKET_CLASS, BALL_CLASS], conf=CONF_THRESHOLD, verbose=False)
         racket_box = racket_conf = ball_box = ball_conf = None
         for box in results[0].boxes:
@@ -100,6 +100,13 @@ def track_racket_and_ball_cropped(video_path, frames_by_idx, frame_range, model=
             'frame': idx,
             'racket_box': racket_box, 'racket_conf': racket_conf,
             'ball_box': ball_box, 'ball_conf': ball_conf,
+            # Each frame's crop has its own offset/scale (tight-cropped to
+            # that frame's own pose bbox) -- kept per-detection so
+            # _racket_velocity_profile() can convert back to a shared
+            # original-frame coordinate space before comparing ACROSS
+            # frames. Comparisons WITHIN one frame (find_contact_frame)
+            # don't need this -- crop-space is fine there.
+            'crop_scale': scale, 'crop_x0': x0, 'crop_y0': y0,
         })
         idx += 1
 
@@ -139,7 +146,7 @@ def track_racket_tip_and_ball_cropped(video_path, frames_by_idx, frame_range):
         ret, frame = cap.read()
         if not ret:
             break
-        crop, _scale, _x0, _y0 = _crop_and_upscale(frame, frames_by_idx.get(idx))
+        crop, scale, x0, y0 = _crop_and_upscale(frame, frames_by_idx.get(idx))
         ch, cw = crop.shape[:2]
 
         kpts = _detect_racket_keypoints(crop, racket_detector, kp_model)
@@ -163,6 +170,8 @@ def track_racket_tip_and_ball_cropped(video_path, frames_by_idx, frame_range):
             'frame': idx,
             'racket_box': racket_box, 'racket_conf': racket_conf,
             'ball_box': ball_box, 'ball_conf': ball_conf,
+            # See track_racket_and_ball_cropped()'s matching comment.
+            'crop_scale': scale, 'crop_x0': x0, 'crop_y0': y0,
         })
         idx += 1
 
@@ -195,6 +204,19 @@ def _racket_velocity_profile(detections, center_frame, half_window=TRAJECTORY_HA
     Returns (frames, speeds) arrays for every integer frame in the window
     (not just frames with a detection), or (None, None) if there isn't
     enough racket data in the window to fit reliably.
+
+    Detections from the cropped tracking path (track_racket_and_ball_cropped
+    / track_racket_tip_and_ball_cropped) carry each frame's own crop
+    scale/offset ('crop_scale'/'crop_x0'/'crop_y0') -- every frame is cropped
+    tight to THAT frame's own pose bbox, so raw crop-pixel coordinates are
+    NOT comparable across frames (a player's bbox moving/resizing between
+    frames shifts the crop's origin and scale independently of any real
+    racket motion). Centers are converted back to a shared original-frame
+    pixel space here before fitting -- previously this fit raw per-crop
+    coordinates directly, producing a trajectory in a coordinate space that
+    changed frame to frame, i.e. not a real trajectory at all. Detections
+    without crop metadata (the non-cropped track_racket_and_ball() path)
+    default to scale=1, offset=0 -- already in original-frame space.
     """
     import numpy as np
 
@@ -207,7 +229,15 @@ def _racket_velocity_profile(detections, center_frame, half_window=TRAJECTORY_HA
         return None, None
 
     frames = np.array([d['frame'] for d in dets], dtype=float)
-    centers = [_center(d['racket_box']) for d in dets]
+
+    def to_original_space(d):
+        cx, cy = _center(d['racket_box'])
+        scale = d.get('crop_scale', 1.0) or 1.0
+        x0 = d.get('crop_x0', 0)
+        y0 = d.get('crop_y0', 0)
+        return (x0 + cx / scale, y0 + cy / scale)
+
+    centers = [to_original_space(d) for d in dets]
     xs = np.array([c[0] for c in centers])
     ys = np.array([c[1] for c in centers])
 
@@ -305,7 +335,14 @@ def verify_swings(video_path, swings, fps, frames=None, search_window_sec=SEARCH
                 # kept as real evidence regardless of the speed ratio.
                 speed_at_contact, peak_speed = _racket_speed_at(detections, frame)
         except Exception as e:
-            conf, method, speed_at_contact, peak_speed = 0.0, f'error: {e}', None, None
+            frame, conf, method, speed_at_contact, peak_speed = peak_frame, 0.0, f'error: {e}', None, None
+        # find_contact_frame()'s actual guessed frame was computed above but
+        # never kept on the swing dict -- only confidence/method were. Added
+        # for contact_frame_training_log.py (needs the real frame number as
+        # the "student" side of a frame-distance comparison), purely
+        # additive so existing callers reading contact_confidence/
+        # contact_method are unaffected.
+        sw['contact_frame_guess'] = frame
         sw['contact_confidence'] = conf
         sw['contact_method'] = method
         sw['racket_speed_at_contact'] = round(speed_at_contact, 1) if speed_at_contact is not None else None
@@ -324,6 +361,12 @@ def filter_verified_swings(swings, min_confidence=DEFAULT_MIN_CONFIDENCE):
         longer produces this method, kept here defensively so old
         already-logged records still parse the same way if ever re-run
         through this function.
+      - contact_method starting with 'error:' -- verify_swings()'s except
+        block sets this when racket/ball tracking itself raised (bad crop,
+        model OOM, etc.), with contact_confidence forced to 0.0. Neither of
+        the two conditions above matched this shape, so a tracking failure
+        was previously KEPT as if it had real corroboration instead of
+        being rejected like any other no-evidence candidate.
     A real ball_occlusion_gap or ball_racket_proximity match (racket
     detected near the ball) is kept regardless of its exact confidence
     value or how fast the racket was moving there.
@@ -333,4 +376,5 @@ def filter_verified_swings(swings, min_confidence=DEFAULT_MIN_CONFIDENCE):
         if not (sw.get('contact_method') == 'wrist_velocity_fallback'
                 and sw.get('contact_confidence', 0) <= min_confidence)
         and not str(sw.get('contact_method', '')).startswith('static_hold')
+        and not str(sw.get('contact_method', '')).startswith('error:')
     ]

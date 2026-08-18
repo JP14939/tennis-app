@@ -4,13 +4,7 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { playTapSound } from '../utils/sounds';
-
-const GREEN  = '#4ade80';
-const DARK   = '#0d0d0d';
-const CARD   = '#141414';
-const BORDER = '#222';
-const TEXT   = '#fff';
-const MUTED  = '#888';
+import { colors, fonts, radius, spacing } from '../theme';
 
 const SHOT_TYPES = ['forehand', 'backhand', 'serve'];
 
@@ -76,7 +70,19 @@ export default function VersusPickScreen({ navigation }) {
           videoUri: yourUri,
           shotType,
           onConfirmed: (yours) => {
-            navigation.navigate('VersusResults', { shotType, reference, yours });
+            // reset (not navigate) -- push()ing twice left both completed
+            // ContactMarkingScreen instances on the stack, so pressing back
+            // from VersusResults landed on an already-finished fine-tune
+            // screen instead of returning here. Replaces the whole stack
+            // with just [VersusPick, VersusResults], so back goes straight
+            // to re-picking videos, not through the marking flow again.
+            navigation.reset({
+              index: 1,
+              routes: [
+                { name: 'VersusPick' },
+                { name: 'VersusResults', params: { shotType, reference, yours } },
+              ],
+            });
           },
         });
       },
@@ -135,31 +141,31 @@ export default function VersusPickScreen({ navigation }) {
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: DARK },
-  scroll: { padding: 24, paddingTop: 24, paddingBottom: 48, flexGrow: 1 },
+  safe: { flex: 1, backgroundColor: colors.bg },
+  scroll: { padding: spacing.xl, paddingTop: 24, paddingBottom: 48, flexGrow: 1 },
 
-  h1:  { color: TEXT, fontSize: 26, fontWeight: '800', letterSpacing: -0.5, marginBottom: 8 },
-  sub: { color: MUTED, fontSize: 14, lineHeight: 21, marginBottom: 28 },
+  h1:  { color: colors.ink, fontSize: 26, fontFamily: fonts.bold, letterSpacing: -0.5, marginBottom: 8 },
+  sub: { color: colors.muted, fontSize: 14, lineHeight: 21, marginBottom: 28, fontFamily: fonts.regular },
 
-  fieldLabel: { color: '#aaa', fontSize: 13, fontWeight: '600', marginBottom: 10 },
+  fieldLabel: { color: colors.mutedDark, fontSize: 13, fontFamily: fonts.semibold, marginBottom: 10 },
   shotRow: { flexDirection: 'row', gap: 8, marginBottom: 24 },
   shotPill: {
-    flex: 1, borderWidth: 1, borderColor: BORDER,
-    borderRadius: 20, paddingVertical: 10, alignItems: 'center',
+    flex: 1, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.pill, paddingVertical: 10, alignItems: 'center',
   },
-  shotPillActive:     { backgroundColor: '#1a2e1a', borderColor: '#2a4a2a' },
-  shotPillText:       { color: MUTED, fontSize: 14, fontWeight: '500' },
-  shotPillTextActive: { color: GREEN, fontWeight: '700' },
+  shotPillActive:     { backgroundColor: colors.primarySoft, borderColor: colors.primary },
+  shotPillText:       { color: colors.muted, fontSize: 14, fontFamily: fonts.medium },
+  shotPillTextActive: { color: colors.primary, fontFamily: fonts.bold },
 
   uploadBtn: {
-    backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
-    borderRadius: 16, padding: 24, alignItems: 'center', gap: 4,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.lg, padding: 24, alignItems: 'center', gap: 4,
   },
-  uploadBtnText: { color: TEXT, fontSize: 15, fontWeight: '600' },
-  uploadBtnSub:  { color: MUTED, fontSize: 12 },
-  changeText:    { color: GREEN, fontSize: 12, marginTop: 4 },
+  uploadBtnText: { color: colors.ink, fontSize: 15, fontFamily: fonts.semibold },
+  uploadBtnSub:  { color: colors.muted, fontSize: 12, fontFamily: fonts.regular },
+  changeText:    { color: colors.primary, fontSize: 12, marginTop: 4, fontFamily: fonts.semibold },
 
-  continueBtn: { backgroundColor: GREEN, borderRadius: 12, paddingVertical: 15, alignItems: 'center', marginTop: 28 },
+  continueBtn: { backgroundColor: colors.primary, borderRadius: radius.md, paddingVertical: 15, alignItems: 'center', marginTop: 28 },
   continueDisabled: { opacity: 0.4 },
-  continueBtnText: { color: '#000', fontSize: 15, fontWeight: '700' },
+  continueBtnText: { color: colors.white, fontSize: 15, fontFamily: fonts.bold },
 });

@@ -19,6 +19,7 @@ import PhaseBreakdown, { PHASE_LABELS, PHASE_ORDER, phaseColor } from '../compon
 import TipsSection from '../components/TipsSection';
 import FriendPickerModal from '../components/FriendPickerModal';
 import { shareSwing } from '../api/friends';
+import { logDrillPractice } from '../api/drills';
 
 // Coach notes attached to one phase (or general, phaseKey=null) -- shown
 // inline wherever they're relevant, with an "Add note" composer when the
@@ -93,7 +94,12 @@ const SHOT_TYPES = ['forehand', 'backhand', 'serve'];
 function formatProId(proId, playerName) {
   // "forehand_0142" -> "Forehand Technique #142", or "<Name>'s Forehand"
   // once that clip has been labeled (data/06_pro_database/player_names.json).
+  // Guard matches HistoryScreen.js/CoachScreen.js's -- a match object
+  // missing pro_id (partial/legacy backend response) used to crash this
+  // whole screen on .split() instead of degrading gracefully.
+  if (!proId) return 'Analysis';
   const [shot, num] = proId.split('_');
+  if (!shot || !num) return proId;
   const label = shot.charAt(0).toUpperCase() + shot.slice(1);
   if (playerName) return `${playerName}'s ${label}`;
   return `${label} Technique #${parseInt(num, 10)}`;
@@ -123,6 +129,7 @@ export default function ResultsScreen({ navigation, route }) {
     videoUri, shotType, contactTimeSec, viewDirectionHint,
     savedResult, analysisId: routeAnalysisId, canAddNotes,
     flaggedNotShot = false, confirmedRealShot = false,
+    practiceStepId,
   } = route.params ?? {};
   const { token, isAuthenticated } = useAuth();
 
@@ -139,6 +146,12 @@ export default function ResultsScreen({ navigation, route }) {
   // remount and the fill-up animation replays instead of only running once.
   const [shareModalKey, setShareModalKey] = useState(0);
   const [friendPickerVisible, setFriendPickerVisible] = useState(false);
+
+  // Guards runAnalysis()'s post-fetch state updates -- without it, backing
+  // out of this screen mid-analysis still let the eventual response's
+  // setResult/setStatus/etc. land on the unmounted screen.
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   // A fresh analysis (route params has no analysisId yet) only gets one
   // once saveToHistory() below actually saves it -- captured here so the
@@ -219,6 +232,7 @@ export default function ResultsScreen({ navigation, route }) {
         body: formData,
       });
       const data = await response.json();
+      if (!mountedRef.current) return;
       if (!response.ok) {
         setErrorCode(data.code ?? null);
         throw new Error(data.error || 'Analysis failed');
@@ -230,13 +244,19 @@ export default function ResultsScreen({ navigation, route }) {
       // reachable from a fresh analysis (see the savedResult guard below,
       // which skips runAnalysis entirely for an already-saved result) --
       // browsing back to an old result never replays either sound.
-      if ((data.matches?.[0]?.similarity ?? 0) >= 75) {
+      // Must read the same field the screen actually DISPLAYS (see `score`
+      // below, line ~324) -- this used to read .similarity alone, so a
+      // swing whose overall_score and similarity disagreed could play the
+      // wrong sound relative to what the user sees on screen.
+      const topMatch = data.matches?.[0];
+      if ((topMatch?.overall_score ?? topMatch?.similarity ?? 0) >= 75) {
         playAchievementSound();
       } else {
         playCompleteSound();
       }
-      saveToHistory(data);
+      await saveToHistory(data);
     } catch (err) {
+      if (!mountedRef.current) return;
       setErrorMsg(err.message || 'Something went wrong');
       setStatus('error');
     }
@@ -250,9 +270,17 @@ export default function ResultsScreen({ navigation, route }) {
     setSaveStatus('saving');
     try {
       const saved = await saveHistory(token, data, shotType);
+      if (!mountedRef.current) return;
       setSavedAnalysisId(saved.id);
       setSaveStatus('saved');
+      // Best-effort -- a practice attempt failing to link back to its
+      // lesson step should never block the analysis result itself from
+      // showing (the analysis is already saved to History regardless).
+      if (practiceStepId) {
+        logDrillPractice(token, practiceStepId, saved.id).catch(() => {});
+      }
     } catch (err) {
+      if (!mountedRef.current) return;
       setSaveStatus(err.code === 'HISTORY_LIMIT' ? 'limit' : 'error');
     }
   };
@@ -296,7 +324,7 @@ export default function ResultsScreen({ navigation, route }) {
           {isDailyLimit ? (
             <TouchableOpacity
               style={s.retryBtn}
-              onPress={() => navigation.navigate('Premium')}
+              onPress={() => navigation.navigate('MainTabs', { screen: 'Premium' })}
             >
               <Text style={s.retryBtnText}>Upgrade to Premium</Text>
             </TouchableOpacity>
@@ -391,7 +419,7 @@ export default function ResultsScreen({ navigation, route }) {
             {saveStatus === 'limit' && (
               <TouchableOpacity
                 style={s.saveBannerAction}
-                onPress={() => navigation.navigate('Premium')}
+                onPress={() => navigation.navigate('MainTabs', { screen: 'Premium' })}
               >
                 <Text style={s.saveBannerActionText}>Free plan limit reached (3/3) — upgrade to save unlimited →</Text>
               </TouchableOpacity>

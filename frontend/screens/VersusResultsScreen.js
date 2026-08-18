@@ -53,6 +53,12 @@ export default function VersusResultsScreen({ route, navigation }) {
   // remount and the fill-up animation replays instead of only running once.
   const [shareModalKey, setShareModalKey] = useState(0);
 
+  // Guards runComparison()'s post-fetch state updates -- backing out of this
+  // screen mid-comparison used to still let the eventual response land on
+  // the unmounted screen (same pattern as ResultsScreen.js's runAnalysis).
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
+
   const runComparison = async () => {
     setStatus('loading');
     setErrorMsg('');
@@ -64,12 +70,14 @@ export default function VersusResultsScreen({ route, navigation }) {
         body: formData,
       });
       const data = await response.json();
+      if (!mountedRef.current) return;
       if (!response.ok) {
         throw new Error(data.error || 'Comparison failed');
       }
       setResult(data);
       setStatus('done');
     } catch (err) {
+      if (!mountedRef.current) return;
       setErrorMsg(err.message || 'Something went wrong');
       setStatus('error');
     }

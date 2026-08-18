@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, SafeAreaView,
-  Dimensions, Alert, Platform, ScrollView,
+  Dimensions, Alert, Platform, ScrollView, LayoutAnimation, UIManager,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import PlatformVideo from '../components/PlatformVideo';
@@ -15,10 +15,14 @@ import CourtBackground from '../components/CourtBackground';
 import { BackChevronIcon, VideoIcon, CameraIcon } from '../components/icons';
 
 const ASSUMED_FPS = 30;
-const FINE_RADIUS = 10;
+const FINE_RADIUS = 50;
 const SHOT_TYPES  = ['forehand', 'backhand', 'serve'];
 const IS_WEB      = Platform.OS === 'web';
 const TUTORIAL_SEEN_KEY = 'tennisai_seen_fence_tutorial';
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 async function checkCameraSetup(videoUri) {
   const formData = new FormData();
@@ -49,6 +53,12 @@ export default function ContactMarkingScreen({ navigation, route }) {
   const [status, setStatus]     = useState({});
   const [roughTime, setRoughTime]   = useState(null);
   const [fineOffset, setFineOffset] = useState(0);
+  // Immediate visual feedback while dragging the rough-scrub slider on
+  // native -- the real progressFraction only updates once the video's
+  // async seek resolves and the status callback fires, which lags behind
+  // a finger drag. Cleared on release so display falls back to the
+  // (by-then-settled) real position.
+  const [scrubFraction, setScrubFraction] = useState(null);
   const [calibration, setCalibration] = useState({ status: 'idle' }); // idle | checking | done
   const [viewDirectionHint, setViewDirectionHint] = useState(null); // 'front' | 'back' | null (diagonal/side, no hint)
   const [filmingTutorialVariant, setFilmingTutorialVariant] = useState(null); // set to open the tutorial from the filming-position screen
@@ -117,13 +127,36 @@ export default function ContactMarkingScreen({ navigation, route }) {
 
   const markWindow = async () => {
     await pause();
+    if (!IS_WEB) LayoutAnimation.easeInEaseOut();
     setRoughTime(currentTime);
     setFineOffset(0);
     setPhase('fine');
   };
 
+  const backToRough = () => {
+    if (!IS_WEB) LayoutAnimation.easeInEaseOut();
+    play();
+    setPhase('rough');
+  };
+
   const prevFrame = () => setFineOffset(o => Math.max(o - 1, -FINE_RADIUS));
   const nextFrame = () => setFineOffset(o => Math.min(o + 1, FINE_RADIUS));
+
+  // Shared by both slider drag handlers -- maps a touch's x position within
+  // the panel to a value, given the panel's horizontal padding (20 either
+  // side, same assumption progressTrack already made).
+  const trackWidth = dims.width - 40;
+  const fractionFromLocationX = (x) => Math.min(1, Math.max(0, x / trackWidth));
+  const onScrubMove = (e) => {
+    const frac = fractionFromLocationX(e.nativeEvent.locationX);
+    setScrubFraction(frac);
+    seekTo(frac * duration);
+  };
+  const onOffsetMove = (e) => {
+    const frac = fractionFromLocationX(e.nativeEvent.locationX);
+    const raw = Math.round(frac * (FINE_RADIUS * 2) - FINE_RADIUS);
+    setFineOffset(Math.min(FINE_RADIUS, Math.max(-FINE_RADIUS, raw)));
+  };
 
   const playSlowMo = async () => {
     if (roughTime === null) return;
@@ -145,7 +178,10 @@ export default function ContactMarkingScreen({ navigation, route }) {
 
   const confirmFrame = async () => {
     if (roughTime === null) return;
-    const fineT = roughTime + fineOffset / ASSUMED_FPS;
+    // Clamped the same way the seek call sites already are (lines ~80, 88) --
+    // scrubbing fineOffset negative near the start of a clip could otherwise
+    // submit a negative contactFrame/contactTimeSec downstream.
+    const fineT = Math.max(0, roughTime + fineOffset / ASSUMED_FPS);
     const frame = Math.round(fineT * ASSUMED_FPS);
     await pause();
     const marked = { videoUri: uri, shotType, contactFrame: frame, contactTimeSec: fineT, viewDirectionHint };
@@ -156,12 +192,17 @@ export default function ContactMarkingScreen({ navigation, route }) {
       route.params.onConfirmed(marked);
       return;
     }
-    navigation.navigate('Results', marked);
+    // practiceStepId passes straight through from LessonDetailScreen's
+    // navigation params so ResultsScreen can link the finished analysis
+    // back to the lesson routine step it was practice for.
+    navigation.navigate('Results', route.params?.practiceStepId
+      ? { ...marked, practiceStepId: route.params.practiceStepId }
+      : marked);
   };
 
   // ── Layout ────────────────────────────────────────────────────────────────
-  const progressFraction = duration > 0 ? Math.min(1, currentTime / duration) : 0;
-  const fineT        = roughTime !== null ? roughTime + fineOffset / ASSUMED_FPS : 0;
+  const progressFraction = scrubFraction ?? (duration > 0 ? Math.min(1, currentTime / duration) : 0);
+  const fineT        = roughTime !== null ? Math.max(0, roughTime + fineOffset / ASSUMED_FPS) : 0;
   const fineFrameAbs = Math.round(fineT * ASSUMED_FPS);
   const videoH       = Math.round(Math.min(dims.width * 0.56, dims.height * 0.42));
 
@@ -378,8 +419,10 @@ export default function ContactMarkingScreen({ navigation, route }) {
                 <View
                   style={s.progressTrack}
                   onStartShouldSetResponder={() => true}
-                  onResponderGrant={(e) => seekTo((e.nativeEvent.locationX / (dims.width - 40)) * duration)}
-                  onResponderMove={(e)  => seekTo((e.nativeEvent.locationX / (dims.width - 40)) * duration)}
+                  onResponderGrant={onScrubMove}
+                  onResponderMove={onScrubMove}
+                  onResponderRelease={() => setScrubFraction(null)}
+                  onResponderTerminate={() => setScrubFraction(null)}
                 >
                   <View style={[s.progressFill, { width: `${progressFraction * 100}%` }]} />
                   <View style={[s.progressThumb, { left: `${progressFraction * 100}%` }]} />
@@ -399,7 +442,7 @@ export default function ContactMarkingScreen({ navigation, route }) {
         {phase === 'fine' && (
           <>
             <Text style={s.panelTitle}>Step 2 — Pinpoint the exact frame</Text>
-            <Text style={s.panelSub}>Tap ◀ / ▶ to step one frame at a time</Text>
+            <Text style={s.panelSub}>Drag the slider or tap ◀ / ▶ to step one frame at a time</Text>
 
             <View style={s.frameRow}>
               <TouchableOpacity style={s.frameBtn} onPress={prevFrame} disabled={fineOffset <= -FINE_RADIUS}>
@@ -414,11 +457,32 @@ export default function ContactMarkingScreen({ navigation, route }) {
               </TouchableOpacity>
             </View>
 
-            <View style={s.offsetTrack}>
-              <View style={[s.offsetThumb, {
-                left: `${((fineOffset + FINE_RADIUS) / (FINE_RADIUS * 2)) * 92 + 2}%`
-              }]} />
-            </View>
+            {IS_WEB
+              ? React.createElement('input', {
+                  type: 'range',
+                  min: String(-FINE_RADIUS), max: String(FINE_RADIUS), step: '1',
+                  value: String(fineOffset),
+                  onChange: (e) => setFineOffset(parseInt(e.target.value, 10)),
+                  style: {
+                    width: '100%', accentColor: colors.primary,
+                    marginBottom: '8px', cursor: 'pointer', height: '20px',
+                  },
+                })
+              : (
+                <View
+                  style={s.offsetTrackHitArea}
+                  onStartShouldSetResponder={() => true}
+                  onResponderGrant={onOffsetMove}
+                  onResponderMove={onOffsetMove}
+                >
+                  <View style={s.offsetTrack}>
+                    <View style={[s.offsetThumb, {
+                      left: `${((fineOffset + FINE_RADIUS) / (FINE_RADIUS * 2)) * 92 + 2}%`
+                    }]} />
+                  </View>
+                </View>
+              )
+            }
             <View style={s.offsetLabels}>
               <Text style={s.offsetLabel}>-{FINE_RADIUS}</Text>
               <Text style={s.offsetLabel}>0</Text>
@@ -434,7 +498,7 @@ export default function ContactMarkingScreen({ navigation, route }) {
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity style={s.backLink} onPress={() => { play(); setPhase('rough'); }}>
+            <TouchableOpacity style={s.backLink} onPress={backToRough}>
               <Text style={s.backLinkText}>← Back to rough selection</Text>
             </TouchableOpacity>
           </>
@@ -538,9 +602,10 @@ const s = StyleSheet.create({
   frameNumber:      { color: colors.ink, fontSize: 22, fontFamily: fonts.extrabold },
   frameOffset:      { color: colors.muted, fontSize: 12, marginTop: 2, fontFamily: fonts.regular },
 
+  offsetTrackHitArea: { paddingVertical: 14, marginTop: -14, marginBottom: -8 },
   offsetTrack: {
     height: 4, backgroundColor: colors.border, borderRadius: 2,
-    marginBottom: 6, position: 'relative',
+    position: 'relative',
   },
   offsetThumb: {
     position: 'absolute', top: -6,

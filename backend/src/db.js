@@ -5,7 +5,10 @@ const fs = require('fs');
 const DATA_DIR = path.join(__dirname, '..', 'data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const db = new Database(path.join(DATA_DIR, 'app.db'));
+// DB_PATH override lets tests point at an isolated file (or ':memory:')
+// instead of mutating the real dev/prod database on every `require('../db')`.
+const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, 'app.db');
+const db = new Database(DB_PATH);
 
 // WAL needs proper mmap/shared-memory support from the underlying
 // filesystem -- works fine on a normal disk or a native Linux bind mount,
@@ -344,6 +347,50 @@ db.exec(`
     added_by   INTEGER NOT NULL REFERENCES users(id),
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  -- Drills & Lessons library (Dev Page-authored, see routes/dev.js). A
+  -- 'drill' is a free standalone library item (no routine steps needed). A
+  -- 'lesson' is the bigger watch->learn->practice flow -- same row shape,
+  -- plus 1+ drill_routine_steps for its practice phase. is_premium is
+  -- per-item (drills default free, lessons can be either) rather than a
+  -- blanket requirePremium on the whole route, so free drills stay free.
+  CREATE TABLE IF NOT EXISTS drill_items (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind           TEXT NOT NULL CHECK (kind IN ('drill', 'lesson')),
+    shot_type      TEXT NOT NULL,
+    title          TEXT NOT NULL,
+    video_path     TEXT,
+    explanation    TEXT NOT NULL,
+    emphasis       TEXT,
+    diagram_tip_id TEXT,
+    is_premium     INTEGER NOT NULL DEFAULT 0,
+    sort_order     INTEGER NOT NULL DEFAULT 0,
+    archived       INTEGER NOT NULL DEFAULT 0,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  -- A lesson's ordered practice steps (e.g. "Crosscourt forehand x10" then
+  -- "Down-the-line forehand x10"). shot_type is NULL for a step with no
+  -- practice-analysis part (e.g. a pure rest/footwork instruction).
+  CREATE TABLE IF NOT EXISTS drill_routine_steps (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    drill_item_id INTEGER NOT NULL REFERENCES drill_items(id),
+    step_order    INTEGER NOT NULL,
+    label         TEXT NOT NULL,
+    shot_type     TEXT,
+    target_reps   INTEGER
+  );
+
+  -- One row per practice attempt, linking a routine step to the REAL
+  -- analysis it produced -- practice reuses the existing /api/analyse
+  -- pipeline/scoring rather than a separate one.
+  CREATE TABLE IF NOT EXISTS drill_practice_attempts (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id),
+    step_id     INTEGER NOT NULL REFERENCES drill_routine_steps(id),
+    analysis_id INTEGER REFERENCES analyses(id),
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 
 // No migrations framework here -- CREATE TABLE IF NOT EXISTS above is
@@ -416,5 +463,39 @@ const hasSubmittedByCol = db.prepare("PRAGMA table_info(courts)").all()
 if (!hasSubmittedByCol) {
   db.exec('ALTER TABLE courts ADD COLUMN submitted_by INTEGER REFERENCES users(id)');
 }
+
+// GET /courts's queryNearbyCourts runs a bounding-box scan plus a LEFT JOIN
+// and several correlated subqueries per row on every request -- fine
+// against a small local seed, but the courts table is now ~33k rows after
+// the England-wide OSM seed, and better-sqlite3 runs synchronously on
+// Node's main thread, so an unindexed scan at that size blocks the whole
+// server for the duration of the query (the actual cause of "courts don't
+// reliably show up" -- intermittent timeouts, not a real absence of data).
+db.exec('CREATE INDEX IF NOT EXISTS idx_courts_lat_lng ON courts(latitude, longitude)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_club_courts_court_id ON club_courts(court_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_club_courts_club_id ON club_courts(club_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_court_confirmations_court_id ON court_confirmations(court_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_club_watches_club_id ON club_watches(club_id)');
+
+// Everything below was audited against every route file's actual WHERE/JOIN
+// usage (not guessed from the schema) -- these are the foreign-key/lookup
+// columns real hot paths filter on that had no index at all until now:
+// history loads, message-thread open/poll, highlight-job/rally-clip
+// polling, coach-note lookups, push-token lookups, and Drills & Lessons
+// practice-attempt counts. Deliberately NOT indexed here (already covered):
+// users.email (UNIQUE, auto-indexed), and coach_links(coach_id,student_id),
+// shared_analyses(analysis_id,friend_id), friend_links(user_a_id,user_b_id),
+// user_blocks(blocker_id,blocked_id) -- each already has a UNIQUE(...)
+// constraint whose auto-index (or its leftmost-column prefix) already
+// covers every real query against that table, confirmed by reading each
+// query site rather than assumed from the schema.
+db.exec('CREATE INDEX IF NOT EXISTS idx_analyses_user_id ON analyses(user_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_messages_user_a_b ON messages(user_a_id, user_b_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_rally_clips_user_id ON rally_clips(user_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_rally_clips_job_id ON rally_clips(job_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_highlight_jobs_user_id ON highlight_jobs(user_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_coach_notes_analysis_id ON coach_notes(analysis_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_push_tokens_user_id ON push_tokens(user_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_drill_practice_attempts_step_user ON drill_practice_attempts(step_id, user_id)');
 
 module.exports = db;

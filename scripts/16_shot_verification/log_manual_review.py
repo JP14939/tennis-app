@@ -1,0 +1,76 @@
+"""
+Logs Jack's own manual verdict on a swing candidate (from the Dev Page's
+DevSwingReviewScreen.js) into up to three training logs -- the free,
+no-Claude-cost substitute for the paid batch-verify path. Same
+log_example() calls, same (student_pick, teacher_pick, agreed) shape,
+source='user_flag' where that field exists, so this feeds
+should_trust_bucket()/should_trust_student() identically to a
+Claude-verified example.
+
+Usage:
+  echo '{"student_is_real_shot": true, "student_contact_confidence": 0.6,
+         "student_contact_method": "ball_racket_proximity",
+         "student_contact_frame_guess": 142, "fps": 30.0,
+         "student_shot_type": "forehand", "student_shot_scores": {...},
+         "is_real_shot": true, "shot_type": "backhand",
+         "contact_frame": 145}' | python log_manual_review.py
+
+Output (stdout): {"logged_contact": true, "logged_classifier": bool, "logged_contact_frame": bool}
+"""
+import json
+import os
+import sys
+
+SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(SCRIPTS_DIR, '16_shot_verification'))
+sys.path.insert(0, os.path.join(SCRIPTS_DIR, '14_shot_classifier'))
+sys.path.insert(0, os.path.join(SCRIPTS_DIR, '07_ball_racket_tracking'))
+
+import shot_contact_training_log as contact_log  # noqa: E402
+import shot_classifier_training_log as classifier_log  # noqa: E402
+import contact_frame_training_log as frame_log  # noqa: E402
+
+
+def main():
+    payload = json.loads(sys.stdin.read())
+
+    student_is_real_shot = payload.get('student_is_real_shot')
+    is_real_shot = payload['is_real_shot']
+    contact_log.log_example(
+        student_is_real_shot, is_real_shot, student_is_real_shot == is_real_shot,
+        source='user_flag',
+        student_meta={
+            'contact_confidence': payload.get('student_contact_confidence'),
+            'contact_method': payload.get('student_contact_method'),
+        },
+    )
+
+    logged_classifier = False
+    if is_real_shot and payload.get('shot_type'):
+        student_shot_type = payload.get('student_shot_type')
+        agreed = (student_shot_type == payload['shot_type']) if student_shot_type else None
+        classifier_log.log_example(
+            payload.get('student_shot_scores'), student_shot_type, payload['shot_type'], agreed,
+        )
+        logged_classifier = True
+
+    logged_contact_frame = False
+    student_contact_frame_guess = payload.get('student_contact_frame_guess')
+    if is_real_shot and payload.get('contact_frame') is not None and student_contact_frame_guess is not None:
+        frame_log.log_example(
+            student_contact_frame_guess,
+            payload.get('student_contact_confidence'),
+            payload.get('student_contact_method'),
+            payload['contact_frame'],
+            payload.get('fps'),
+            source='manual_review',
+        )
+        logged_contact_frame = True
+
+    print(json.dumps({
+        'logged_contact': True, 'logged_classifier': logged_classifier, 'logged_contact_frame': logged_contact_frame,
+    }))
+
+
+if __name__ == '__main__':
+    main()

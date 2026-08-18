@@ -15,9 +15,10 @@ Usage:
   python tune_rally_gap.py <video_path> <job_id> [--gaps 6,9,12,15] [--percentiles 85]
 
 <job_id> is the highlight_jobs id whose rally_clips rows already carry
-boundary_note values ('ok' | 'cut_off_early' | 'should_split') from the
-review screen -- pulled read-only from backend/data/app.db. Clips with no
-boundary_note are ignored (Jack hasn't reviewed them yet).
+boundary_note values ('ok' | 'cut_off_early' | 'should_split' |
+'started_too_late') from the review screen -- pulled read-only from
+backend/data/app.db. Clips with no boundary_note are ignored (Jack hasn't
+reviewed them yet).
 
 Scoring logic, per candidate (rally_gap_sec, threshold_percentile) pair:
   - 'ok':             candidate should reproduce the same rally boundaries
@@ -31,7 +32,11 @@ Scoring logic, per candidate (rally_gap_sec, threshold_percentile) pair:
                        chronological neighbor -- only possible if the gap is
                        large enough to bridge the boundary; a real merge
                        counts as a hit.
-Score = hits / labeled clips for that job. Pick the (gap, percentile) pair
+  - 'started_too_late': a start-boundary problem (PRE_PAD_SEC, not this
+                       sweep's RALLY_GAP_SEC/THRESHOLD_PERCENTILE) --
+                       collected as ground truth but excluded from scoring
+                       here; see score_candidate().
+Score = hits / scored labeled clips for that job. Pick the (gap, percentile) pair
 with the highest score; ties broken toward values closest to the current
 defaults (smallest change, least risk of new regressions elsewhere).
 """
@@ -119,20 +124,36 @@ def find_matching_group_index(bounds, clip_start_sec, tolerance=2.0):
 def score_candidate(labeled_clips, groups, bounds):
     hits, total = 0, 0
     for clip in labeled_clips:
-        note = clip['boundary_note']
+        # boundary_note is a comma-joined set of independently-toggled values
+        # since the review screen went multi-select (a clip can be wrong on
+        # both ends at once, e.g. 'started_too_late,cut_off_early') -- a bare
+        # single value like 'ok' still splits fine into a one-element set.
+        notes = set((clip['boundary_note'] or '').split(','))
         idx = find_matching_group_index(bounds, clip['start_sec'])
-        total += 1
 
-        if note == 'ok':
+        # started_too_late has no lever in this sweep -- this sweep only
+        # varies RALLY_GAP_SEC/THRESHOLD_PERCENTILE, neither of which can
+        # move where a clip *starts* (that's PRE_PAD_SEC, a separate untuned
+        # constant -- see module docstring). Score whatever ELSE is tagged
+        # alongside it (cut_off_early can coexist), and skip entirely only if
+        # it's the sole note -- scoring it here would count as a miss against
+        # every candidate regardless of gap value, unfairly deflating every
+        # score for a problem this sweep has no lever to fix.
+        scorable = notes - {'started_too_late'}
+        if not scorable:
+            continue
+
+        total += 1
+        if 'ok' in scorable:
             # Same clip should still exist with (about) the same end_sec.
             if idx is not None and abs(bounds[idx][1] - clip['end_sec']) <= 2.0:
                 hits += 1
-        elif note == 'should_split':
+        elif 'should_split' in scorable:
             # No single regrouped rally should span the old clip's full
             # start->end range unchanged -- if it still does, nothing split.
             if idx is None or abs(bounds[idx][1] - clip['end_sec']) > 2.0:
                 hits += 1
-        elif note == 'cut_off_early':
+        elif 'cut_off_early' in scorable:
             # The regrouped rally starting near this clip should now extend
             # further than the old end_sec (merged with what came next).
             if idx is not None and bounds[idx][1] > clip['end_sec'] + 2.0:

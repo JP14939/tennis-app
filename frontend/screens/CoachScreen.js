@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet,
   SafeAreaView, ScrollView, ActivityIndicator, Alert,
@@ -124,13 +124,15 @@ export default function CoachScreen({ navigation }) {
   const [students, setStudents] = useState([]);
   const [loadingStudents, setLoadingStudents] = useState(true);
   const [selectedStudent, setSelectedStudent] = useState(null);
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   const loadStudents = useCallback(() => {
     setLoadingStudents(true);
     listStudents(token)
-      .then((data) => setStudents(data.students))
+      .then((data) => { if (mountedRef.current) setStudents(data.students); })
       .catch(() => {})
-      .finally(() => setLoadingStudents(false));
+      .finally(() => { if (mountedRef.current) setLoadingStudents(false); });
   }, [token]);
 
   useFocusEffect(useCallback(() => { loadStudents(); }, [loadStudents]));

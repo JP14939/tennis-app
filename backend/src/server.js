@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const multer = require('multer');
 const { spawn } = require('child_process');
 require('dotenv').config();
 
@@ -22,6 +23,8 @@ const messagesRouter = require('./routes/messages');
 const friendsRouter = require('./routes/friends');
 const annotationsRouter = require('./routes/annotations');
 const leaderboardRouter = require('./routes/leaderboard');
+const devRouter = require('./routes/dev');
+const drillsRouter = require('./routes/drills');
 
 const app = express();
 app.use(cors());
@@ -46,6 +49,8 @@ app.use('/api', messagesRouter);
 app.use('/api', friendsRouter);
 app.use('/api', annotationsRouter);
 app.use('/api', leaderboardRouter);
+app.use('/api', devRouter);
+app.use('/api', drillsRouter);
 
 // Rally clips need to be watchable from the app after the request that
 // created them is long gone -- first real use of static file serving in
@@ -60,6 +65,9 @@ app.use('/pro-clips', express.static(path.join(DATA_DIR, '04_clips')));
 app.use('/pro-clips-cropped', express.static(path.join(DATA_DIR, '04_clips_cropped')));
 app.use('/user-clips', express.static(path.join(DATA_DIR, 'runtime', 'user_clips')));
 app.use('/comparison-clips', express.static(path.join(DATA_DIR, 'runtime', 'comparison_clips')));
+// Drills & Lessons instructional videos, uploaded via the Dev Page editor
+// (routes/dev.js) -- persistent like /pro-clips, never swept.
+app.use('/drill-clips', express.static(path.join(DATA_DIR, 'runtime', 'drill_clips')));
 
 // Basic starting point, not a robust job queue: sweep upload-derived runtime
 // dirs older than a day so /user-clips and /comparison-clips don't grow
@@ -85,8 +93,14 @@ const RUNTIME_SWEEP_DIRS = [
 const RUNTIME_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 function isReferencedByHistory(dirName) {
-  const row = db.prepare('SELECT 1 FROM analyses WHERE result_json LIKE ? LIMIT 1')
-    .get(`%/user-clips/${dirName}/%`);
+  // dirName is a filesystem directory name (e.g. "upload_1737000000000_123456")
+  // and routinely contains underscores -- LIKE treats '_' as a single-char
+  // wildcard and '%' as any-length, so without escaping them a dirName could
+  // spuriously match an unrelated row whose URL merely differs by one
+  // character in that position, keeping a sweepable directory alive forever.
+  const escaped = dirName.replace(/[_%]/g, '\\$&');
+  const row = db.prepare("SELECT 1 FROM analyses WHERE result_json LIKE ? ESCAPE '\\' LIMIT 1")
+    .get(`%/user-clips/${escaped}/%`);
   return !!row;
 }
 
@@ -147,6 +161,25 @@ async function startCalibrationServer() {
   return proc;
 }
 startCalibrationServer();
+
+// Global error handler -- must be registered last (Express only treats a
+// 4-arg middleware as an error handler, and only errors thrown/rejected by
+// something registered BEFORE this point reach it). Without this, Express 5
+// still catches a rejected promise from an async route handler (unlike
+// Express 4, no manual try/catch-and-next is required for that part), but
+// its own default handler returns an HTML/plain-text error page -- every
+// other failure path in this app returns {error: '...'} JSON, so an
+// uncaught DB/bcrypt error or an oversized multer upload broke that
+// contract for exactly those failure modes. This restores it.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    const message = err.code === 'LIMIT_FILE_SIZE' ? 'Uploaded file is too large' : err.message;
+    return res.status(400).json({ error: message });
+  }
+  console.error('[server] unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {

@@ -6,14 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { API_BASE } from '../config/api';
 import { playTapSound } from '../utils/sounds';
 import { useWindowWidth } from '../utils/responsive';
-
-const GREEN  = '#4ade80';
-const YELLOW = '#facc15';
-const DARK   = '#0d0d0d';
-const CARD   = '#141414';
-const BORDER = '#222';
-const TEXT   = '#fff';
-const MUTED  = '#888';
+import { colors, fonts, radius, spacing } from '../theme';
 
 function ArchiveRow({ clip }) {
   return (
@@ -37,17 +30,17 @@ function ArchiveRow({ clip }) {
 const r = StyleSheet.create({
   card: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
-    borderRadius: 14, padding: 14, marginBottom: 10,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.md, padding: 14, marginBottom: 10,
   },
   body: { flex: 1 },
-  title: { color: TEXT, fontSize: 14, fontWeight: '700' },
-  meta: { color: MUTED, fontSize: 12, marginTop: 2 },
+  title: { color: colors.ink, fontSize: 14, fontFamily: fonts.bold },
+  meta: { color: colors.muted, fontSize: 12, marginTop: 2, fontFamily: fonts.regular },
   analyseBtn: {
-    borderWidth: 1, borderColor: '#2a4a2a', backgroundColor: '#1a2e1a',
-    borderRadius: 10, paddingVertical: 8, paddingHorizontal: 14,
+    borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.primarySoft,
+    borderRadius: radius.sm, paddingVertical: 8, paddingHorizontal: 14,
   },
-  analyseBtnText: { color: GREEN, fontSize: 12, fontWeight: '700' },
+  analyseBtnText: { color: colors.primary, fontSize: 12, fontFamily: fonts.bold },
 });
 
 // The stitch itself runs as a background job server-side (see
@@ -120,7 +113,7 @@ function ReelCard({ job, token }) {
           {error && <Text style={rc.error}>{error}</Text>}
           <TouchableOpacity style={rc.btn} onPress={() => { playTapSound(); createReel(); }} disabled={building}>
             {building
-              ? <ActivityIndicator size="small" color="#000" />
+              ? <ActivityIndicator size="small" color={colors.white} />
               : <Text style={rc.btnText}>Create highlight reel</Text>}
           </TouchableOpacity>
         </>
@@ -130,15 +123,15 @@ function ReelCard({ job, token }) {
 }
 const rc = StyleSheet.create({
   card: {
-    backgroundColor: CARD, borderWidth: 1, borderColor: BORDER,
-    borderRadius: 14, padding: 14, marginBottom: 12,
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.md, padding: 14, marginBottom: 12,
   },
-  title: { color: TEXT, fontSize: 14, fontWeight: '700', marginBottom: 4 },
-  meta: { color: MUTED, fontSize: 12, marginBottom: 12 },
-  error: { color: '#f87171', fontSize: 12, marginBottom: 10 },
-  btn: { backgroundColor: GREEN, borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
-  btnText: { color: '#000', fontSize: 13, fontWeight: '700' },
-  videoWrap: { borderRadius: 10, overflow: 'hidden', backgroundColor: '#000' },
+  title: { color: colors.ink, fontSize: 14, fontFamily: fonts.bold, marginBottom: 4 },
+  meta: { color: colors.muted, fontSize: 12, marginBottom: 12, fontFamily: fonts.regular },
+  error: { color: colors.coral, fontSize: 12, marginBottom: 10, fontFamily: fonts.regular },
+  btn: { backgroundColor: colors.primary, borderRadius: radius.sm, paddingVertical: 10, alignItems: 'center' },
+  btnText: { color: colors.white, fontSize: 13, fontFamily: fonts.bold },
+  videoWrap: { borderRadius: radius.sm, overflow: 'hidden', backgroundColor: '#000' },
 });
 
 export default function HighlightArchiveScreen({ navigation }) {
@@ -146,6 +139,8 @@ export default function HighlightArchiveScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [clips, setClips] = useState([]);
   const [jobs, setJobs] = useState([]);
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -156,13 +151,14 @@ export default function HighlightArchiveScreen({ navigation }) {
       ]);
       const archiveData = await archiveRes.json();
       const jobsData = await jobsRes.json();
+      if (!mountedRef.current) return;
       setClips(archiveData.clips ?? []);
       setJobs(jobsData.jobs ?? []);
     } catch {
       // Leave whatever was previously loaded rather than blanking the
       // screen on a transient network failure.
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   }, [token]);
 
@@ -185,7 +181,7 @@ export default function HighlightArchiveScreen({ navigation }) {
 
         {processingJobs.length > 0 && (
           <View style={s.processingBanner}>
-            <ActivityIndicator size="small" color={YELLOW} />
+            <ActivityIndicator size="small" color={colors.amberText} />
             <Text style={s.processingBannerText}>
               {processingJobs.length === 1 ? 'A match is' : `${processingJobs.length} matches are`} still being scanned for rallies — we'll notify you when ready.
             </Text>
@@ -215,7 +211,7 @@ export default function HighlightArchiveScreen({ navigation }) {
         )}
 
         {loading && clips.length === 0 ? (
-          <ActivityIndicator size="large" color={GREEN} style={{ marginTop: 40 }} />
+          <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
         ) : clips.length === 0 && jobs.length === 0 ? (
           <View style={s.empty}>
             <Text style={s.emptyTitle}>No clips yet</Text>
@@ -230,34 +226,34 @@ export default function HighlightArchiveScreen({ navigation }) {
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: DARK },
-  scroll: { padding: 20, paddingTop: 16, paddingBottom: 40 },
+  safe: { flex: 1, backgroundColor: colors.bg },
+  scroll: { padding: spacing.xl, paddingTop: 16, paddingBottom: 40 },
 
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 },
-  title: { color: TEXT, fontSize: 24, fontWeight: '800', letterSpacing: -0.5 },
-  addBtn: { backgroundColor: GREEN, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 },
-  addBtnText: { color: '#000', fontSize: 13, fontWeight: '700' },
+  title: { color: colors.ink, fontSize: 24, fontFamily: fonts.bold, letterSpacing: -0.5 },
+  addBtn: { backgroundColor: colors.primary, borderRadius: radius.pill, paddingHorizontal: 14, paddingVertical: 8 },
+  addBtnText: { color: colors.white, fontSize: 13, fontFamily: fonts.bold },
 
   processingBanner: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
-    backgroundColor: '#241a0d', borderWidth: 1, borderColor: '#4a3a1a',
-    borderRadius: 12, padding: 14, marginBottom: 12,
+    backgroundColor: colors.amberBg, borderWidth: 1, borderColor: colors.gold,
+    borderRadius: radius.md, padding: 14, marginBottom: 12,
   },
-  processingBannerText: { color: YELLOW, fontSize: 13, lineHeight: 18, flex: 1 },
+  processingBannerText: { color: colors.amberText, fontSize: 13, lineHeight: 18, flex: 1, fontFamily: fonts.regular },
 
   reviewBanner: {
-    backgroundColor: '#0d1f0d', borderWidth: 1, borderColor: '#1a3a1a',
-    borderRadius: 12, padding: 14, marginBottom: 12,
+    backgroundColor: colors.primarySoft, borderWidth: 1, borderColor: colors.primary,
+    borderRadius: radius.md, padding: 14, marginBottom: 12,
   },
-  reviewBannerText: { color: GREEN, fontSize: 13, fontWeight: '700', textAlign: 'center' },
+  reviewBannerText: { color: colors.primary, fontSize: 13, fontFamily: fonts.bold, textAlign: 'center' },
 
   failedBanner: {
-    backgroundColor: '#2a0f0f', borderWidth: 1, borderColor: '#4a1a1a',
-    borderRadius: 12, padding: 14, marginBottom: 12,
+    backgroundColor: '#f3d4d0', borderWidth: 1, borderColor: colors.coral,
+    borderRadius: radius.md, padding: 14, marginBottom: 12,
   },
-  failedBannerText: { color: '#f87171', fontSize: 13, textAlign: 'center' },
+  failedBannerText: { color: colors.coral, fontSize: 13, textAlign: 'center', fontFamily: fonts.regular },
 
   empty: { alignItems: 'center', paddingVertical: 60 },
-  emptyTitle: { color: TEXT, fontSize: 18, fontWeight: '700', marginBottom: 6 },
-  emptySub: { color: MUTED, fontSize: 13, textAlign: 'center' },
+  emptyTitle: { color: colors.ink, fontSize: 18, fontFamily: fonts.bold, marginBottom: 6 },
+  emptySub: { color: colors.muted, fontSize: 13, textAlign: 'center', fontFamily: fonts.regular },
 });

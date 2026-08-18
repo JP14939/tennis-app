@@ -56,7 +56,8 @@ function queryNearbyCourts(lat, lng, radiusKm, userId) {
 router.get('/courts', requireAuth, async (req, res) => {
   const lat = parseFloat(req.query.lat);
   const lng = parseFloat(req.query.lng);
-  const radiusKm = parseFloat(req.query.radiusKm) || DEFAULT_RADIUS_KM;
+  const parsedRadiusKm = parseFloat(req.query.radiusKm);
+  const radiusKm = Number.isNaN(parsedRadiusKm) ? DEFAULT_RADIUS_KM : parsedRadiusKm;
 
   if (Number.isNaN(lat) || Number.isNaN(lng)) {
     return res.status(400).json({ error: 'lat and lng are required' });

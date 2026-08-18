@@ -131,13 +131,19 @@ router.post('/highlights/upload', requireAuth, requirePremium, upload.single('vi
 });
 
 router.get('/highlights/jobs', requireAuth, (req, res) => {
-  // pending_review = rallies this job produced that the user hasn't tagged
-  // yet -- lets the Archive screen show "ready to review" without a
-  // separate call per job.
+  // pending_review = rallies this job produced that the user hasn't given an
+  // outcome yet -- lets the Archive screen show "ready to review" without a
+  // separate call per job. Boundary review (was this session bundled into
+  // the same outcome question -- no longer) is a completely separate,
+  // dev-only queue now: pending_boundary_review, same shape, counting
+  // boundary_note instead. The two are independent on purpose -- an outcome
+  // and a boundary judgment are unrelated questions asked by two different
+  // screens now (HighlightReviewScreen.js vs DevRallyBoundaryReviewScreen.js).
   const jobs = db.prepare(`
     SELECT
       j.id, j.status, j.error, j.created_at, j.completed_at,
-      (SELECT COUNT(*) FROM rally_clips c WHERE c.job_id = j.id AND c.outcome_tag IS NULL) AS pending_review
+      (SELECT COUNT(*) FROM rally_clips c WHERE c.job_id = j.id AND c.outcome_tag IS NULL) AS pending_review,
+      (SELECT COUNT(*) FROM rally_clips c WHERE c.job_id = j.id AND c.boundary_note IS NULL) AS pending_boundary_review
     FROM highlight_jobs j
     WHERE j.user_id = ?
     ORDER BY j.created_at DESC
@@ -197,7 +203,7 @@ function runReelJob(reelJobId, outputPath, clipPaths) {
   });
 }
 
-router.post('/highlights/jobs/:id/reel', requireAuth, (req, res) => {
+router.post('/highlights/jobs/:id/reel', requireAuth, requirePremium, (req, res) => {
   const job = db.prepare(`SELECT * FROM highlight_jobs WHERE id = ? AND user_id = ?`).get(req.params.id, req.user.id);
   if (!job) return res.status(404).json({ error: 'Job not found' });
   if (job.status !== 'done') return res.status(400).json({ error: 'Job is not ready yet' });

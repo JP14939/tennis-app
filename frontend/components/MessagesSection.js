@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Image } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
@@ -56,10 +56,15 @@ export default function MessagesSection({ navigation }) {
   const { token } = useAuth();
   const [threads, setThreads] = useState([]);
   const [loading, setLoading] = useState(true);
+  const mountedRef = useRef(true);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   useFocusEffect(useCallback(() => {
     setLoading(true);
-    getThreads(token).then((data) => setThreads(data.threads)).catch(() => {}).finally(() => setLoading(false));
+    getThreads(token)
+      .then((data) => { if (mountedRef.current) setThreads(data.threads); })
+      .catch(() => {})
+      .finally(() => { if (mountedRef.current) setLoading(false); });
   }, [token]));
 
   return (

@@ -13,7 +13,7 @@
     "android": {
       "package": "com.jackp.tennisai",
       "adaptiveIcon": {
-        "backgroundColor": "#0d0d0d",
+        "backgroundColor": "#ebe8df",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -53,7 +53,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#0d0d0d",
+          "backgroundColor": "#ebe8df",
           "image": "./assets/splash-icon.png",
           "imageWidth": 200
         }

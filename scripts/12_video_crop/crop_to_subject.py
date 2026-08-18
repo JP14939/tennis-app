@@ -140,7 +140,18 @@ def crop_to_subject(video_path, output_path):
             break
         box = boxes[frame_idx] if frame_idx < len(boxes) else boxes[-1]
         canvas = _place_on_canvas(frame, box) if box else None
-        writer.write(canvas if canvas is not None else frame[:CANVAS_H, :CANVAS_W])
+        if canvas is None:
+            # box was missing, or _place_on_canvas rejected it as degenerate
+            # after clamping to this frame's bounds (x1<=x0/y1<=y0) -- fall
+            # back to the WHOLE frame through the same resize/pad path,
+            # guaranteed to always produce a CANVAS_W x CANVAS_H frame. The
+            # previous fallback (`frame[:CANVAS_H, :CANVAS_W]`, a raw slice)
+            # produced a frame SMALLER than the writer's fixed output size
+            # whenever the source video was smaller than 854x480 in either
+            # dimension, which cv2.VideoWriter doesn't handle -- silently
+            # corrupted/garbled output instead of a clean fallback.
+            canvas = _place_on_canvas(frame, (0, 0, width, height))
+        writer.write(canvas)
         written += 1
         frame_idx += 1
 
