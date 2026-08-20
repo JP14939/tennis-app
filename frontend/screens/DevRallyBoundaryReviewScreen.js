@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import { useIsFocused } from '@react-navigation/native';
 import PlatformVideo from '../components/PlatformVideo';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE } from '../config/api';
@@ -62,7 +63,7 @@ function formatTime(sec) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function ClipRow({ clip, value, onTag, boundaryValues, onBoundary }) {
+function ClipRow({ clip, value, onTag, boundaryValues, onBoundary, focused }) {
   const videoRef = useRef(null);
   const [playing, setPlaying] = useState(false);
   // Every pending rally in the job renders as a row in one scrollable list
@@ -74,8 +75,28 @@ function ClipRow({ clip, value, onTag, boundaryValues, onBoundary }) {
   // moment the screen opened.
   const [loaded, setLoaded] = useState(false);
   const windowWidth = useWindowWidth();
-  const videoWidth = Math.min(windowWidth - 48, 500);
-  const videoHeight = Math.round(videoWidth * 0.56);
+  // Bigger than before within its card -- the tag/boundary controls now
+  // overlay directly on top of the video instead of stacking below it, so
+  // the video itself can claim the space those rows used to occupy.
+  const videoWidth = Math.min(windowWidth - 32, 640);
+  const videoHeight = Math.round(videoWidth * 0.62);
+
+  // React Navigation keeps this whole screen mounted underneath when you
+  // navigate to another job's review (or back to the job list) rather than
+  // unmounting it -- without this, any clip already tapped open here kept
+  // buffering/playing in the background while a different job's screen was
+  // on top, competing for bandwidth with whatever the user was actually
+  // looking at. `focused` (from the parent's useIsFocused()) tears the
+  // video down whenever this screen isn't the visible one.
+  const showVideo = loaded && focused;
+
+  // The video unmounts on blur (showVideo above), so no further
+  // onStatusUpdate calls arrive to correct `playing` -- reset it directly
+  // so the play-hint overlay is right if/when this row scrolls back into a
+  // focused screen instead of showing a stale "already playing" state.
+  useEffect(() => {
+    if (!focused) setPlaying(false);
+  }, [focused]);
 
   const toggle = () => {
     if (!loaded) {
@@ -93,60 +114,67 @@ function ClipRow({ clip, value, onTag, boundaryValues, onBoundary }) {
 
   return (
     <View style={r.card}>
-      <TouchableOpacity
-        activeOpacity={1}
-        style={[r.videoWrap, { width: videoWidth, height: videoHeight }]}
-        onPress={toggle}
-      >
-        {loaded && (
-          <PlatformVideo
-            ref={videoRef}
-            uri={`${API_BASE}${clip.clip_url}`}
-            width={videoWidth}
-            height={videoHeight}
-            onStatusUpdate={(status) => setPlaying(!!status.isPlaying)}
-          />
-        )}
-        {!playing && (
-          <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-            <View style={r.playHint}>
-              <Text style={r.playHintText}>▶</Text>
+      <View style={[r.videoWrap, { width: videoWidth, height: videoHeight }]}>
+        <TouchableOpacity activeOpacity={1} style={StyleSheet.absoluteFill} onPress={toggle}>
+          {showVideo && (
+            <PlatformVideo
+              ref={videoRef}
+              uri={`${API_BASE}${clip.clip_url}`}
+              width={videoWidth}
+              height={videoHeight}
+              onStatusUpdate={(status) => setPlaying(!!status.isPlaying)}
+            />
+          )}
+          {!playing && (
+            <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+              <View style={r.playHint}>
+                <Text style={r.playHintText}>▶</Text>
+              </View>
             </View>
-          </View>
-        )}
-      </TouchableOpacity>
-      <View style={r.metaRow}>
-        <Text style={r.time}>{formatTime(clip.start_sec)}</Text>
-        <Text style={r.duration}>{clip.duration_sec.toFixed(1)}s · {clip.swing_count} swings</Text>
-      </View>
+          )}
+        </TouchableOpacity>
 
-      {boundaryValues.includes('cut_off_early') ? (
-        <Text style={r.outcomeHiddenNote}>Outcome skipped — clip is cut off before the point ends, so there's nothing to judge here.</Text>
-      ) : (
-        <View style={r.tagRow}>
-          {TAG_OPTIONS.map(opt => (
-            <TouchableOpacity
-              key={opt.value}
-              style={[r.tagPill, value === opt.value && r.tagPillActive]}
-              onPress={() => onTag(opt.value)}
-            >
-              <Text style={[r.tagLabel, value === opt.value && r.tagLabelActive]}>{opt.label}</Text>
-            </TouchableOpacity>
-          ))}
+        {/* Meta strip floats over the top of the video instead of sitting
+            in its own row below it. */}
+        <View style={r.metaOverlay} pointerEvents="none">
+          <Text style={r.time}>{formatTime(clip.start_sec)}</Text>
+          <Text style={r.duration}>{clip.duration_sec.toFixed(1)}s · {clip.swing_count} swings</Text>
         </View>
-      )}
 
-      <Text style={r.boundaryLabel}>Are the start/end points right?</Text>
-      <View style={r.tagRow}>
-        {BOUNDARY_OPTIONS.map(opt => (
-          <TouchableOpacity
-            key={opt.value}
-            style={[r.tagPill, boundaryValues.includes(opt.value) && r.boundaryPillActive]}
-            onPress={() => onBoundary(opt.value)}
-          >
-            <Text style={[r.tagLabel, boundaryValues.includes(opt.value) && r.tagLabelActive]}>{opt.label}</Text>
-          </TouchableOpacity>
-        ))}
+        {/* Tag/boundary controls float on top of the video's bottom edge
+            (semi-transparent strip) instead of stacking below it -- same
+            "controls overlay the video" principle as the other review
+            screens, applied per-card here rather than per-viewport. */}
+        <View style={r.controlsOverlay}>
+          {boundaryValues.includes('cut_off_early') ? (
+            <Text style={r.outcomeHiddenNote}>Outcome skipped — clip is cut off before the point ends, so there's nothing to judge here.</Text>
+          ) : (
+            <View style={r.tagRow}>
+              {TAG_OPTIONS.map(opt => (
+                <TouchableOpacity
+                  key={opt.value}
+                  style={[r.tagPill, value === opt.value && r.tagPillActive]}
+                  onPress={() => onTag(opt.value)}
+                >
+                  <Text style={[r.tagLabel, value === opt.value && r.tagLabelActive]}>{opt.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          <Text style={r.boundaryLabel}>Are the start/end points right?</Text>
+          <View style={r.tagRow}>
+            {BOUNDARY_OPTIONS.map(opt => (
+              <TouchableOpacity
+                key={opt.value}
+                style={[r.tagPill, boundaryValues.includes(opt.value) && r.boundaryPillActive]}
+                onPress={() => onBoundary(opt.value)}
+              >
+                <Text style={[r.tagLabel, boundaryValues.includes(opt.value) && r.tagLabelActive]}>{opt.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
       </View>
     </View>
   );
@@ -154,25 +182,37 @@ function ClipRow({ clip, value, onTag, boundaryValues, onBoundary }) {
 const r = StyleSheet.create({
   card: {
     backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
-    borderRadius: radius.lg, padding: 14, marginBottom: 12,
+    borderRadius: radius.lg, padding: 8, marginBottom: 12,
   },
-  videoWrap: { borderRadius: radius.sm, overflow: 'hidden', backgroundColor: '#000', marginBottom: 10 },
+  videoWrap: { borderRadius: radius.sm, overflow: 'hidden', backgroundColor: '#000', position: 'relative' },
   playHint: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   playHintText: { color: 'rgba(255,255,255,0.75)', fontSize: 40 },
-  metaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 },
-  time: { color: colors.ink, fontSize: 15, fontFamily: fonts.bold },
-  duration: { color: colors.muted, fontSize: 12, fontFamily: fonts.regular },
-  tagRow: { flexDirection: 'row', gap: 6, marginBottom: 12 },
+
+  // Floating over the top of the video rather than a row above it.
+  metaOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline',
+    paddingHorizontal: 10, paddingVertical: 8, backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  time: { color: '#fff', fontSize: 15, fontFamily: fonts.bold },
+  duration: { color: 'rgba(255,255,255,0.8)', fontSize: 12, fontFamily: fonts.regular },
+
+  // Floating over the bottom of the video instead of stacked below it.
+  controlsOverlay: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 10, paddingTop: 10, paddingBottom: 10,
+  },
+  tagRow: { flexDirection: 'row', gap: 6, marginBottom: 10 },
   tagPill: {
-    flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm,
-    paddingVertical: 8, alignItems: 'center', gap: 2,
+    flex: 1, borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)', borderRadius: radius.sm,
+    paddingVertical: 8, alignItems: 'center', gap: 2, backgroundColor: 'rgba(255,255,255,0.06)',
   },
   tagPillActive: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
   boundaryPillActive: { backgroundColor: colors.lime, borderColor: colors.limeText },
-  tagLabel: { color: colors.muted, fontSize: 10, fontFamily: fonts.semibold },
+  tagLabel: { color: 'rgba(255,255,255,0.85)', fontSize: 10, fontFamily: fonts.semibold },
   tagLabelActive: { color: colors.primary },
-  boundaryLabel: { color: colors.muted, fontSize: 11, fontFamily: fonts.semibold, marginBottom: 6 },
-  outcomeHiddenNote: { color: colors.muted, fontSize: 11.5, lineHeight: 16, fontStyle: 'italic', marginBottom: 12, fontFamily: fonts.regular },
+  boundaryLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 11, fontFamily: fonts.semibold, marginBottom: 6 },
+  outcomeHiddenNote: { color: 'rgba(255,255,255,0.8)', fontSize: 11.5, lineHeight: 16, fontStyle: 'italic', marginBottom: 12, fontFamily: fonts.regular },
   errorText: { color: colors.muted, fontSize: 13.5, textAlign: 'center', marginBottom: 14, paddingHorizontal: 24, fontFamily: fonts.regular },
   retryBtn: { backgroundColor: colors.primary, borderRadius: radius.pill, paddingHorizontal: 20, paddingVertical: 11 },
   retryBtnText: { color: colors.white, fontSize: 13.5, fontFamily: fonts.bold },
@@ -181,6 +221,7 @@ const r = StyleSheet.create({
 export default function DevRallyBoundaryReviewScreen({ route, navigation }) {
   const { jobId } = route.params ?? {};
   const { token } = useAuth();
+  const isFocused = useIsFocused();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [rallies, setRallies] = useState([]);
@@ -309,6 +350,7 @@ export default function DevRallyBoundaryReviewScreen({ route, navigation }) {
             onTag={(v) => setTag(clip.id, v)}
             boundaryValues={boundaryNotes[clip.id] || []}
             onBoundary={(v) => setBoundaryNote(clip.id, v)}
+            focused={isFocused}
           />
         ))}
 

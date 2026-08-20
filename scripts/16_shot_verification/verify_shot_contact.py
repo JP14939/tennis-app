@@ -25,7 +25,8 @@ sys.path.insert(0, os.path.join(SCRIPTS_DIR, '07_ball_racket_tracking'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '12_video_crop'))
 
 from racket_tracker import (  # noqa: E402
-    track_racket_and_ball, find_contact_frame, get_model, RACKET_CLASS, BALL_CLASS, CONF_THRESHOLD, _center,
+    track_racket_and_ball, find_contact_frame, ball_departure_confirmed,
+    get_model, RACKET_CLASS, BALL_CLASS, CONF_THRESHOLD, _center,
 )
 from crop_to_subject import _frame_bbox  # noqa: E402
 
@@ -334,6 +335,20 @@ def verify_swings(video_path, swings, fps, frames=None, search_window_sec=SEARCH
                 # "not a strike." Real racket/ball position evidence is now
                 # kept as real evidence regardless of the speed ratio.
                 speed_at_contact, peak_speed = _racket_speed_at(detections, frame)
+            elif method == 'wrist_velocity_fallback':
+                # No racket/ball proximity or occlusion-gap evidence at all
+                # -- the one case filter_verified_swings() rejects outright.
+                # Independent evidence: if the ball is then seen moving away
+                # from the racket's position at this frame, that's real
+                # corroboration of a strike even without proximity/occlusion
+                # evidence pinpointing the exact contact instant. Upgrades
+                # the method (so it survives filter_verified_swings() on its
+                # own merits) rather than silently keeping the fallback
+                # label with a raised confidence, so it's clear in the data
+                # WHY this one was trusted.
+                departed, departure_conf = ball_departure_confirmed(detections, frame, fps)
+                if departed:
+                    conf, method = departure_conf, 'ball_departure_confirmed'
         except Exception as e:
             frame, conf, method, speed_at_contact, peak_speed = peak_frame, 0.0, f'error: {e}', None, None
         # find_contact_frame()'s actual guessed frame was computed above but
@@ -367,9 +382,9 @@ def filter_verified_swings(swings, min_confidence=DEFAULT_MIN_CONFIDENCE):
         the two conditions above matched this shape, so a tracking failure
         was previously KEPT as if it had real corroboration instead of
         being rejected like any other no-evidence candidate.
-    A real ball_occlusion_gap or ball_racket_proximity match (racket
-    detected near the ball) is kept regardless of its exact confidence
-    value or how fast the racket was moving there.
+    A real ball_occlusion_gap, ball_racket_proximity, or
+    ball_departure_confirmed match is kept regardless of its exact
+    confidence value or how fast the racket was moving there.
     """
     return [
         sw for sw in swings

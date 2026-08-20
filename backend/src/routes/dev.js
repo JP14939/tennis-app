@@ -35,6 +35,21 @@ const LOG_MANUAL_REVIEW = path.join(SCRIPTS_DIR, '16_shot_verification', 'log_ma
 const CANDIDATES_TIMEOUT_MS = 10 * 60 * 1000;
 const LOG_REVIEW_TIMEOUT_MS = 15 * 1000; // just appends a line to two JSONL files
 
+const LIST_TIP_REVIEW_CANDIDATES = path.join(SCRIPTS_DIR, '09_coaching_ai', 'list_tip_review_candidates.py');
+const LOG_MANUAL_TIP_REVIEW = path.join(SCRIPTS_DIR, '09_coaching_ai', 'log_manual_tip_review.py');
+// Re-runs pose extraction per candidate analysis (no Claude call) -- same
+// order of magnitude as CANDIDATES_TIMEOUT_MS above, generous ceiling for
+// a batch of ~20 candidates rather than a single clip.
+const TIP_REVIEW_CANDIDATES_TIMEOUT_MS = 10 * 60 * 1000;
+const LOG_TIP_REVIEW_TIMEOUT_MS = 15 * 1000; // just appends a line to two JSONL files
+
+const LIST_PRO_CLIP_REVIEW_CANDIDATES = path.join(SCRIPTS_DIR, '06_database_build', 'list_pro_clip_review_candidates.py');
+const LOG_PRO_CLIP_REVIEW = path.join(SCRIPTS_DIR, '06_database_build', 'log_pro_clip_review.py');
+// Just reads pro_database.json + the review log, no pose extraction --
+// near-instant, but generous ceiling matches the other list routes' style.
+const PRO_CLIP_REVIEW_CANDIDATES_TIMEOUT_MS = 30 * 1000;
+const LOG_PRO_CLIP_REVIEW_TIMEOUT_MS = 15 * 1000; // just appends a line to one JSONL file
+
 // Hidden Dev Page (Profile -> Settings -> Dev Page) -- every route here is
 // requireAuth + requireAdmin, a real 403 for anyone but the admin allowlist
 // in middleware/requireAdmin.js, regardless of what the frontend hides.
@@ -135,6 +150,156 @@ router.post('/dev/swing-candidates/label', requireAuth, requireAdmin, (req, res)
     clearTimeout(timeout);
     console.error('[dev] failed to spawn python:', err);
     res.status(500).json({ error: 'Failed to start review logging' });
+  });
+
+  proc.stdin.write(JSON.stringify(req.body));
+  proc.stdin.end();
+});
+
+// Free, no-API-cost manual review tool for coaching-tip selection: lists
+// recent saved analyses with the full scored candidate-issue list
+// (tip_selector.score_issues()) re-derived alongside whichever tips were
+// actually shown, so Jack can judge whether the right ones got picked --
+// the same free substitute for tip_verifier.py that swing-candidates
+// above is for the shot-contact/classifier verifiers.
+router.get('/dev/tip-review-candidates', requireAuth, requireAdmin, (req, res) => {
+  const args = [LIST_TIP_REVIEW_CANDIDATES];
+  if (req.query.limit) args.push(String(req.query.limit));
+  const proc = spawn(PYTHON, args);
+
+  let stdout = '';
+  let stderr = '';
+  proc.stdout.on('data', (chunk) => { stdout += chunk; });
+  proc.stderr.on('data', (chunk) => { stderr += chunk; });
+
+  const timeout = setTimeout(() => proc.kill(), TIP_REVIEW_CANDIDATES_TIMEOUT_MS);
+
+  proc.on('close', (code) => {
+    clearTimeout(timeout);
+    if (code !== 0) {
+      console.error('[dev] list_tip_review_candidates.py failed:', stderr.slice(-2000));
+      return res.status(500).json({ error: 'Failed to list tip review candidates' });
+    }
+    try {
+      res.json(JSON.parse(stdout));
+    } catch {
+      console.error('[dev] failed to parse list_tip_review_candidates.py output:', stdout.slice(-2000));
+      res.status(500).json({ error: 'Tip review candidate list produced invalid output' });
+    }
+  });
+
+  proc.on('error', (err) => {
+    clearTimeout(timeout);
+    console.error('[dev] failed to spawn python:', err);
+    res.status(500).json({ error: 'Failed to start tip review candidate listing' });
+  });
+});
+
+// Logs Jack's own manual verdict on one tip-review candidate -- the free
+// substitute for a paid Claude teacher call. Body is
+// {analysis_id, shot_type, deviation_features, shown_tip_ids, reviewer_pick_ids}.
+router.post('/dev/tip-review/label', requireAuth, requireAdmin, (req, res) => {
+  const proc = spawn(PYTHON, [LOG_MANUAL_TIP_REVIEW]);
+
+  let stdout = '';
+  let stderr = '';
+  proc.stdout.on('data', (chunk) => { stdout += chunk; });
+  proc.stderr.on('data', (chunk) => { stderr += chunk; });
+
+  const timeout = setTimeout(() => proc.kill(), LOG_TIP_REVIEW_TIMEOUT_MS);
+
+  proc.on('close', (code) => {
+    clearTimeout(timeout);
+    if (code !== 0) {
+      console.error('[dev] log_manual_tip_review.py failed:', stderr.slice(-2000));
+      return res.status(500).json({ error: 'Failed to log tip review' });
+    }
+    try {
+      res.json(JSON.parse(stdout));
+    } catch {
+      console.error('[dev] failed to parse log_manual_tip_review.py output:', stdout.slice(-2000));
+      res.status(500).json({ error: 'Log tip review produced invalid output' });
+    }
+  });
+
+  proc.on('error', (err) => {
+    clearTimeout(timeout);
+    console.error('[dev] failed to spawn python:', err);
+    res.status(500).json({ error: 'Failed to start tip review logging' });
+  });
+
+  proc.stdin.write(JSON.stringify(req.body));
+  proc.stdin.end();
+});
+
+// Free manual data-quality review tool for the pro database itself --
+// mismatched footage, slow-motion clips, clips spanning the tail of one
+// swing/player into the start of another (flagged directly, not derived
+// from any automated check). Not a teacher-student ML loop like the
+// review tools above -- this just curates data quality.
+router.get('/dev/pro-clip-review-candidates', requireAuth, requireAdmin, (req, res) => {
+  const args = [LIST_PRO_CLIP_REVIEW_CANDIDATES];
+  if (req.query.limit) args.push(String(req.query.limit));
+  const proc = spawn(PYTHON, args);
+
+  let stdout = '';
+  let stderr = '';
+  proc.stdout.on('data', (chunk) => { stdout += chunk; });
+  proc.stderr.on('data', (chunk) => { stderr += chunk; });
+
+  const timeout = setTimeout(() => proc.kill(), PRO_CLIP_REVIEW_CANDIDATES_TIMEOUT_MS);
+
+  proc.on('close', (code) => {
+    clearTimeout(timeout);
+    if (code !== 0) {
+      console.error('[dev] list_pro_clip_review_candidates.py failed:', stderr.slice(-2000));
+      return res.status(500).json({ error: 'Failed to list pro clip review candidates' });
+    }
+    try {
+      res.json(JSON.parse(stdout));
+    } catch {
+      console.error('[dev] failed to parse list_pro_clip_review_candidates.py output:', stdout.slice(-2000));
+      res.status(500).json({ error: 'Pro clip review candidate list produced invalid output' });
+    }
+  });
+
+  proc.on('error', (err) => {
+    clearTimeout(timeout);
+    console.error('[dev] failed to spawn python:', err);
+    res.status(500).json({ error: 'Failed to start pro clip review candidate listing' });
+  });
+});
+
+// Logs Jack's manual data-quality verdict on one pro-database clip. Body
+// is {id, verdict, note}, verdict one of 'ok'|'mismatched'|'slow_motion'|'wrong_boundary'.
+router.post('/dev/pro-clip-review/label', requireAuth, requireAdmin, (req, res) => {
+  const proc = spawn(PYTHON, [LOG_PRO_CLIP_REVIEW]);
+
+  let stdout = '';
+  let stderr = '';
+  proc.stdout.on('data', (chunk) => { stdout += chunk; });
+  proc.stderr.on('data', (chunk) => { stderr += chunk; });
+
+  const timeout = setTimeout(() => proc.kill(), LOG_PRO_CLIP_REVIEW_TIMEOUT_MS);
+
+  proc.on('close', (code) => {
+    clearTimeout(timeout);
+    if (code !== 0) {
+      console.error('[dev] log_pro_clip_review.py failed:', stderr.slice(-2000));
+      return res.status(500).json({ error: 'Failed to log pro clip review' });
+    }
+    try {
+      res.json(JSON.parse(stdout));
+    } catch {
+      console.error('[dev] failed to parse log_pro_clip_review.py output:', stdout.slice(-2000));
+      res.status(500).json({ error: 'Log pro clip review produced invalid output' });
+    }
+  });
+
+  proc.on('error', (err) => {
+    clearTimeout(timeout);
+    console.error('[dev] failed to spawn python:', err);
+    res.status(500).json({ error: 'Failed to start pro clip review logging' });
   });
 
   proc.stdin.write(JSON.stringify(req.body));

@@ -4,7 +4,7 @@ import PlatformVideo from '../components/PlatformVideo';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE } from '../config/api';
 import { playTapSound } from '../utils/sounds';
-import { useWindowWidth } from '../utils/responsive';
+import { useWindowSize } from '../utils/responsive';
 import RequireAdmin from '../components/RequireAdmin';
 import { colors, fonts, radius, spacing } from '../theme';
 
@@ -71,9 +71,12 @@ export default function DevSwingReviewScreen({ route, navigation }) {
   // the async seek's status update lands.
   const [scrubFraction, setScrubFraction] = useState(null);
 
-  const windowWidth = useWindowWidth();
-  const videoWidth = Math.min(windowWidth - 48, 500);
-  const videoHeight = Math.round(videoWidth * 0.56);
+  // Video fills the whole screen; the question panel below floats as a
+  // bottom overlay on top of it instead of taking its own reserved space
+  // in document flow.
+  const { width: windowWidth, height: windowHeight } = useWindowSize();
+  const videoWidth = windowWidth;
+  const videoHeight = windowHeight;
 
   useEffect(() => {
     setLoading(true);
@@ -277,176 +280,183 @@ export default function DevSwingReviewScreen({ route, navigation }) {
   return (
     <RequireAdmin navigation={navigation}>
       <SafeAreaView style={s.safe}>
-        <View style={s.progressRow}>
-          <Text style={s.progressText}>Swing {index + 1} of {candidates.length}</Text>
-          <Text style={s.progressSub}>Rally #{current.rally_id} · {formatTime(current.peak_time_sec)}</Text>
-        </View>
-
-        <TouchableOpacity
-          activeOpacity={1}
-          style={[s.videoWrap, { width: videoWidth, height: videoHeight, alignSelf: 'center' }]}
-          onPress={step === 'contactRough' ? toggleRoughPlay : replay}
-        >
-          <PlatformVideo
-            ref={videoRef}
-            uri={`${API_BASE}${current.clip_url}`}
-            width={videoWidth}
-            height={videoHeight}
-            onStatusUpdate={setStatus}
-          />
-        </TouchableOpacity>
-        {step !== 'contactFrame' && step !== 'contactRough' && (
-          <TouchableOpacity style={s.replayBtn} onPress={replay}>
-            <Text style={s.replayBtnText}>↺ Replay</Text>
+        <View style={s.stage}>
+          <TouchableOpacity
+            activeOpacity={1}
+            style={s.videoWrap}
+            onPress={step === 'contactRough' ? toggleRoughPlay : replay}
+          >
+            <PlatformVideo
+              ref={videoRef}
+              uri={`${API_BASE}${current.clip_url}`}
+              width={videoWidth}
+              height={videoHeight}
+              onStatusUpdate={setStatus}
+            />
           </TouchableOpacity>
-        )}
 
-        {/* Invisible prefetch of the next candidate's clip so advancing
-            doesn't start its download cold -- never rendered visibly or
-            played, just mounted so PlatformVideo begins buffering it. */}
-        {next && (
-          <View style={s.prefetchWrap} pointerEvents="none">
-            <PlatformVideo uri={`${API_BASE}${next.clip_url}`} width={1} height={1} />
+          <View style={s.progressRow} pointerEvents="box-none">
+            <Text style={s.progressText}>Swing {index + 1} of {candidates.length}</Text>
+            <Text style={s.progressSub}>Rally #{current.rally_id} · {formatTime(current.peak_time_sec)}</Text>
+            {step !== 'contactFrame' && step !== 'contactRough' && (
+              <TouchableOpacity style={s.replayBtn} onPress={replay}>
+                <Text style={s.replayBtnText}>↺ Replay</Text>
+              </TouchableOpacity>
+            )}
           </View>
-        )}
 
-        {step === 'outcome' && (
-          <View style={s.questionBlock}>
-            <Text style={s.question}>Is this a real racket-to-ball strike?</Text>
-            <Text style={s.questionSub}>Not camera fiddling, a ball bounce, tossing/catching, or just walking.</Text>
-            <View style={s.answerRow}>
-              <TouchableOpacity style={[s.answerBtn, s.answerBtnNo]} onPress={onNotAShot} disabled={submitting}>
-                <Text style={s.answerBtnText}>No, not a shot</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[s.answerBtn, s.answerBtnYes]} onPress={onRealShot} disabled={submitting}>
-                <Text style={s.answerBtnText}>Yes, real shot</Text>
-              </TouchableOpacity>
+          {/* Invisible prefetch of the next candidate's clip so advancing
+              doesn't start its download cold -- never rendered visibly or
+              played, just mounted so PlatformVideo begins buffering it. */}
+          {next && (
+            <View style={s.prefetchWrap} pointerEvents="none">
+              <PlatformVideo uri={`${API_BASE}${next.clip_url}`} width={1} height={1} />
             </View>
-          </View>
-        )}
+          )}
 
-        {step === 'shotType' && (
-          <View style={s.questionBlock}>
-            <Text style={s.question}>What shot type?</Text>
-            <View style={s.answerRow}>
-              {SHOT_TYPES.map((opt) => (
-                <TouchableOpacity
-                  key={opt.value}
-                  style={[s.answerBtn, s.answerBtnType]}
-                  onPress={() => onShotType(opt.value)}
-                  disabled={submitting}
-                >
-                  <Text style={s.answerBtnText}>{opt.label}</Text>
+          {step === 'outcome' && (
+            <View style={s.questionBlock}>
+              <Text style={s.question}>Is this a real racket-to-ball strike?</Text>
+              <Text style={s.questionSub}>Not camera fiddling, a ball bounce, tossing/catching, or just walking.</Text>
+              <View style={s.answerRow}>
+                <TouchableOpacity style={[s.answerBtn, s.answerBtnNo]} onPress={onNotAShot} disabled={submitting}>
+                  <Text style={s.answerBtnText}>No, not a shot</Text>
                 </TouchableOpacity>
-              ))}
+                <TouchableOpacity style={[s.answerBtn, s.answerBtnYes]} onPress={onRealShot} disabled={submitting}>
+                  <Text style={s.answerBtnText}>Yes, real shot</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
-        )}
+          )}
 
-        {step === 'contactRough' && (
-          <View style={s.questionBlock}>
-            <Text style={s.question}>Find the contact frame</Text>
-            <Text style={s.questionSub}>Tap video to play/pause · drag slider to scrub · tap "Mark" roughly on contact</Text>
+          {step === 'shotType' && (
+            <View style={s.questionBlock}>
+              <Text style={s.question}>What shot type?</Text>
+              <View style={s.answerRow}>
+                {SHOT_TYPES.map((opt) => (
+                  <TouchableOpacity
+                    key={opt.value}
+                    style={[s.answerBtn, s.answerBtnType]}
+                    onPress={() => onShotType(opt.value)}
+                    disabled={submitting}
+                  >
+                    <Text style={s.answerBtnText}>{opt.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          )}
 
-            {IS_WEB
-              ? React.createElement('input', {
-                  type: 'range',
-                  min: '0', max: '1', step: '0.001',
-                  value: String(progressFraction),
-                  onChange: (e) => {
-                    const frac = parseFloat(e.target.value);
-                    videoRef.current?.setPositionAsync(Math.round(frac * duration * 1000));
-                  },
-                  style: {
-                    width: '100%', accentColor: colors.primary,
-                    marginBottom: '8px', cursor: 'pointer', height: '20px',
-                  },
-                })
-              : (
-                <View
-                  style={s.progressTrack}
-                  onStartShouldSetResponder={() => true}
-                  onResponderGrant={onScrubMove}
-                  onResponderMove={onScrubMove}
-                  onResponderRelease={() => setScrubFraction(null)}
-                  onResponderTerminate={() => setScrubFraction(null)}
-                >
-                  <View style={[s.progressFill, { width: `${progressFraction * 100}%` }]} />
-                  <View style={[s.progressThumb, { left: `${progressFraction * 100}%` }]} />
+          {step === 'contactRough' && (
+            <View style={s.questionBlock}>
+              <Text style={s.question}>Find the contact frame</Text>
+              <Text style={s.questionSub}>Tap video to play/pause · drag slider to scrub · tap "Mark" roughly on contact</Text>
+
+              {IS_WEB
+                ? React.createElement('input', {
+                    type: 'range',
+                    min: '0', max: '1', step: '0.001',
+                    value: String(progressFraction),
+                    onChange: (e) => {
+                      const frac = parseFloat(e.target.value);
+                      videoRef.current?.setPositionAsync(Math.round(frac * duration * 1000));
+                    },
+                    style: {
+                      width: '100%', accentColor: colors.primary,
+                      marginBottom: '8px', cursor: 'pointer', height: '20px',
+                    },
+                  })
+                : (
+                  <View
+                    style={s.progressTrack}
+                    onStartShouldSetResponder={() => true}
+                    onResponderGrant={onScrubMove}
+                    onResponderMove={onScrubMove}
+                    onResponderRelease={() => setScrubFraction(null)}
+                    onResponderTerminate={() => setScrubFraction(null)}
+                  >
+                    <View style={[s.progressFill, { width: `${progressFraction * 100}%` }]} />
+                    <View style={[s.progressThumb, { left: `${progressFraction * 100}%` }]} />
+                  </View>
+                )
+              }
+              <Text style={s.timeText}>{currentTime.toFixed(2)}s / {duration.toFixed(1)}s</Text>
+
+              <TouchableOpacity style={s.answerBtn2} onPress={markContactWindow} disabled={submitting}>
+                <Text style={s.answerBtnText}>Mark contact window →</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {step === 'contactFrame' && (
+            <View style={s.questionBlock}>
+              <Text style={s.question}>Pinpoint the exact contact frame</Text>
+              <Text style={s.questionSub}>Drag until the racket is touching the ball, then confirm.</Text>
+
+              <View style={s.frameRow}>
+                <TouchableOpacity style={s.frameBtn} onPress={() => setContactOffset((o) => Math.max(o - 1, -FINE_RADIUS))}>
+                  <Text style={s.frameBtnText}>◀</Text>
+                </TouchableOpacity>
+                <View style={s.frameCenter}>
+                  <Text style={s.frameNumber}>Frame {contactFrameAbs}</Text>
+                  <Text style={s.frameOffset}>{contactOffset >= 0 ? '+' : ''}{contactOffset} · {contactTimeSec.toFixed(2)}s</Text>
                 </View>
-              )
-            }
-            <Text style={s.timeText}>{currentTime.toFixed(2)}s / {duration.toFixed(1)}s</Text>
-
-            <TouchableOpacity style={s.answerBtn2} onPress={markContactWindow} disabled={submitting}>
-              <Text style={s.answerBtnText}>Mark contact window →</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {step === 'contactFrame' && (
-          <View style={s.questionBlock}>
-            <Text style={s.question}>Pinpoint the exact contact frame</Text>
-            <Text style={s.questionSub}>Drag until the racket is touching the ball, then confirm.</Text>
-
-            <View style={s.frameRow}>
-              <TouchableOpacity style={s.frameBtn} onPress={() => setContactOffset((o) => Math.max(o - 1, -FINE_RADIUS))}>
-                <Text style={s.frameBtnText}>◀</Text>
-              </TouchableOpacity>
-              <View style={s.frameCenter}>
-                <Text style={s.frameNumber}>Frame {contactFrameAbs}</Text>
-                <Text style={s.frameOffset}>{contactOffset >= 0 ? '+' : ''}{contactOffset} · {contactTimeSec.toFixed(2)}s</Text>
+                <TouchableOpacity style={s.frameBtn} onPress={() => setContactOffset((o) => Math.min(o + 1, FINE_RADIUS))}>
+                  <Text style={s.frameBtnText}>▶</Text>
+                </TouchableOpacity>
               </View>
-              <TouchableOpacity style={s.frameBtn} onPress={() => setContactOffset((o) => Math.min(o + 1, FINE_RADIUS))}>
-                <Text style={s.frameBtnText}>▶</Text>
+
+              <View
+                style={s.offsetTrackHitArea}
+                onStartShouldSetResponder={() => true}
+                onResponderGrant={onOffsetMove}
+                onResponderMove={onOffsetMove}
+              >
+                <View style={s.offsetTrack}>
+                  <View style={[s.offsetThumb, { left: `${((contactOffset + FINE_RADIUS) / (FINE_RADIUS * 2)) * 92 + 2}%` }]} />
+                </View>
+              </View>
+              <View style={s.offsetLabels}>
+                <Text style={s.offsetLabel}>-{FINE_RADIUS}</Text>
+                <Text style={s.offsetLabel}>0</Text>
+                <Text style={s.offsetLabel}>+{FINE_RADIUS}</Text>
+              </View>
+
+              <TouchableOpacity style={s.answerBtn2} onPress={confirmContactFrame} disabled={submitting}>
+                <Text style={s.answerBtnText}>{submitting ? 'Saving...' : 'Confirm contact frame ✓'}</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={s.backLink} onPress={backToRough}>
+                <Text style={s.backLinkText}>← Back to rough selection</Text>
               </TouchableOpacity>
             </View>
-
-            <View
-              style={s.offsetTrackHitArea}
-              onStartShouldSetResponder={() => true}
-              onResponderGrant={onOffsetMove}
-              onResponderMove={onOffsetMove}
-            >
-              <View style={s.offsetTrack}>
-                <View style={[s.offsetThumb, { left: `${((contactOffset + FINE_RADIUS) / (FINE_RADIUS * 2)) * 92 + 2}%` }]} />
-              </View>
-            </View>
-            <View style={s.offsetLabels}>
-              <Text style={s.offsetLabel}>-{FINE_RADIUS}</Text>
-              <Text style={s.offsetLabel}>0</Text>
-              <Text style={s.offsetLabel}>+{FINE_RADIUS}</Text>
-            </View>
-
-            <TouchableOpacity style={s.answerBtn2} onPress={confirmContactFrame} disabled={submitting}>
-              <Text style={s.answerBtnText}>{submitting ? 'Saving...' : 'Confirm contact frame ✓'}</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={s.backLink} onPress={backToRough}>
-              <Text style={s.backLinkText}>← Back to rough selection</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+          )}
+        </View>
       </SafeAreaView>
     </RequireAdmin>
   );
 }
 
 const s = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.bg, padding: spacing.xl, paddingTop: 24 },
+  safe: { flex: 1, backgroundColor: '#000' },
   centerFill: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
 
-  progressRow: { marginBottom: 14, alignItems: 'center' },
-  progressText: { color: colors.ink, fontSize: 16, fontFamily: fonts.extrabold },
-  progressSub: { color: colors.muted, fontSize: 12.5, marginTop: 2, fontFamily: fonts.regular },
+  stage: { flex: 1, position: 'relative' },
+  videoWrap: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000' },
 
-  videoWrap: { borderRadius: radius.lg, overflow: 'hidden', backgroundColor: '#000' },
-  replayBtn: { alignSelf: 'center', marginTop: 10, paddingVertical: 6, paddingHorizontal: 14 },
+  // Floating top overlay instead of a reserved header row above the video.
+  progressRow: {
+    position: 'absolute', top: 0, left: 0, right: 0, alignItems: 'center',
+    paddingTop: 14, paddingBottom: 10, backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  progressText: { color: '#fff', fontSize: 16, fontFamily: fonts.extrabold },
+  progressSub: { color: 'rgba(255,255,255,0.75)', fontSize: 12.5, marginTop: 2, fontFamily: fonts.regular },
+  replayBtn: { marginTop: 6, paddingVertical: 6, paddingHorizontal: 14 },
   replayBtnText: { color: colors.primary, fontSize: 13, fontFamily: fonts.bold },
   prefetchWrap: { position: 'absolute', width: 1, height: 1, opacity: 0 },
 
   progressTrack: {
-    height: 8, backgroundColor: colors.border, borderRadius: 4,
+    height: 8, backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 4,
     marginBottom: 8, position: 'relative',
   },
   progressFill: { height: 8, backgroundColor: colors.primary, borderRadius: 4 },
@@ -455,17 +465,21 @@ const s = StyleSheet.create({
     width: 16, height: 16, borderRadius: 8,
     backgroundColor: colors.primary, marginLeft: -8,
   },
-  timeText: { color: colors.muted, fontSize: 12, textAlign: 'right', marginBottom: 14, fontFamily: fonts.regular },
+  timeText: { color: 'rgba(255,255,255,0.7)', fontSize: 12, textAlign: 'right', marginBottom: 14, fontFamily: fonts.regular },
 
   backLink: { alignItems: 'center', marginTop: 14 },
-  backLinkText: { color: colors.muted, fontSize: 13, fontFamily: fonts.regular },
+  backLinkText: { color: 'rgba(255,255,255,0.7)', fontSize: 13, fontFamily: fonts.regular },
 
+  // Floating bottom overlay instead of an in-flow panel stacked below the
+  // video -- video fills the full screen behind it.
   questionBlock: {
-    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
-    borderRadius: radius.lg, padding: 18, marginTop: 18,
+    position: 'absolute', left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(20,20,20,0.9)', borderTopWidth: 1, borderColor: colors.border,
+    borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg,
+    padding: 18, paddingBottom: 28,
   },
-  question: { color: colors.ink, fontSize: 16, fontFamily: fonts.bold, marginBottom: 4, textAlign: 'center' },
-  questionSub: { color: colors.muted, fontSize: 12, lineHeight: 17, textAlign: 'center', marginBottom: 16, fontFamily: fonts.regular },
+  question: { color: '#fff', fontSize: 16, fontFamily: fonts.bold, marginBottom: 4, textAlign: 'center' },
+  questionSub: { color: 'rgba(255,255,255,0.7)', fontSize: 12, lineHeight: 17, textAlign: 'center', marginBottom: 16, fontFamily: fonts.regular },
   answerRow: { flexDirection: 'row', gap: 10 },
   answerBtn: { flex: 1, borderRadius: radius.lg, paddingVertical: 16, alignItems: 'center' },
   answerBtn2: { borderRadius: radius.lg, paddingVertical: 16, alignItems: 'center', backgroundColor: colors.primary, marginTop: 4 },
@@ -481,18 +495,18 @@ const s = StyleSheet.create({
   frameBtn: { padding: 8 },
   frameBtnText: { color: colors.primary, fontSize: 26, fontFamily: fonts.extrabold },
   frameCenter: { alignItems: 'center' },
-  frameNumber: { color: colors.ink, fontSize: 20, fontFamily: fonts.extrabold },
-  frameOffset: { color: colors.muted, fontSize: 12, marginTop: 2, fontFamily: fonts.regular },
+  frameNumber: { color: '#fff', fontSize: 20, fontFamily: fonts.extrabold },
+  frameOffset: { color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 2, fontFamily: fonts.regular },
 
   offsetTrackHitArea: { paddingVertical: 14, marginTop: -14, marginBottom: -8 },
-  offsetTrack: { height: 4, backgroundColor: colors.border, borderRadius: 2, position: 'relative' },
+  offsetTrack: { height: 4, backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 2, position: 'relative' },
   offsetThumb: {
     position: 'absolute', top: -6,
     width: 16, height: 16, borderRadius: 8,
     backgroundColor: colors.primary, marginLeft: -8,
   },
   offsetLabels: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-  offsetLabel: { color: colors.muted, fontSize: 11, fontFamily: fonts.regular },
+  offsetLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 11, fontFamily: fonts.regular },
 
   doneTitle: { color: colors.primary, fontSize: 22, fontFamily: fonts.extrabold, marginBottom: 10 },
   errorText: { color: colors.muted, fontSize: 13.5, textAlign: 'center', lineHeight: 19, fontFamily: fonts.regular },

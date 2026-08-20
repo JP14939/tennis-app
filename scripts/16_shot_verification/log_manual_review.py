@@ -22,6 +22,7 @@ import os
 import sys
 
 SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(SCRIPTS_DIR, '00_utils'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '16_shot_verification'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '14_shot_classifier'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '07_ball_racket_tracking'))
@@ -29,6 +30,10 @@ sys.path.insert(0, os.path.join(SCRIPTS_DIR, '07_ball_racket_tracking'))
 import shot_contact_training_log as contact_log  # noqa: E402
 import shot_classifier_training_log as classifier_log  # noqa: E402
 import contact_frame_training_log as frame_log  # noqa: E402
+import reviewed_candidates_log  # noqa: E402
+from paths import DATA_DIR  # noqa: E402
+
+HIGHLIGHT_CLIPS_DIR = os.path.join(DATA_DIR, 'runtime', 'highlight_clips', '13')
 
 
 def main():
@@ -44,13 +49,19 @@ def main():
             'contact_method': payload.get('student_contact_method'),
         },
     )
+    # Always record the candidate as reviewed, regardless of verdict --
+    # including "No, not a shot", so list_swing_candidates.py never serves
+    # it again for this job.
+    reviewed_candidates_log.log_reviewed(payload['job_id'], payload['rally_id'], payload['swing_index'])
 
     logged_classifier = False
     if is_real_shot and payload.get('shot_type'):
         student_shot_type = payload.get('student_shot_type')
         agreed = (student_shot_type == payload['shot_type']) if student_shot_type else None
+        clip_path = os.path.join(HIGHLIGHT_CLIPS_DIR, str(payload['job_id']), f"rally_{payload['rally_id']:03d}.mp4")
         classifier_log.log_example(
             payload.get('student_shot_scores'), student_shot_type, payload['shot_type'], agreed,
+            clip_path=clip_path, contact_frame=payload.get('contact_frame'),
         )
         logged_classifier = True
 

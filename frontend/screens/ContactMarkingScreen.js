@@ -204,7 +204,11 @@ export default function ContactMarkingScreen({ navigation, route }) {
   const progressFraction = scrubFraction ?? (duration > 0 ? Math.min(1, currentTime / duration) : 0);
   const fineT        = roughTime !== null ? Math.max(0, roughTime + fineOffset / ASSUMED_FPS) : 0;
   const fineFrameAbs = Math.round(fineT * ASSUMED_FPS);
-  const videoH       = Math.round(Math.min(dims.width * 0.56, dims.height * 0.42));
+  // Full-screen video during the rough/fine contact-marking phases -- the
+  // scrub/frame-stepper controls below float as a bottom overlay on top of
+  // it instead of being capped to a fraction of the screen with the panel
+  // stacked below in flow.
+  const videoH       = dims.height;
 
   // ── TUTORIAL ──────────────────────────────────────────────────────────────
   if (phase === 'tutorial') {
@@ -355,9 +359,9 @@ export default function ContactMarkingScreen({ navigation, route }) {
 
   // ── VIDEO PHASES ──────────────────────────────────────────────────────────
   return (
-    <SafeAreaView style={s.safe}>
+    <SafeAreaView style={s.safeVideo}>
 
-      {/* Video — sized explicitly so it always occupies real pixels */}
+      {/* Video fills the whole screen */}
       <TouchableOpacity
         activeOpacity={1}
         style={{ width: dims.width, height: videoH, backgroundColor: '#000' }}
@@ -379,7 +383,8 @@ export default function ContactMarkingScreen({ navigation, route }) {
         )}
       </TouchableOpacity>
 
-      {/* Panel */}
+      {/* Panel floats as a bottom overlay on top of the video instead of
+          being stacked below it in document flow. */}
       <View style={s.panel}>
 
         {/* ROUGH */}
@@ -510,6 +515,7 @@ export default function ContactMarkingScreen({ navigation, route }) {
 
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
+  safeVideo: { flex: 1, backgroundColor: '#000' },
 
   pickScroll: { padding: spacing.xl, paddingTop: 60, flexGrow: 1 },
   backLinkTop: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 20, alignSelf: 'flex-start' },
@@ -555,15 +561,20 @@ const s = StyleSheet.create({
   playHint: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   playHintText: { color: 'rgba(255,255,255,0.35)', fontSize: 52 },
 
-  panel:      { backgroundColor: colors.bg, padding: 20, paddingTop: 18, flex: 1 },
-  panelTitle: { color: colors.ink, fontSize: 16, fontFamily: fonts.bold, marginBottom: 4 },
-  panelSub:   { color: colors.muted, fontSize: 13, marginBottom: 14, fontFamily: fonts.regular },
-  calibChecking: { color: colors.muted, fontSize: 12, marginBottom: 10, fontFamily: fonts.regular },
+  panel: {
+    position: 'absolute', left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(20,20,20,0.9)', borderTopWidth: 1, borderColor: colors.border,
+    borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg,
+    padding: 20, paddingTop: 18, paddingBottom: 32,
+  },
+  panelTitle: { color: '#fff', fontSize: 16, fontFamily: fonts.bold, marginBottom: 4 },
+  panelSub:   { color: 'rgba(255,255,255,0.7)', fontSize: 13, marginBottom: 14, fontFamily: fonts.regular },
+  calibChecking: { color: 'rgba(255,255,255,0.7)', fontSize: 12, marginBottom: 10, fontFamily: fonts.regular },
   calibMsg:      { color: colors.primary, fontSize: 12, marginBottom: 10, lineHeight: 17, fontFamily: fonts.regular },
   calibWarn:     { color: colors.gold },
 
   progressTrack: {
-    height: 8, backgroundColor: colors.border, borderRadius: 4,
+    height: 8, backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 4,
     marginBottom: 8, position: 'relative',
   },
   progressFill:  { height: 8, backgroundColor: colors.primary, borderRadius: 4 },
@@ -572,7 +583,7 @@ const s = StyleSheet.create({
     width: 16, height: 16, borderRadius: 8,
     backgroundColor: colors.primary, marginLeft: -8,
   },
-  timeText: { color: colors.muted, fontSize: 12, textAlign: 'right', marginBottom: 14, fontFamily: fonts.regular },
+  timeText: { color: 'rgba(255,255,255,0.7)', fontSize: 12, textAlign: 'right', marginBottom: 14, fontFamily: fonts.regular },
 
   rowBtns:  { flexDirection: 'row', gap: 10, marginTop: 4 },
   btnPrimary: {
@@ -592,19 +603,19 @@ const s = StyleSheet.create({
 
   frameRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: colors.surface,
+    backgroundColor: 'rgba(255,255,255,0.08)',
     borderRadius: radius.lg, padding: 16, marginBottom: 16,
   },
   frameBtn:         { padding: 8 },
   frameBtnText:     { color: colors.primary, fontSize: 26, fontFamily: fonts.bold },
-  frameBtnDisabled: { color: colors.divider },
+  frameBtnDisabled: { color: 'rgba(255,255,255,0.3)' },
   frameCenter:      { alignItems: 'center' },
-  frameNumber:      { color: colors.ink, fontSize: 22, fontFamily: fonts.extrabold },
-  frameOffset:      { color: colors.muted, fontSize: 12, marginTop: 2, fontFamily: fonts.regular },
+  frameNumber:      { color: '#fff', fontSize: 22, fontFamily: fonts.extrabold },
+  frameOffset:      { color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 2, fontFamily: fonts.regular },
 
   offsetTrackHitArea: { paddingVertical: 14, marginTop: -14, marginBottom: -8 },
   offsetTrack: {
-    height: 4, backgroundColor: colors.border, borderRadius: 2,
+    height: 4, backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 2,
     position: 'relative',
   },
   offsetThumb: {
@@ -613,8 +624,8 @@ const s = StyleSheet.create({
     backgroundColor: colors.primary, marginLeft: -8,
   },
   offsetLabels: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 14 },
-  offsetLabel:  { color: colors.divider, fontSize: 11, fontFamily: fonts.regular },
+  offsetLabel:  { color: 'rgba(255,255,255,0.5)', fontSize: 11, fontFamily: fonts.regular },
 
   backLink:     { alignItems: 'center', marginTop: 14 },
-  backLinkText: { color: colors.muted, fontSize: 13, fontFamily: fonts.regular },
+  backLinkText: { color: 'rgba(255,255,255,0.7)', fontSize: 13, fontFamily: fonts.regular },
 });

@@ -38,6 +38,18 @@ const TOOLS = [
     },
   },
   {
+    key: 'tip-review',
+    label: 'Tip Review (free, manual)',
+    sub: 'Watch your swing next to the matched pro and judge which coaching tip should have been surfaced -- zero API cost, logs like a Claude-verified example',
+    screen: 'DevTipReview',
+  },
+  {
+    key: 'pro-clip-review',
+    label: 'Pro Clip Review (free, manual)',
+    sub: 'Watch pro-database clips one at a time and flag data-quality issues -- mismatched footage, slow-motion, or a clip spanning two different swings/players',
+    screen: 'DevProClipReview',
+  },
+  {
     key: 'drills-editor',
     label: 'Drills & Lessons Editor',
     sub: 'Create/edit the free Drills library and paid Lessons routines shown on the History screen',

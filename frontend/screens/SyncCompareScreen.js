@@ -12,7 +12,7 @@ import AnnotationCanvas from '../components/AnnotationCanvas';
 import { useAuth } from '../context/AuthContext';
 import { getNotes, addNote } from '../api/coach';
 import { getAnnotations, saveAnnotations } from '../api/annotations';
-import { useWindowWidth } from '../utils/responsive';
+import { useWindowSize } from '../utils/responsive';
 import { colors, fonts, radius, spacing } from '../theme';
 
 // Trajectory-overlay/scrubber accent colors -- distinct from each other so
@@ -211,15 +211,55 @@ export default function SyncCompareScreen({ route, navigation }) {
   } = route.params ?? {};
 
   // Taller than a plain video aspect ratio (closer to a real portrait phone
-  // recording's ~9:16) so each pane takes up more of the screen -- pushes the
-  // scrubber/controls further down, requiring a scroll to reach them.
-  // Reactive to useWindowWidth() rather than a module-level constant so
-  // rotating the device or running on a different Android screen size
-  // actually resizes the panes instead of staying stuck at whatever width
-  // was current the first time this file was ever loaded.
-  const windowWidth = useWindowWidth();
-  const videoWidth = Math.min(windowWidth - 48, 460);
-  const videoHeight = Math.round(videoWidth * 1.85);
+  // recording's ~9:16) so each pane takes up more of the screen.
+  // Reactive to useWindowSize() rather than a module-level constant so
+  // rotating the device or resizing the browser window actually resizes
+  // the panes instead of staying stuck at whatever size was current the
+  // first time this file was ever loaded.
+  const { width: windowWidth, height: windowHeight } = useWindowSize();
+  const PANE_ASPECT = 1.85; // height / width
+  // Below WIDE_BREAKPOINT, a vertical control rail between two video panes
+  // wouldn't leave room for either -- keep the original phone-appropriate
+  // stacked-below-videos layout unchanged there. At/above it, the panes
+  // were previously capped at a combined 460px wide regardless of how much
+  // wider the actual window was, leaving most of a desktop browser window
+  // empty (confirmed directly from a real screenshot) -- this computes
+  // real fill-the-page pane sizes instead, bounded by BOTH available width
+  // and available height (a wide-but-short window must not let a tall
+  // portrait clip overflow the viewport).
+  const WIDE_BREAKPOINT = 900;
+  const isWide = windowWidth >= WIDE_BREAKPOINT;
+  const RAIL_WIDTH = 130;
+
+  // paneWidth/paneHeight are the actual per-pane size VideoPane renders at
+  // (and what its own pinch/pan clamping math below is derived from).
+  let paneWidth, paneHeight;
+  if (isWide) {
+    // Full-screen overlay mode: the videos fill essentially the entire
+    // viewport and every control (header, rail, scrubber/zoom/play) floats
+    // on top as a semi-transparent absolute-positioned panel instead of
+    // reserving its own vertical space below the videos -- so almost the
+    // whole window height is available to the panes, just a small margin.
+    const availableHeight = Math.max(280, windowHeight - 16);
+    const availableWidthPerPane = (windowWidth - 16 - RAIL_WIDTH) / 2;
+    // Fit to whichever dimension is more constraining, then derive the
+    // other from PANE_ASPECT so the pane's own proportions stay correct
+    // rather than stretching.
+    if (availableWidthPerPane * PANE_ASPECT <= availableHeight) {
+      paneWidth = availableWidthPerPane;
+      paneHeight = paneWidth * PANE_ASPECT;
+    } else {
+      paneHeight = availableHeight;
+      paneWidth = paneHeight / PANE_ASPECT;
+    }
+    paneWidth = Math.round(paneWidth);
+    paneHeight = Math.round(paneHeight);
+  } else {
+    const videoWidth = Math.min(windowWidth - 48, 460);
+    const videoHeight = Math.round(videoWidth * PANE_ASPECT);
+    paneWidth = videoWidth / 2 - 10;
+    paneHeight = videoHeight / 2 - 10;
+  }
 
   const { token, user } = useAuth();
   const videoARef = useRef(null);
@@ -349,11 +389,9 @@ export default function SyncCompareScreen({ route, navigation }) {
     zoomHandleX.setValue(Math.max(0, Math.min(1, frac)) * zoomTrackWidth.current);
   };
 
-  // paneWidth/paneHeight mirror VideoPane's own layout math (both derived
-  // from the same reactive videoWidth/videoHeight above), so pan can be
-  // clamped here without needing to lift the clamp logic into the child.
-  const paneWidth = videoWidth / 2 - 10;
-  const paneHeight = (videoHeight / 2) - 10;
+  // paneWidth/paneHeight are computed once, per breakpoint, up near
+  // windowWidth/windowHeight above -- reused here for pan clamping without
+  // needing to lift the clamp logic into VideoPane itself.
   const clampPan = (z, x, y) => {
     const maxX = Math.max(0, (paneWidth * z - paneWidth) / 2);
     const maxY = Math.max(0, (paneHeight * z - paneHeight) / 2);
@@ -497,6 +535,238 @@ export default function SyncCompareScreen({ route, navigation }) {
     setHandleFromT(newT);
   };
 
+  // Wide (desktop-ish) layout: videos fill essentially the whole screen,
+  // every control floats on top as a semi-transparent absolute overlay
+  // instead of being stacked below the videos in normal document flow --
+  // narrow/mobile layout below is untouched.
+  if (isWide) {
+    return (
+      <SafeAreaView style={s.safeWide}>
+        <View style={s.wideStage}>
+          <View style={s.videosRowWide}>
+            <VideoPane
+              label={labelA} uri={uriA} videoRef={videoARef} onStatusUpdate={onAStatusUpdate}
+              overlayTrajectory={overlayA} overlayTimeSec={timeA} overlayColor={GOLD} showOverlay={showOverlay}
+              racketTrajectory={racketPathA} racketColor={GOLD} showRacketPath={showRacket}
+              isPlaying={isPlaying} paneWidth={paneWidth} paneHeight={paneHeight}
+              zoom={zoom} panX={panX} panY={panY} onZoomPanChange={handleZoomPanChange}
+              annotationRef={annotationARef} annotateActive={annotateActive}
+              tool={tool} annColor={annColor}
+              onClearAnnotation={() => annotationARef.current?.clear()}
+              onUndoAnnotation={() => annotationARef.current?.undo()}
+            />
+
+            <View style={[s.rail, { width: RAIL_WIDTH }]}>
+              {hasOverlayData && (
+                <TouchableOpacity
+                  style={[s.railChip, showSkeleton && s.toggleChipActive]}
+                  onPress={() => setShowSkeleton((v) => !v)}
+                >
+                  <Text style={[s.railChipText, showSkeleton && s.toggleChipTextActive]}>
+                    {showSkeleton ? 'Hide skeleton' : 'Show skeleton'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              {hasRacketData && (
+                <TouchableOpacity
+                  style={[s.railChip, showRacketPath && s.toggleChipActive]}
+                  onPress={() => setShowRacketPath((v) => !v)}
+                >
+                  <Text style={[s.railChipText, showRacketPath && s.toggleChipTextActive]}>
+                    {showRacketPath ? 'Hide racket path' : 'Show racket path'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={[s.railChip, annotateActive && s.toggleChipActive]}
+                onPress={handleToggleAnnotate}
+              >
+                <Text style={[s.railChipText, annotateActive && s.toggleChipTextActive]}>
+                  {annotateActive ? 'Done annotating' : '✏ Annotate'}
+                </Text>
+              </TouchableOpacity>
+
+              <View style={s.railDivider} />
+              <Text style={s.railLabel}>Speed</Text>
+              {SPEEDS.map((sp) => (
+                <TouchableOpacity
+                  key={sp}
+                  style={[s.railSpeedBtn, speed === sp && s.speedBtnActive]}
+                  onPress={() => changeSpeed(sp)}
+                >
+                  <Text style={[s.speedBtnText, speed === sp && s.speedBtnTextActive]}>{sp}×</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <VideoPane
+              label={labelB} uri={uriB} videoRef={videoBRef} onStatusUpdate={onBStatusUpdate}
+              overlayTrajectory={overlayB} overlayTimeSec={timeB} overlayColor={GREEN} showOverlay={showOverlay}
+              racketTrajectory={racketPathB} racketColor={GREEN} showRacketPath={showRacket}
+              isPlaying={isPlaying} paneWidth={paneWidth} paneHeight={paneHeight}
+              zoom={zoom} panX={panX} panY={panY} onZoomPanChange={handleZoomPanChange}
+              annotationRef={annotationBRef} annotateActive={annotateActive}
+              tool={tool} annColor={annColor}
+              onClearAnnotation={() => annotationBRef.current?.clear()}
+              onUndoAnnotation={() => annotationBRef.current?.undo()}
+            />
+          </View>
+
+          {/* Top overlay: back/title, floating over the videos rather than
+              taking its own reserved header row. */}
+          <View style={s.overlayTop} pointerEvents="box-none">
+            <TouchableOpacity style={s.overlayBackBtn} onPress={() => navigation.goBack()}>
+              <Text style={s.backTextOverlay}>‹ Back</Text>
+            </TouchableOpacity>
+            <Text style={s.titleOverlay}>Side-by-side</Text>
+            {annotationSets.length > 1 ? (
+              <View style={s.annotatorRowOverlay}>
+                {annotationSets.map((set) => (
+                  <TouchableOpacity
+                    key={set.author_id}
+                    style={s.annotatorChip}
+                    onPress={() => handleSelectAnnotationSet(set)}
+                  >
+                    <Text style={s.annotatorChipText}>{set.author_id === user?.id ? 'You' : set.author_name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            ) : (
+              <View style={{ width: 60 }} />
+            )}
+          </View>
+
+          {/* Floating annotate toolbar, shown above the bottom overlay only
+              while actively annotating -- same tool/color picker as narrow
+              mode, just positioned as its own overlay panel here. */}
+          {annotateActive && (
+            <View style={s.annotateToolbarOverlay}>
+              <View style={s.toolBtnRow}>
+                {TOOLS.map((tl) => (
+                  <TouchableOpacity
+                    key={tl}
+                    style={[s.toolBtn, tool === tl && s.toolBtnActive]}
+                    onPress={() => setTool(tl)}
+                  >
+                    <Text style={[s.toolBtnText, tool === tl && s.toolBtnTextActive]}>{TOOL_LABELS[tl]}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <View style={s.colorRow}>
+                {ANNOTATION_COLORS.map((clr) => (
+                  <TouchableOpacity
+                    key={clr}
+                    style={[s.colorSwatch, { backgroundColor: clr }, annColor === clr && s.colorSwatchActive]}
+                    onPress={() => setAnnColor(clr)}
+                  />
+                ))}
+              </View>
+              {analysisId && (
+                <TouchableOpacity style={s.saveAnnotationBtn} onPress={handleSaveAnnotation} disabled={savingAnnotation}>
+                  <Text style={s.saveAnnotationBtnText}>{savingAnnotation ? 'Saving...' : 'Save annotation'}</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          {/* Floating note composer, same trigger/content as narrow mode. */}
+          {canAddNotes && analysisId && addingNote && (
+            <View style={s.noteComposerOverlay}>
+              <TextInput
+                style={s.noteInput}
+                value={noteText}
+                onChangeText={setNoteText}
+                placeholder="Note at this moment..."
+                placeholderTextColor={colors.muted}
+                multiline
+              />
+              <View style={s.noteComposerBtns}>
+                <TouchableOpacity onPress={() => { setAddingNote(false); setNoteText(''); }}>
+                  <Text style={s.noteCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={submitTimeNote}>
+                  <Text style={s.noteSaveText}>Save note</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* Bottom overlay: zoom slider, scrubber + phase markers, play,
+              and (when not composing a note) the add-note trigger -- all
+              floating over the videos instead of stacked below them. */}
+          <View style={s.overlayBottom} pointerEvents="box-none">
+            <View style={s.zoomRowOverlay}>
+              <Text style={s.zoomLabelOverlay}>Zoom: {zoom.toFixed(2)}×</Text>
+              <View
+                style={s.zoomTrack}
+                onLayout={(e) => {
+                  zoomTrackWidth.current = e.nativeEvent.layout.width;
+                  setZoomHandleFromValue(zoom);
+                }}
+                {...zoomResponder.panHandlers}
+              >
+                <View style={s.zoomTrackLine} />
+                <Animated.View style={[s.zoomHandle, { transform: [{ translateX: zoomHandleX }] }]} />
+              </View>
+            </View>
+
+            <Text style={s.tHintOverlay}>{t >= 0 ? '+' : ''}{t.toFixed(2)}s from contact</Text>
+            <View
+              style={s.track}
+              onLayout={(e) => {
+                trackWidth.current = e.nativeEvent.layout.width;
+                setHandleFromT(t);
+              }}
+              {...scrubResponder.panHandlers}
+            >
+              <View style={s.trackLine} />
+              {phaseMarkers.map((marker) => {
+                const frac = Math.max(0, Math.min(1, (marker.t - T_MIN) / (T_MAX - T_MIN)));
+                const isContact = marker.label === 'Contact';
+                return (
+                  <TouchableOpacity
+                    key={marker.label}
+                    style={[s.phaseMarkTouch, { left: `${frac * 100}%` }]}
+                    onPress={() => seekBoth(marker.t)}
+                  >
+                    <View style={[s.phaseMark, isContact && s.phaseMarkContact]} />
+                  </TouchableOpacity>
+                );
+              })}
+              {timeNotes.map((note) => {
+                const frac = Math.max(0, Math.min(1, (note.timestamp_sec - T_MIN) / (T_MAX - T_MIN)));
+                return (
+                  <TouchableOpacity
+                    key={note.id}
+                    style={[s.noteMark, { left: `${frac * 100}%` }]}
+                    onPress={() => Alert.alert(note.coach_name, note.note_text)}
+                  >
+                    <View style={s.noteMarkDot} />
+                  </TouchableOpacity>
+                );
+              })}
+              <Animated.View style={[s.handle, { transform: [{ translateX: handleX }] }]} />
+            </View>
+            <Text style={s.phaseLegendOverlay}>
+              {phaseMarkers.map((m) => m.label).join('  ·  ')} — tap a mark to jump there
+            </Text>
+
+            <View style={s.bottomRowOverlay}>
+              <TouchableOpacity style={s.playBtnOverlay} onPress={() => { playTapSound(); togglePlay(); }}>
+                <Text style={s.playBtnText}>{isPlaying ? '⏸ Pause' : '▶ Play both'}</Text>
+              </TouchableOpacity>
+              {canAddNotes && analysisId && !addingNote && (
+                <TouchableOpacity style={s.addNoteBtnOverlay} onPress={() => setAddingNote(true)}>
+                  <Text style={s.addNoteBtnText}>+ Add note</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={s.safe}>
       <View style={s.header}>
@@ -520,6 +790,7 @@ export default function SyncCompareScreen({ route, navigation }) {
           onClearAnnotation={() => annotationARef.current?.clear()}
           onUndoAnnotation={() => annotationARef.current?.undo()}
         />
+
         <VideoPane
           label={labelB} uri={uriB} videoRef={videoBRef} onStatusUpdate={onBStatusUpdate}
           overlayTrajectory={overlayB} overlayTimeSec={timeB} overlayColor={GREEN} showOverlay={showOverlay}
@@ -548,36 +819,38 @@ export default function SyncCompareScreen({ route, navigation }) {
         </View>
       </View>
 
-      <View style={s.toolsRow}>
-        {hasOverlayData && (
+      {!isWide && (
+        <View style={s.toolsRow}>
+          {hasOverlayData && (
+            <TouchableOpacity
+              style={[s.toggleChip, showSkeleton && s.toggleChipActive]}
+              onPress={() => setShowSkeleton((v) => !v)}
+            >
+              <Text style={[s.toggleChipText, showSkeleton && s.toggleChipTextActive]}>
+                {showSkeleton ? 'Hide skeleton' : 'Show skeleton'}
+              </Text>
+            </TouchableOpacity>
+          )}
+          {hasRacketData && (
+            <TouchableOpacity
+              style={[s.toggleChip, showRacketPath && s.toggleChipActive]}
+              onPress={() => setShowRacketPath((v) => !v)}
+            >
+              <Text style={[s.toggleChipText, showRacketPath && s.toggleChipTextActive]}>
+                {showRacketPath ? 'Hide racket path' : 'Show racket path'}
+              </Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
-            style={[s.toggleChip, showSkeleton && s.toggleChipActive]}
-            onPress={() => setShowSkeleton((v) => !v)}
+            style={[s.toggleChip, annotateActive && s.toggleChipActive]}
+            onPress={handleToggleAnnotate}
           >
-            <Text style={[s.toggleChipText, showSkeleton && s.toggleChipTextActive]}>
-              {showSkeleton ? 'Hide skeleton' : 'Show skeleton'}
+            <Text style={[s.toggleChipText, annotateActive && s.toggleChipTextActive]}>
+              {annotateActive ? 'Done annotating' : '✏ Annotate'}
             </Text>
           </TouchableOpacity>
-        )}
-        {hasRacketData && (
-          <TouchableOpacity
-            style={[s.toggleChip, showRacketPath && s.toggleChipActive]}
-            onPress={() => setShowRacketPath((v) => !v)}
-          >
-            <Text style={[s.toggleChipText, showRacketPath && s.toggleChipTextActive]}>
-              {showRacketPath ? 'Hide racket path' : 'Show racket path'}
-            </Text>
-          </TouchableOpacity>
-        )}
-        <TouchableOpacity
-          style={[s.toggleChip, annotateActive && s.toggleChipActive]}
-          onPress={handleToggleAnnotate}
-        >
-          <Text style={[s.toggleChipText, annotateActive && s.toggleChipTextActive]}>
-            {annotateActive ? 'Done annotating' : '✏ Annotate'}
-          </Text>
-        </TouchableOpacity>
-      </View>
+        </View>
+      )}
 
       {annotateActive && (
         <View style={s.annotateToolbar}>
@@ -669,17 +942,19 @@ export default function SyncCompareScreen({ route, navigation }) {
         {phaseMarkers.map((m) => m.label).join('  ·  ')} — tap a mark to jump there
       </Text>
 
-      <View style={s.speedRow}>
-        {SPEEDS.map((sp) => (
-          <TouchableOpacity
-            key={sp}
-            style={[s.speedBtn, speed === sp && s.speedBtnActive]}
-            onPress={() => changeSpeed(sp)}
-          >
-            <Text style={[s.speedBtnText, speed === sp && s.speedBtnTextActive]}>{sp}×</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      {!isWide && (
+        <View style={s.speedRow}>
+          {SPEEDS.map((sp) => (
+            <TouchableOpacity
+              key={sp}
+              style={[s.speedBtn, speed === sp && s.speedBtnActive]}
+              onPress={() => changeSpeed(sp)}
+            >
+              <Text style={[s.speedBtnText, speed === sp && s.speedBtnTextActive]}>{sp}×</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
 
       <TouchableOpacity style={s.playBtn} onPress={() => { playTapSound(); togglePlay(); }}>
         <Text style={s.playBtnText}>{isPlaying ? '⏸ Pause' : '▶ Play both'}</Text>
@@ -733,6 +1008,70 @@ const s = StyleSheet.create({
   title: { color: colors.ink, fontSize: 16, fontFamily: fonts.bold },
 
   videosRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 20, marginTop: 8 },
+  videosRowWide: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+  },
+
+  // Wide/full-screen mode: the stage fills the whole safe area and every
+  // control is an absolute-positioned overlay on top of it, rather than
+  // the videos sharing document flow with rows of controls below them.
+  safeWide: { flex: 1, backgroundColor: '#000' },
+  wideStage: { flex: 1, position: 'relative', alignItems: 'center', justifyContent: 'center' },
+
+  overlayTop: {
+    position: 'absolute', top: 0, left: 0, right: 0,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: spacing.xl, paddingTop: 14, paddingBottom: 10,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  overlayBackBtn: { minWidth: 60 },
+  backTextOverlay: { color: '#fff', fontSize: 14, fontFamily: fonts.semibold },
+  titleOverlay: { color: '#fff', fontSize: 16, fontFamily: fonts.bold },
+  annotatorRowOverlay: { flexDirection: 'row', gap: 6, minWidth: 60, justifyContent: 'flex-end' },
+
+  annotateToolbarOverlay: {
+    position: 'absolute', bottom: 210, alignSelf: 'center', width: 320, maxWidth: '92%',
+    backgroundColor: 'rgba(20,20,20,0.85)', borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.border, padding: 12,
+  },
+  noteComposerOverlay: {
+    position: 'absolute', bottom: 210, alignSelf: 'center', width: 340, maxWidth: '92%',
+    backgroundColor: 'rgba(20,20,20,0.9)', borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.border, padding: 12,
+  },
+
+  overlayBottom: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    paddingHorizontal: spacing.xl, paddingTop: 12, paddingBottom: 16,
+  },
+  zoomRowOverlay: { marginBottom: 8 },
+  zoomLabelOverlay: { color: 'rgba(255,255,255,0.8)', fontSize: 11.5, fontFamily: fonts.bold, marginBottom: 6 },
+  tHintOverlay: { color: 'rgba(255,255,255,0.8)', fontSize: 11.5, textAlign: 'center' },
+  phaseLegendOverlay: { color: 'rgba(255,255,255,0.6)', fontSize: 10, textAlign: 'center', marginTop: 4 },
+  bottomRowOverlay: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, marginTop: 12 },
+  playBtnOverlay: {
+    backgroundColor: colors.primary, borderRadius: radius.md, paddingVertical: 12, paddingHorizontal: 28,
+    alignItems: 'center',
+  },
+  addNoteBtnOverlay: {
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)', borderRadius: radius.md,
+    paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center',
+  },
+
+  rail: { alignSelf: 'stretch', justifyContent: 'center', gap: 8 },
+  railChip: {
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm,
+    paddingVertical: 10, paddingHorizontal: 10, backgroundColor: colors.surface,
+    alignItems: 'center',
+  },
+  railChipText: { color: colors.muted, fontSize: 11.5, fontFamily: fonts.bold, textAlign: 'center' },
+  railDivider: { height: 1, backgroundColor: colors.border, marginVertical: 6 },
+  railLabel: { color: colors.muted, fontSize: 11, fontFamily: fonts.bold, textAlign: 'center', marginBottom: 2 },
+  railSpeedBtn: {
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm,
+    paddingVertical: 9, alignItems: 'center', backgroundColor: colors.surface,
+  },
 
   zoomRow: { paddingHorizontal: 28, marginTop: 16 },
   zoomLabel: { color: colors.muted, fontSize: 12, fontFamily: fonts.bold, marginBottom: 8 },

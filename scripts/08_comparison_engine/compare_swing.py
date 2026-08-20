@@ -262,7 +262,8 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
 
     # Infer user camera angle at the contact frame
     print('  Inferring camera angle...', file=sys.stderr)
-    user_angle, angle_conf, angle_debug = infer_camera_angle(video_path, peak_frame, landmarker=shared_landmarker)
+    user_angle, angle_conf, angle_debug = infer_camera_angle(
+        video_path, peak_frame, landmarker=shared_landmarker, view_direction_hint=view_direction_hint)
     if user_angle is not None:
         print(f'  Camera angle: {user_angle}° ({angle_label(user_angle)}) — confidence: {angle_conf}', file=sys.stderr)
     else:
@@ -353,7 +354,8 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
     output = []
     for rank, (score, dist, entry) in enumerate(top, 1):
         tips_result, _ = get_coaching_tips(user_trajectory, entry['trajectory'], shot_type)
-        tips = [{'id': t.get('issue_id'), 'tip_text': t['tip_text'], 'drill': t.get('drill')} for t in tips_result]
+        tips = [{'id': t.get('issue_id'), 'tip_text': t['tip_text'], 'drill': t.get('drill'),
+                  'severity': t.get('severity')} for t in tips_result]
 
         print(f'\n  #{rank} — {entry["id"]}', file=sys.stderr)
         print(f'       Similarity: {score}/100', file=sys.stderr)

@@ -2,9 +2,12 @@ import argparse
 import cv2
 
 # Cuts an arbitrary [start_sec, start_sec + duration_sec) window out of a video.
-# Same OpenCV cut pattern as extract_clip() in 04_clip_extraction/extract_clips.py —
-# there's no ffmpeg/moviepy on this machine, so seeking + rewriting frames is the
-# only option.
+# Same OpenCV cut pattern as extract_clip() in 04_clip_extraction/extract_clips.py.
+# Standalone dev CLI, not called by the app pipeline -- output is written with
+# cv2.VideoWriter's mp4v fourcc same as everywhere else in this pipeline (old
+# MPEG-4 Part 2, unplayable in a browser -- see 00_utils/video_io.py's module
+# docstring); pass the output through video_io.reencode_to_h264() if you need
+# to actually watch the result in the app rather than just inspect frames.
 
 
 def trim_video(input_path, output_path, start_sec, duration_sec=None):

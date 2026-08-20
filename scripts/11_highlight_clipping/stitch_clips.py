@@ -1,14 +1,18 @@
 """
 Stitch multiple rally clips into a single highlight reel.
 
-No ffmpeg/moviepy on this machine (see 00_utils/trim_video.py's comment) --
-reads each clip's frames with OpenCV and rewrites them into one output file,
-the same approach already used by extract_clips.py / detect_rallies.py /
-trim_video.py elsewhere in this pipeline. Source clips are assumed to share
-the same fps/resolution (true here -- they're all written by the same
-extract_clip() call against the same source match video), so no
-scaling/reencoding step is needed; a mismatched clip is skipped with a
-reason rather than crashing the whole reel. None of these clips carry audio
+Reads each clip's frames with OpenCV and rewrites them into one output
+file, the same approach already used by extract_clips.py / detect_rallies.py
+/ trim_video.py elsewhere in this pipeline, then re-encodes the result to
+real H.264 via video_io.reencode_to_h264() -- cv2.VideoWriter's mp4v fourcc
+alone produces old MPEG-4 Part 2 video on this machine (fourcc reads back
+as 'FMP4'), which no browser can play; imageio-ffmpeg's bundled static
+ffmpeg binary (see video_io.py's module docstring) fixes that up as a
+second pass, same as detect_rallies.py/crop_to_subject.py. Source clips are
+assumed to share the same fps/resolution (true here -- they're all written
+by the same extract_clip() call against the same source match video), so no
+scaling step is needed; a mismatched clip is skipped with a reason rather
+than crashing the whole reel. None of these clips carry audio
 (cv2.VideoWriter never wrote any to begin with), so there's no audio
 sync concern either.
 
@@ -24,6 +28,10 @@ import sys
 import os
 import json
 import cv2
+
+SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(SCRIPTS_DIR, '00_utils'))
+from video_io import reencode_to_h264  # noqa: E402
 
 
 def stitch_clips(clip_paths, output_path):
@@ -84,6 +92,8 @@ def stitch_clips(clip_paths, output_path):
 
     if written_clips == 0:
         raise RuntimeError('No clips could be stitched (all missing/unreadable)')
+
+    reencode_to_h264(output_path)
 
     return {
         'output_path': output_path,

@@ -22,13 +22,67 @@ import json
 import os
 import re
 import sys
+import time
 
 import cv2
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '00_utils'))
-from paths import BACKEND_DIR  # noqa: E402
+from paths import BACKEND_DIR, DATA_DIR  # noqa: E402
 
 ENV_PATH = os.path.join(BACKEND_DIR, '.env')
+
+COST_LOG_PATH = os.path.join(DATA_DIR, '16_shot_verification', 'verifier_cost_log.jsonl')
+
+# This is the verifier that ACTUALLY fires in the real detect_rallies.py
+# pipeline (confirmed live 2026-08-19: a real 6-candidate run cost 23p / 6
+# calls at Sonnet pricing, with zero calls going through the single-frame
+# classifier verifier at all, because this one already answers shot_type
+# in the same call -- see this module's docstring). Cost tracking belongs
+# here, not just on the classifier verifier, or the dashboard undercounts
+# real spend.
+#
+# Switched default model to Haiku 4.5 same day (2026-08-19) specifically
+# to cut this real, confirmed cost -- rates below are Haiku-tier, not the
+# Sonnet rates the 23p/6-calls test above was measured at. Still a rough
+# published-rate estimate, not live pricing -- check console.anthropic.com
+# for the exact billed figure rather than trusting this constant precisely,
+# and if the `model` param above ever gets overridden back to Sonnet for a
+# call, these estimates will undercount that call's real cost.
+COST_PER_INPUT_TOKEN_USD = 0.8 / 1_000_000
+COST_PER_OUTPUT_TOKEN_USD = 4.0 / 1_000_000
+
+
+def _log_call_cost(input_tokens, output_tokens):
+    estimated_cost_usd = round(
+        input_tokens * COST_PER_INPUT_TOKEN_USD + output_tokens * COST_PER_OUTPUT_TOKEN_USD, 6)
+    record = {
+        'timestamp': time.time(),
+        'input_tokens': input_tokens,
+        'output_tokens': output_tokens,
+        'estimated_cost_usd': estimated_cost_usd,
+    }
+    os.makedirs(os.path.dirname(COST_LOG_PATH), exist_ok=True)
+    with open(COST_LOG_PATH, 'a') as f:
+        f.write(json.dumps(record) + '\n')
+    return estimated_cost_usd
+
+
+def cost_summary():
+    """Total verify_shot_contact() calls + estimated $ spent so far, for
+    ml_status_report.py to surface."""
+    if not os.path.exists(COST_LOG_PATH):
+        return {'calls': 0, 'estimated_cost_usd': 0.0}
+    calls = 0
+    total = 0.0
+    with open(COST_LOG_PATH) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            rec = json.loads(line)
+            calls += 1
+            total += rec.get('estimated_cost_usd', 0.0)
+    return {'calls': calls, 'estimated_cost_usd': round(total, 4)}
 
 
 def _load_api_key():
@@ -75,7 +129,7 @@ Respond with ONLY a JSON object, no other text:
 }}"""
 
 
-def verify_shot_contact(frames, student_is_shot, student_shot_type=None, model='claude-sonnet-5'):
+def verify_shot_contact(frames, student_is_shot, student_shot_type=None, model='claude-haiku-4-5-20251001'):
     """
     frames: list of cv2 frames (BGR numpy arrays), in chronological order,
     spanning the candidate window.
@@ -105,6 +159,7 @@ def verify_shot_contact(frames, student_is_shot, student_shot_type=None, model='
         max_tokens=400,
         messages=[{'role': 'user', 'content': content}],
     )
+    _log_call_cost(response.usage.input_tokens, response.usage.output_tokens)
     text_blocks = [b.text for b in response.content if b.type == 'text']
     if not text_blocks:
         raise ValueError(f'No text block in Claude response (blocks: {[b.type for b in response.content]!r})')

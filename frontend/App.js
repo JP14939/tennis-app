@@ -42,6 +42,8 @@ import LessonDetailScreen from './screens/LessonDetailScreen';
 import DevDrillsEditorScreen from './screens/DevDrillsEditorScreen';
 import DevRallyBoundaryReviewScreen from './screens/DevRallyBoundaryReviewScreen';
 import DevSwingReviewScreen from './screens/DevSwingReviewScreen';
+import DevTipReviewScreen from './screens/DevTipReviewScreen';
+import DevProClipReviewScreen from './screens/DevProClipReviewScreen';
 import { AuthProvider } from './context/AuthContext';
 
 const DARK   = '#0d0d0d';
@@ -123,6 +125,8 @@ export default function App() {
             <Stack.Screen name="DevRallyJobs" component={DevRallyJobsScreen} options={{ title: 'Rally Boundary Review' }} />
             <Stack.Screen name="DevRallyBoundaryReview" component={DevRallyBoundaryReviewScreen} options={{ title: 'Review Boundaries' }} />
             <Stack.Screen name="DevSwingReview" component={DevSwingReviewScreen} options={{ title: 'Swing Review' }} />
+            <Stack.Screen name="DevTipReview" component={DevTipReviewScreen} options={{ title: 'Tip Review' }} />
+            <Stack.Screen name="DevProClipReview" component={DevProClipReviewScreen} options={{ title: 'Pro Clip Review' }} />
             <Stack.Screen name="DevDrillsEditor" component={DevDrillsEditorScreen} options={{ title: 'Drills & Lessons Editor' }} />
           </Stack.Navigator>
         </NavigationContainer>

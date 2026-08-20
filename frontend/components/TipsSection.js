@@ -4,6 +4,15 @@ import { colors, fonts, radius } from '../theme';
 import TipDiagram from './TipDiagram';
 import { ChevronDownIcon } from './icons';
 
+// Same severity -> color mapping DevTipReviewScreen.js's severityColor()
+// uses, duplicated locally rather than imported -- that's a dev-only
+// screen and this is user-facing, shouldn't depend on it.
+function severityColor(severity) {
+  if (severity === 'severe') return colors.coral;
+  if (severity === 'moderate') return colors.primary;
+  return colors.muted;
+}
+
 // Measured-height collapsible -- RN has no CSS max-height:auto equivalent,
 // so natural content height is measured once via onLayout then animated
 // between 0 and that value.
@@ -45,10 +54,17 @@ export function TipRow({ tip }) {
   const [open, setOpen] = useState(false);
   const rotate = useRotate(open);
 
+  const severityPill = tip.severity && (
+    <View style={[t.severityPill, { borderColor: severityColor(tip.severity) }]}>
+      <Text style={[t.severityPillText, { color: severityColor(tip.severity) }]}>{tip.severity}</Text>
+    </View>
+  );
+
   if (!tip.drill) {
     return (
       <View style={t.row}>
         <Text style={t.fixText}><Text style={t.fixLabel}>Fix: </Text>{tip.tip_text ?? tip}</Text>
+        {severityPill}
       </View>
     );
   }
@@ -57,6 +73,7 @@ export function TipRow({ tip }) {
     <View style={t.rowWrap}>
       <TouchableOpacity style={t.row} onPress={() => setOpen(o => !o)} activeOpacity={0.85}>
         <Text style={t.fixText}><Text style={t.fixLabel}>Fix: </Text>{tip.tip_text}</Text>
+        {severityPill}
         <Animated.View style={{ transform: [{ rotate }] }}>
           <ChevronDownIcon size={12} color={colors.mutedDark} />
         </Animated.View>
@@ -78,6 +95,10 @@ const t = StyleSheet.create({
   },
   fixText: { flex: 1, color: colors.ink, fontSize: 13, lineHeight: 19.5, fontFamily: fonts.regular },
   fixLabel: { fontFamily: fonts.bold },
+  severityPill: {
+    borderWidth: 1, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 2,
+  },
+  severityPillText: { fontSize: 9.5, fontFamily: fonts.bold, textTransform: 'uppercase' },
   drillPanel: { backgroundColor: colors.primarySoft, padding: 14 },
   drillText: { color: colors.limeText, fontSize: 13, lineHeight: 19.5, fontFamily: fonts.regular },
   drillLabel: { fontFamily: fonts.bold },

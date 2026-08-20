@@ -31,8 +31,10 @@ import numpy as np
 
 SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '02_pose_extraction'))
+sys.path.insert(0, os.path.join(SCRIPTS_DIR, '00_utils'))
 
 from extract_poses import extract_poses
+from video_io import reencode_to_h264
 
 # Canvas the cropped subject is placed on -- portrait, matches typical
 # handheld swing-recording framing.
@@ -160,6 +162,20 @@ def crop_to_subject(video_path, output_path):
 
     if written == 0:
         return {'cropped': False, 'reason': 'No frames read from video'}
+
+    # cv2.VideoWriter's mp4v fourcc produces old MPEG-4 Part 2 video on this
+    # machine (fourcc reads back as 'FMP4'), which no browser can play --
+    # see video_io.py's module docstring. Re-encode to real H.264 before
+    # handing back success, same as detect_rallies.py does for rally clips.
+    # Consistent with this function's "never raise" contract: a failure
+    # here is reported as a crop failure, not an unhandled exception,
+    # since the caller (videoCrop.js) already falls back to the uncropped
+    # original on any {"cropped": false}.
+    try:
+        reencode_to_h264(output_path)
+    except Exception as e:
+        return {'cropped': False, 'reason': f'Re-encode to H.264 failed: {e}'}
+
     return {'cropped': True}
 
 

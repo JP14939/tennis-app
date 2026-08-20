@@ -14,3 +14,18 @@ export function useWindowWidth() {
   }, []);
   return width;
 }
+
+// Same pattern as useWindowWidth() above, but also tracks height -- needed
+// by screens whose layout depends on available vertical space too (e.g.
+// SyncCompareScreen.js's wide-screen layout, where video pane height must
+// stay within the viewport rather than being derived purely from width).
+// Additive: useWindowWidth() is untouched, every existing caller keeps
+// working exactly as before.
+export function useWindowSize() {
+  const [size, setSize] = useState(Dimensions.get('window'));
+  useEffect(() => {
+    const sub = Dimensions.addEventListener('change', ({ window }) => setSize(window));
+    return () => sub?.remove();
+  }, []);
+  return { width: size.width, height: size.height };
+}

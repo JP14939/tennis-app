@@ -6,6 +6,7 @@ Racket path + ball-racket contact frame detection using a pretrained YOLO
 Provides:
   track_racket_and_ball(video_path)  -> per-frame detections + fps
   find_contact_frame(detections, fallback_frame) -> (frame, confidence, method)
+  ball_departure_confirmed(detections, contact_frame, fps) -> (confirmed, confidence)
   racket_path(detections)            -> list of {frame, x, y, conf} centroids
 """
 import math
@@ -146,6 +147,101 @@ def find_contact_frame(detections, fallback_frame, fps, search_window_sec=0.3):
         return best['frame'], conf, 'ball_racket_proximity'
 
     return fallback_frame, 0.3, 'wrist_velocity_fallback'
+
+
+def _center_in_original_space(box, det):
+    """
+    Detections from the CROPPED tracking path (verify_shot_contact.py's
+    track_racket_and_ball_cropped / track_racket_tip_and_ball_cropped)
+    carry each frame's own crop scale/offset ('crop_scale'/'crop_x0'/
+    'crop_y0') -- every frame is cropped tight to THAT frame's own pose
+    bbox, so raw crop-pixel coordinates are NOT comparable across frames
+    (same issue _racket_velocity_profile already had to correct for).
+    Detections without crop metadata (the non-cropped track_racket_and_ball()
+    path) default to scale=1, offset=0 -- already in original-frame space.
+    """
+    cx, cy = _center(box)
+    scale = det.get('crop_scale', 1.0) or 1.0
+    x0 = det.get('crop_x0', 0)
+    y0 = det.get('crop_y0', 0)
+    return (x0 + cx / scale, y0 + cy / scale)
+
+
+def _interpolated_ball_track(detections, start_frame, end_frame, max_gap_frames=3):
+    """
+    (frame, ball_center) for every frame in [start_frame, end_frame] with a
+    ball detection, in original-frame coordinate space (see
+    _center_in_original_space), linearly interpolating through gaps up to
+    max_gap_frames long (the ball vanishing for a frame or two right at
+    contact is expected -- see _find_gap_contact's comment -- and shouldn't
+    kill a real departure trend). A gap longer than that isn't filled --
+    there's no real basis to guess where the ball went for that long, and
+    interpolating across it would fabricate a trend rather than measure one.
+    """
+    real = [(d['frame'], _center_in_original_space(d['ball_box'], d)) for d in detections
+            if d['ball_box'] and start_frame <= d['frame'] <= end_frame]
+    real.sort(key=lambda p: p[0])
+    if len(real) < 2:
+        return real
+
+    track = [real[0]]
+    for (f0, c0), (f1, c1) in zip(real, real[1:]):
+        gap = f1 - f0
+        if 1 < gap <= max_gap_frames:
+            for f in range(f0 + 1, f1):
+                t = (f - f0) / gap
+                track.append((f, (c0[0] + (c1[0] - c0[0]) * t, c0[1] + (c1[1] - c0[1]) * t)))
+        track.append((f1, c1))
+    return track
+
+
+def ball_departure_confirmed(detections, contact_frame, fps, window_sec=0.3):
+    """
+    Independent evidence a swing was a real strike: after the contact
+    frame, does the ball's distance from the racket's position AT contact
+    show a clear net-increasing trend (the ball moving away, i.e. actually
+    struck), rather than sitting still or drifting closer (a stray
+    ball-shaped detection unrelated to this swing)?
+
+    Meant to rescue exactly the swings find_contact_frame() falls back to
+    'wrist_velocity_fallback' for (no racket/ball proximity or occlusion-gap
+    evidence at all) -- see verify_shot_contact.py's use of this. Never
+    invents a signal from data that isn't there: returns
+    (False, 0.0) whenever there's no racket detection at the contact frame
+    to anchor on, or too few (interpolatable) ball detections afterward to
+    judge a trend from.
+
+    Returns (confirmed: bool, confidence: float).
+    """
+    contact_det = next((d for d in detections if d['frame'] == contact_frame), None)
+    if not contact_det or not contact_det['racket_box']:
+        return False, 0.0
+    origin = _center_in_original_space(contact_det['racket_box'], contact_det)
+
+    window = int(window_sec * fps)
+    track = _interpolated_ball_track(detections, contact_frame, contact_frame + window)
+    if len(track) < 3:  # too little real evidence to judge a trend from
+        return False, 0.0
+
+    distances = [math.hypot(c[0] - origin[0], c[1] - origin[1]) for _, c in track]
+
+    # Net trend, not just first-vs-last -- robust to one noisy detection.
+    # Count each consecutive step as "receding" or not, rather than fitting
+    # a full regression: simple, and matches the coarse confidence bands
+    # find_contact_frame()'s other methods already use.
+    steps = [distances[i + 1] - distances[i] for i in range(len(distances) - 1)]
+    receding_steps = sum(1 for s in steps if s > 0)
+    fraction_receding = receding_steps / len(steps)
+
+    if fraction_receding < 0.7:
+        return False, 0.0
+
+    # Same confidence range as ball_racket_proximity/ball_occlusion_gap
+    # (0.3-1.0) -- scales with how clean the receding trend is, capped
+    # below the strongest existing methods since this is corroborating
+    # evidence for the weakest case, not a direct contact-frame pinpoint.
+    confidence = round(min(0.7, 0.3 + 0.4 * fraction_receding), 3)
+    return True, confidence
 
 
 def racket_path(detections):

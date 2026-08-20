@@ -17,13 +17,61 @@ import json
 import os
 import re
 import sys
+import time
 
 import cv2
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '00_utils'))
-from paths import BACKEND_DIR  # noqa: E402
+from paths import BACKEND_DIR, DATA_DIR  # noqa: E402
 
 ENV_PATH = os.path.join(BACKEND_DIR, '.env')
+
+COST_LOG_PATH = os.path.join(DATA_DIR, '14_shot_classifier', 'verifier_cost_log.jsonl')
+
+# Rough per-token estimate for a Claude Haiku-tier model (default model=
+# switched from Sonnet to Haiku 2026-08-19 to cut real confirmed cost --
+# see shot_contact_verifier.py's matching comment) -- NOT pulled from a
+# live pricing API, just the widely-published per-million-token rate at
+# time of writing ($0.80 in / $4 out). Good enough to see the number move
+# as calls accumulate and sanity-check it isn't surprisingly large; check
+# console.anthropic.com's actual billed usage for the exact figure rather
+# than trusting this constant precisely.
+COST_PER_INPUT_TOKEN_USD = 0.8 / 1_000_000
+COST_PER_OUTPUT_TOKEN_USD = 4.0 / 1_000_000
+
+
+def _log_call_cost(input_tokens, output_tokens):
+    estimated_cost_usd = round(
+        input_tokens * COST_PER_INPUT_TOKEN_USD + output_tokens * COST_PER_OUTPUT_TOKEN_USD, 6)
+    record = {
+        'timestamp': time.time(),
+        'input_tokens': input_tokens,
+        'output_tokens': output_tokens,
+        'estimated_cost_usd': estimated_cost_usd,
+    }
+    os.makedirs(os.path.dirname(COST_LOG_PATH), exist_ok=True)
+    with open(COST_LOG_PATH, 'a') as f:
+        f.write(json.dumps(record) + '\n')
+    return estimated_cost_usd
+
+
+def cost_summary():
+    """Total verify_shot() calls + estimated $ spent so far, for
+    ml_status_report.py to surface -- the real, running number, not a
+    one-time guess."""
+    if not os.path.exists(COST_LOG_PATH):
+        return {'calls': 0, 'estimated_cost_usd': 0.0}
+    calls = 0
+    total = 0.0
+    with open(COST_LOG_PATH) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            rec = json.loads(line)
+            calls += 1
+            total += rec.get('estimated_cost_usd', 0.0)
+    return {'calls': calls, 'estimated_cost_usd': round(total, 4)}
 
 
 def _load_api_key():
@@ -63,7 +111,7 @@ Respond with ONLY a JSON object, no other text:
 }}"""
 
 
-def verify_shot(frame, student_scores, student_pick, model='claude-sonnet-5'):
+def verify_shot(frame, student_scores, student_pick, model='claude-haiku-4-5-20251001'):
     """
     Calls the Anthropic API (vision) to get Claude's independent shot-type
     judgment from the contact frame image. Returns
@@ -89,6 +137,7 @@ def verify_shot(frame, student_scores, student_pick, model='claude-sonnet-5'):
             ],
         }],
     )
+    _log_call_cost(response.usage.input_tokens, response.usage.output_tokens)
     text_blocks = [b.text for b in response.content if b.type == 'text']
     if not text_blocks:
         raise ValueError(f'No text block in Claude response (blocks: {[b.type for b in response.content]!r})')

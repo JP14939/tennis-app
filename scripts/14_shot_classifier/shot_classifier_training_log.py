@@ -29,12 +29,21 @@ MIN_EXAMPLES_BEFORE_TRUST = 50
 WINDOW = 100
 
 
-def log_example(scores, student_pick, claude_pick, agreed, lock=None):
+def log_example(scores, student_pick, claude_pick, agreed, lock=None, clip_path=None, contact_frame=None):
     """
     Append one training example. `scores` is the student's full
     {'forehand': x, 'backhand': y, 'serve': z} confidence dict -- the input
     a future trained model would learn from; student/claude picks are the
     labels.
+
+    clip_path/contact_frame: optional -- when the caller has them (every
+    real call site does), stored alongside the scores so this record can
+    later be re-extracted into a richer feature vector (see
+    extract_training_features.py), the same way the amateur eval dataset's
+    manifest.json lets its swings be re-extracted. Every record logged
+    before this was added lacks these fields entirely (no clip reference
+    was ever kept) and can't be backfilled -- optional/defaulted to None
+    so old callers and old records both still work.
 
     lock: optional multiprocessing.Lock (or any context-manager-compatible
     lock). When multiple worker processes can call this concurrently
@@ -49,6 +58,8 @@ def log_example(scores, student_pick, claude_pick, agreed, lock=None):
         'student_pick': student_pick,
         'claude_pick': claude_pick,
         'agreed': agreed,
+        'clip_path': clip_path,
+        'contact_frame': contact_frame,
     }
     os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
 

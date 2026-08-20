@@ -18,7 +18,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '07_ball_racket_tracking'))
 
 import shot_contact_training_log as contact  # noqa: E402
+import shot_contact_verifier  # noqa: E402
 import shot_classifier_training_log as classifier  # noqa: E402
+import shot_classifier_ml_training_log as classifier_ml  # noqa: E402
+import shot_classifier_verifier  # noqa: E402
 import tip_training_log as tips  # noqa: E402
 import contact_frame_training_log as contact_frame  # noqa: E402
 
@@ -55,6 +58,12 @@ def shot_contact_status():
             'agreement_threshold': contact.AGREEMENT_THRESHOLD,
             'window': contact.WINDOW,
         },
+        # This is the verifier that actually fires in the real
+        # detect_rallies.py pipeline (its combined call usually answers
+        # shot-type too, short-circuiting a separate classifier-verifier
+        # call -- see shot_classifier_ml's own verifier_cost note). Real
+        # money, confirmed live 2026-08-19.
+        'verifier_cost': shot_contact_verifier.cost_summary(),
     }
 
 
@@ -70,6 +79,35 @@ def shot_classifier_status():
             'agreement_threshold': classifier.AGREEMENT_THRESHOLD,
             'window': classifier.WINDOW,
         },
+    }
+
+
+def shot_classifier_ml_status():
+    """
+    Trust status for the trained ML shot-classifier (classify_shot.
+    classify_ml(), see train_shot_classifier_model.py) -- a SEPARATE trust
+    gate from shot_classifier_status() above (the rule-based one), so the
+    ML model earns trust independently rather than inheriting the
+    rule-based classifier's poor ~38% agreement rate. Also surfaces
+    shot_classifier_verifier.py's own call cost (single-frame classifier
+    verifier) -- confirmed live 2026-08-19 that this verifier RARELY
+    actually fires in the real detect_rallies.py pipeline, because
+    shot_contact_verifier.py's combined call usually already answers
+    shot_type first (see that module's own verifier_cost, surfaced under
+    shot_contact above -- THAT one is the real cost driver in practice).
+    """
+    records = classifier_ml.read_log()
+    rate = classifier_ml.agreement_rate()
+    return {
+        'total_examples': len(records),
+        'agreement_rate': round(rate, 4) if rate is not None else None,
+        'trusted': classifier_ml.should_trust_student(),
+        'thresholds': {
+            'min_examples_before_trust': classifier_ml.MIN_EXAMPLES_BEFORE_TRUST,
+            'agreement_threshold': classifier_ml.AGREEMENT_THRESHOLD,
+            'window': classifier_ml.WINDOW,
+        },
+        'verifier_cost': shot_classifier_verifier.cost_summary(),
     }
 
 
@@ -118,6 +156,7 @@ def main():
     print(json.dumps({
         'shot_contact': shot_contact_status(),
         'shot_classifier': shot_classifier_status(),
+        'shot_classifier_ml': shot_classifier_ml_status(),
         'tip_selector': tip_selector_status(),
         'contact_frame': contact_frame_status(),
     }))

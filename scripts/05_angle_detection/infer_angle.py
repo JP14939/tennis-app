@@ -254,6 +254,124 @@ def detect_net_endpoints(frame):
     return left_x, right_x, net_y
 
 
+def detect_court_sidelines(frame):
+    """
+    Detect the two court sidelines as the longest diagonal line on each side
+    of frame-center in the lower portion of the frame, converging toward a
+    vanishing point above -- visible from ANY on-court camera position,
+    unlike the net (only usably foreshortened from certain positions, and
+    essentially unusable from a net-position/'front' recording where the
+    camera is right at/behind it). Same cv2.HoughLinesP toolkit as
+    detect_net_endpoints(), a different region and line orientation.
+
+    Returns (left_angle_deg, right_angle_deg): each sideline's deviation
+    from vertical, in degrees, signed positive when the line leans toward
+    frame-center as it goes up (the expected perspective-convergence
+    direction) -- or None if a confident pair of candidate lines wasn't
+    found on both sides.
+    """
+    h, w = frame.shape[:2]
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blurred, 50, 150)
+
+    # Sidelines live in the lower portion of the frame (the court surface),
+    # below where the net/horizon typically sits -- same ROI-restriction
+    # principle as detect_net_endpoints(), a different band.
+    roi_mask = np.zeros_like(edges)
+    roi_mask[int(h * 0.35):h, :] = 255
+    edges = cv2.bitwise_and(edges, roi_mask)
+
+    lines = cv2.HoughLinesP(
+        edges, rho=1, theta=np.pi / 180, threshold=60,
+        minLineLength=int(h * 0.15), maxLineGap=25,
+    )
+    if lines is None:
+        return None
+
+    # Sidelines are diagonal -- not horizontal (net/baseline) or purely
+    # vertical (a net post) -- keep lines between 15deg and 75deg off
+    # horizontal (equivalently, 15deg-75deg off vertical too).
+    candidates = []
+    for x1, y1, x2, y2 in lines.reshape(-1, 4):
+        if x1 == x2 and y1 == y2:
+            continue
+        # Normalize so (x1, y1) is the LOWER point (larger y = lower in
+        # image coords) -- makes "leans toward center going up" well-defined
+        # regardless of Hough's arbitrary endpoint order.
+        if y1 < y2:
+            x1, y1, x2, y2 = x2, y2, x1, y1
+        dx, dy = x2 - x1, y2 - y1
+        if dy >= 0:
+            continue  # not going upward -- not a sideline candidate
+        # atan2(dy, dx) directly would land outside [0, 90] whenever dx is
+        # negative (a line going up-and-to-the-left) since it doesn't fold
+        # quadrants back into an acute angle -- use abs() on both
+        # components first so this is always the line's acute angle from
+        # horizontal, regardless of which way it leans.
+        line_angle_from_horizontal = math.degrees(math.atan2(abs(dy), abs(dx)))
+        if not (15 <= line_angle_from_horizontal <= 75):
+            continue
+        length = math.sqrt(dx ** 2 + dy ** 2)
+        bottom_x_norm = x1 / w
+        candidates.append((length, bottom_x_norm, x1, y1, x2, y2))
+
+    if not candidates:
+        return None
+
+    left_candidates = [c for c in candidates if c[1] < 0.5]
+    right_candidates = [c for c in candidates if c[1] >= 0.5]
+    if not left_candidates or not right_candidates:
+        return None
+
+    # Longest candidate on each side -- same "longest wins" heuristic
+    # detect_net_endpoints() uses for picking the real net line over noise.
+    left_candidates.sort(reverse=True)
+    right_candidates.sort(reverse=True)
+    _, _, lx1, ly1, lx2, ly2 = left_candidates[0]
+    _, _, rx1, ry1, rx2, ry2 = right_candidates[0]
+
+    def angle_from_vertical(x1, y1, x2, y2):
+        # (x1, y1) is the lower point, (x2, y2) the upper one (see
+        # normalization above). Positive = converging toward center as it
+        # goes up (expected); negative = diverging (a noisy/wrong match).
+        dx, dy = x2 - x1, y1 - y2  # dy > 0 (upward)
+        angle = math.degrees(math.atan2(abs(dx), dy))
+        converging = abs(x2 - w * 0.5) < abs(x1 - w * 0.5)
+        return angle if converging else -angle
+
+    left_angle_deg = round(angle_from_vertical(lx1, ly1, lx2, ly2), 1)
+    right_angle_deg = round(angle_from_vertical(rx1, ry1, rx2, ry2), 1)
+    return left_angle_deg, right_angle_deg
+
+
+def angle_from_sideline_symmetry(left_angle_deg, right_angle_deg):
+    """
+    Converts court-sideline convergence asymmetry into a rough 0-90 camera
+    angle estimate, in the same direction infer_camera_angle()'s net-based
+    reading uses (0 = front/centered, 90 = side-on/off to one side). A
+    centered, front-on camera produces two sidelines converging
+    symmetrically (left_angle_deg ~= right_angle_deg); an off-center or
+    angled camera makes one side's convergence noticeably steeper than the
+    other's. Deliberately the simpler, more robust signal (slope asymmetry)
+    rather than full vanishing-point triangulation -- matches this file's
+    established style of simple, wide-banded geometric proxies over precise
+    photogrammetry (see elevation_label()/framing_label()'s own thresholds).
+
+    Callers must only pass two POSITIVE (converging) angles -- a negative
+    (diverging) reading from detect_court_sidelines() means that side's
+    detected line isn't a sane sideline match and the pair shouldn't be
+    trusted at all; filtering that is the caller's job, not this function's.
+
+    Returns None only for the degenerate both-angles-zero case.
+    """
+    total = left_angle_deg + right_angle_deg
+    if total <= 1e-6:
+        return None
+    asymmetry = abs(left_angle_deg - right_angle_deg) / total  # 0 (symmetric) .. 1 (maximally asymmetric)
+    return round(min(90.0, asymmetry * 90.0), 1)
+
+
 def detect_post_height(frame, left_x, right_x, net_y):
     """
     Estimate a net post's visible vertical pixel extent, searching narrow
@@ -604,7 +722,56 @@ def check_camera_setup_frame(frame, landmarker=None):
     }
 
 
-def infer_camera_angle(video_path, frame_number=None, landmarker=None):
+def _court_line_fallback_angle(video_path, candidate_frames, view_direction_hint):
+    """
+    Court-sideline-based angle estimate, used when net detection is either
+    known in advance to be useless (view_direction_hint == 'front' -- a
+    net-position recording, camera right at/behind the net itself) or
+    organically failed on every sampled frame (net absence itself a soft
+    "might be a net-position recording" signal, tried even without a hint).
+
+    Kept deliberately low-confidence and separate from the net-based path
+    above -- there is no known "recorded from the net" sample footage to
+    validate this formula against yet, and this file has repeatedly learned
+    the lesson that a reasonable-looking geometric threshold can fail on
+    real data (see project_vertical_angle_detection memory). Confidence is
+    capped well below check_camera_setup.py's MIN_CONFIDENCE (0.5) so a
+    court-line reading always surfaces as "uncertain" advisory, never a
+    false confident "ok."
+
+    Returns (angle_deg, confidence, debug) or (None, 0.0, reason_str).
+    """
+    court_angles = []
+    for fn in candidate_frames:
+        frame = extract_frame(video_path, fn)
+        sidelines = detect_court_sidelines(frame)
+        if sidelines is None:
+            continue
+        left_angle_deg, right_angle_deg = sidelines
+        if left_angle_deg <= 0 or right_angle_deg <= 0:
+            continue  # not a sane converging pair -- skip rather than trust noise
+        angle_est = angle_from_sideline_symmetry(left_angle_deg, right_angle_deg)
+        if angle_est is not None:
+            court_angles.append(angle_est)
+
+    if not court_angles:
+        reason = ('Net not expected (front-position hint) and court sidelines not detected'
+                   if view_direction_hint == 'front' else
+                   'Net not detected in any sampled frame, and court-sidelines fallback also failed')
+        return None, 0.0, reason
+
+    court_angles.sort()
+    median_angle = court_angles[len(court_angles) // 2]
+    confidence = round(min(0.3, 0.15 + 0.05 * len(court_angles)), 3)
+    debug = {
+        'net_detection_method': 'court_lines',
+        'view_direction_hint': view_direction_hint,
+        'court_line_angle_samples': court_angles,
+    }
+    return median_angle, confidence, debug
+
+
+def infer_camera_angle(video_path, frame_number=None, landmarker=None, view_direction_hint=None):
     """
     Returns (angle_deg, confidence, debug_info) or (None, 0, reason_str).
 
@@ -612,6 +779,13 @@ def infer_camera_angle(video_path, frame_number=None, landmarker=None):
     confidence: 0-1
     landmarker: optional pre-created PoseLandmarker for batch processing.
                 If None, a temporary landmarker is created and destroyed per call.
+    view_direction_hint: 'front'|'back'|None, the record-time filming-
+                position picker's answer (see ContactMarkingScreen.js). When
+                'front' (camera at the net), net-based detection is skipped
+                entirely -- the net is right at/behind the camera, not a
+                usable foreshortened line -- in favor of _court_line_
+                fallback_angle() below. Otherwise unused unless net
+                detection organically fails (see below).
 
     Samples 3 frames (at 25%, 50%, 75% of clip) and takes the median net_width.
     Consistent detections = the net; wildly varying ones = noise from banners/graphics.
@@ -630,14 +804,18 @@ def infer_camera_angle(video_path, frame_number=None, landmarker=None):
         candidate_frames = [int(total * q) for q in (0.25, 0.50, 0.75)]
 
     measurements = []
-    for fn in candidate_frames:
-        frame = extract_frame(video_path, fn)
-        result = _angle_from_frame(frame, landmarker)
-        if result is not None:
-            measurements.append(result)
+    if view_direction_hint != 'front':
+        for fn in candidate_frames:
+            frame = extract_frame(video_path, fn)
+            result = _angle_from_frame(frame, landmarker)
+            if result is not None:
+                measurements.append(result)
 
     if not measurements:
-        return None, 0.0, 'Net not detected in any sampled frame'
+        # Either the net attempt was skipped entirely (front-position hint)
+        # or it ran and found nothing on every sampled frame -- either way,
+        # try the court-sideline fallback before giving up.
+        return _court_line_fallback_angle(video_path, candidate_frames, view_direction_hint)
 
     # Use median net_width for robustness against outlier frames
     net_widths = [m[0] for m in measurements]

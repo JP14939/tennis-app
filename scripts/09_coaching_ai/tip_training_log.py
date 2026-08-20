@@ -21,12 +21,18 @@ MIN_EXAMPLES_BEFORE_TRUST = 50
 WINDOW = 100
 
 
-def log_example(shot_type, deviation_features, student_pick_ids, claude_pick_ids, agreed):
+def log_example(shot_type, deviation_features, student_pick_ids, claude_pick_ids, agreed, source='claude'):
     """
     Append one training example. deviation_features is the full scored-issue
     list from tip_selector.score_issues() (signed deviation + magnitude per
     issue) — this is the input a future trained model would learn from;
     student/claude picks are the labels.
+
+    source: 'claude' (default, unchanged behavior for the existing
+    select_coaching_tips.py call site) or 'user_flag' -- a real person
+    (Jack, via the Dev Page's Tip Review tool) substituting for the Claude
+    teacher, free/no-API-cost, same pattern already used by
+    shot_contact_training_log.py/shot_classifier_training_log.py.
     """
     record = {
         'timestamp': time.time(),
@@ -35,6 +41,7 @@ def log_example(shot_type, deviation_features, student_pick_ids, claude_pick_ids
         'student_pick_ids': student_pick_ids,
         'claude_pick_ids': claude_pick_ids,
         'agreed': agreed,
+        'source': source,
     }
     os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
     with open(LOG_PATH, 'a') as f:
