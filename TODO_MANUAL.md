@@ -236,6 +236,35 @@ private when you're done sharing it (`gh repo edit JP14939/tennis-app
 
 ---
 
+## Urgent: hosted backend needs a redeploy (2026-08-20)
+
+**Dev Page's Ball Label / Pro Clip Review / Tip Review tools all show
+"couldn't load candidates."** Diagnosed, not a code bug: all three
+routes (`/api/dev/ball-label-candidates`, `/pro-clip-review-candidates`,
+`/tip-review-candidates`) return a plain Express `Cannot GET` 404 from
+the **hosted** server (`rallymax.167-233-107-31.sslip.io`) — meaning the
+code running on the Hetzner box predates these features entirely and
+was never redeployed after they were built. Confirmed the scripts
+themselves run correctly locally and the routes exist correctly in the
+repo — this is purely a stale-deployment gap, and I don't have SSH
+access to fix it myself. Steps (see `DEPLOY.md` for the full picture):
+
+1. SSH into the Hetzner box, `cd` into the repo, `git pull`.
+2. From this machine: `rsync -avz data/10b_ball_detection/ user@<server>:/path/to/tennis_app/data/10b_ball_detection/`
+   (Ball Label's candidate frames/labels are brand new today and were
+   never synced up — Pro Clip Review's data, the pro database, was
+   already there and returned 200 when I checked).
+3. Back on the server: `docker compose up --build app` to rebuild with
+   the new code and restart.
+4. Re-check all three Dev Page tools load after that.
+
+Worth doing this redeploy any time you've pushed real backend/scripts
+changes going forward, not just for this — the password reset feature
+just built this session is in the same boat (backend code exists in
+git, isn't live on the hosted server yet either).
+
+---
+
 ## New: finish wiring up self-serve password reset (2026-08-20)
 
 Built the whole flow (backend endpoints, DB table, a standalone
