@@ -219,6 +219,40 @@ private when you're done sharing it (`gh repo edit JP14939/tennis-app
 
 ---
 
+## New from the 2026-08-20 evening session
+
+**Premium folded into Home + Lessons, per your friend's feedback.**
+Removed the standalone Premium tab (was 6 tabs on the bottom bar, now 5);
+its 2 feature cards (1v1 Comparison, Highlight Archive) now render
+directly on Home with a lock badge, and Lessons already had a lock badge
+but used an old confirm-alert flow — both now go **straight to checkout**
+on tap, no confirm step, matching "press on them and premium payment
+appears" literally. `PremiumScreen` itself is trimmed to just the
+checkout widget. Bottom tab bar is also now responsive below ~375px
+width (smaller margins/icons/labels) so it doesn't read as compressed on
+a small phone like an iPhone SE. Removed the "Premium" section heading
+that sat above the Home feature cards per your last note. Not yet
+click-tested on a real device from this side — worth a quick pass next
+time you're on your phone.
+
+**Ball detector Phase 1/2 complete** — see item 3 in the pipeline
+backlog below for the full writeup. Short version: 124 frames
+auto-labeled, 230 sitting in the new Ball Label Dev Page tool waiting on
+your manual review time.
+
+**Everything committed and pushed** — nothing outstanding in git as of
+this session (commit `877c0ad` on `master`,
+`https://github.com/JP14939/tennis-app`).
+
+**Still open, not done this session** (repeated from above so it isn't
+lost): the 5 confirmed-mismatched pro-database clips
+(`forehand_2003`/`2007`/`2016`/`2035`/`2046`, found via manual
+contact-sheet review) haven't been logged to `clip_review_log.jsonl`
+yet, and the 39 unprocessed Downloads clips (`IMG_5757`–`5774`,
+`IMG_5795`–`5815`) still haven't had even the free dry-run run on them.
+
+---
+
 ## Pipeline improvement backlog (from 2026-08-19 architecture review)
 
 Context: walked through every stage of the ML pipeline end to end and
@@ -260,9 +294,35 @@ call first.
    for item 1; anything logged before today's fix still has a real
    `None` student prediction paired against it.
 3. **Ball detector is generic/unfine-tuned**, known-unreliable exactly at
-   the contact frame (the moment that matters most). Once/if item 1 lands,
-   a small fine-tuned ball model — similar scope to how the racket
-   keypoint model got built — is the natural next investment.
+   the contact frame (the moment that matters most) — audited this
+   session: 50% detection rate / 0.41 avg confidence on 60 real user
+   swings vs. the pro database's own 69%/0.664. Scoped and Phase 1/2
+   built 2026-08-20:
+   - **Phase 1 (data sourcing)** done —
+     `scripts/07_ball_racket_tracking/sample_ball_frames.py` sourced 360
+     candidate frames (180 near-contact, 120 mid-flight from real saved
+     analyses, 60 negatives reused from real Claude-verified "not a real
+     shot" timestamps).
+   - **Phase 2 (labeling)** done, after a real methodology failure and
+     pivot: asking Claude to freeform-locate the ball's pixel bbox failed
+     3 times running (confidently wrong boxes landing in background
+     foliage, verified by drawing the boxes back onto the images).
+     Replaced with a classical HSV-color + contour pipeline
+     (`find_ball_candidates.py`) that proposes candidates, then Claude
+     just confirms/rejects a tight crop around the top one
+     (`ball_presence_verifier.py`) — much easier binary question, 9/9
+     correct on the frames that broke the freeform approach.
+     `label_ball_frames.py` ran the full 360-frame batch: **124
+     confirmed, 230 need manual review, 6 transient errors**, total cost
+     **$0.38**. Frames with no confident candidate get flagged
+     `needs_manual_review` rather than force-labeled.
+   - **Manual-review fallback built**: new **Ball Label** Dev Page tool
+     (Dev Page → Ball Label (free, manual)) — draw a box yourself on any
+     of the 230 `needs_manual_review` frames (first draw-a-box UI in the
+     app, `DevBallLabelScreen.js`). **This is now on you**: work through
+     those 230 whenever you have time; no further action needed from me
+     until you want to move on to actually training the model on the
+     combined labeled set.
 4. ~~**Camera angle has no fallback when the net isn't visible at all.**~~ —
    built 2026-08-20. When the record-time filming-position picker says
    `'front'` (camera at the net — net detection is predictably useless
