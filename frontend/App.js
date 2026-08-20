@@ -21,6 +21,7 @@ import PremiumScreen from './screens/PremiumScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import LoginScreen from './screens/LoginScreen';
 import SignupScreen from './screens/SignupScreen';
+import ForgotPasswordScreen from './screens/ForgotPasswordScreen';
 import ContactMarkingScreen from './screens/ContactMarkingScreen';
 import ResultsScreen from './screens/ResultsScreen';
 import VersusPickScreen from './screens/VersusPickScreen';
@@ -98,6 +99,7 @@ export default function App() {
             <Stack.Screen name="LessonDetail" component={LessonDetailScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Login" component={LoginScreen} options={{ title: 'Log In' }} />
             <Stack.Screen name="Signup" component={SignupScreen} options={{ title: 'Sign Up' }} />
+            <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} options={{ title: 'Reset Password' }} />
             <Stack.Screen name="VersusPick" component={VersusPickScreen} options={{ title: 'Compare Videos' }} />
             <Stack.Screen name="VersusResults" component={VersusResultsScreen} options={{ title: 'Comparison' }} />
             <Stack.Screen name="SyncCompare" component={SyncCompareScreen} options={{ headerShown: false }} />

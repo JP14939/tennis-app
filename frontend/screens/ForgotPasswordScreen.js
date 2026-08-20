@@ -1,29 +1,36 @@
 import { useState } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, Image,
+  View, Text, TextInput, TouchableOpacity,
   StyleSheet, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView,
 } from 'react-native';
+import Alert from '../utils/alert';
 import { useAuth } from '../context/AuthContext';
 import { playTapSound } from '../utils/sounds';
 import { colors, fonts, radius, spacing } from '../theme';
 
-export default function LoginScreen({ navigation }) {
-  const { login } = useAuth();
+export default function ForgotPasswordScreen({ navigation }) {
+  const { forgotPassword } = useAuth();
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  async function handleLogin() {
+  async function handleSubmit() {
     setError('');
-    if (!email || !password) {
-      setError('Please fill in all fields.');
+    if (!email) {
+      setError('Please enter your email.');
       return;
     }
     setLoading(true);
     try {
-      await login(email, password);
-      navigation.navigate('MainTabs', { screen: 'Home' });
+      await forgotPassword(email);
+      // Same message regardless of whether the account exists -- the
+      // backend's response never reveals that either, see AuthContext.js's
+      // forgotPassword() comment.
+      Alert.alert(
+        'Check your inbox',
+        "If that email has a RallyMax account, we've sent a link to reset your password.",
+        [{ text: 'OK', onPress: () => navigation.goBack() }]
+      );
     } catch (err) {
       setError(err.message || 'Something went wrong');
     } finally {
@@ -37,9 +44,8 @@ export default function LoginScreen({ navigation }) {
         <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
 
           <View style={s.header}>
-            <Image source={require('../assets/branding/logo-rallymax.png')} style={s.logo} resizeMode="contain" />
-            <Text style={s.title}>Welcome back</Text>
-            <Text style={s.sub}>Log in to your RallyMax account</Text>
+            <Text style={s.title}>Reset your password</Text>
+            <Text style={s.sub}>Enter your account email and we'll send you a reset link.</Text>
           </View>
 
           <View style={s.form}>
@@ -57,41 +63,18 @@ export default function LoginScreen({ navigation }) {
               />
             </View>
 
-            <View style={s.field}>
-              <Text style={s.label}>Password</Text>
-              <TextInput
-                style={s.input}
-                placeholder="••••••••"
-                placeholderTextColor={colors.muted}
-                secureTextEntry
-                autoComplete="password"
-                value={password}
-                onChangeText={setPassword}
-              />
-            </View>
-
             {error ? <Text style={s.error}>{error}</Text> : null}
 
             <TouchableOpacity
               style={[s.btnPrimary, loading && s.btnDisabled]}
-              onPress={() => { playTapSound(); handleLogin(); }}
+              onPress={() => { playTapSound(); handleSubmit(); }}
               disabled={loading}
             >
-              <Text style={s.btnPrimaryText}>{loading ? 'Logging in...' : 'Log in'}</Text>
+              <Text style={s.btnPrimaryText}>{loading ? 'Sending...' : 'Send reset link'}</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={s.forgotWrap}
-              onPress={() => navigation.navigate('ForgotPassword')}
-            >
-              <Text style={s.forgot}>Forgot password?</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={s.footer}>
-            <Text style={s.footerText}>Don't have an account? </Text>
-            <TouchableOpacity onPress={() => navigation.navigate('Signup')}>
-              <Text style={s.footerLink}>Sign up free</Text>
+            <TouchableOpacity style={s.backWrap} onPress={() => navigation.goBack()}>
+              <Text style={s.back}>Back to log in</Text>
             </TouchableOpacity>
           </View>
 
@@ -106,10 +89,9 @@ const s = StyleSheet.create({
   flex: { flex: 1 },
   scroll: { flexGrow: 1, padding: spacing.xxl },
 
-  header: { alignItems: 'center', marginBottom: 40 },
-  logo: { width: 140, height: 46, marginBottom: 18 },
-  title: { color: colors.ink, fontSize: 32, fontFamily: fonts.serifItalic, marginBottom: 6 },
-  sub: { color: colors.muted, fontSize: 15, fontFamily: fonts.regular },
+  header: { alignItems: 'center', marginBottom: 40, marginTop: 20 },
+  title: { color: colors.ink, fontSize: 28, fontFamily: fonts.serifItalic, marginBottom: 10, textAlign: 'center' },
+  sub: { color: colors.muted, fontSize: 15, fontFamily: fonts.regular, textAlign: 'center' },
 
   form: { gap: spacing.lg },
   field: { gap: spacing.xs },
@@ -137,14 +119,6 @@ const s = StyleSheet.create({
   btnDisabled: { opacity: 0.6 },
   btnPrimaryText: { color: colors.white, fontSize: 16, fontFamily: fonts.bold },
 
-  forgotWrap: { alignItems: 'center', marginTop: 4 },
-  forgot: { color: colors.muted, fontSize: 13, fontFamily: fonts.regular },
-
-  footer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    marginTop: 40,
-  },
-  footerText: { color: colors.muted, fontSize: 14, fontFamily: fonts.regular },
-  footerLink: { color: colors.primary, fontSize: 14, fontFamily: fonts.bold },
+  backWrap: { alignItems: 'center', marginTop: 4 },
+  back: { color: colors.muted, fontSize: 13, fontFamily: fonts.regular },
 });

@@ -236,6 +236,43 @@ private when you're done sharing it (`gh repo edit JP14939/tennis-app
 
 ---
 
+## New: finish wiring up self-serve password reset (2026-08-20)
+
+Built the whole flow (backend endpoints, DB table, a standalone
+`reset-password.html` page the backend serves directly, and a new
+"Forgot password?" screen in the app that replaces the old
+email-support alert) — tested end-to-end against the dev DB with a
+manually-seeded token (request → reset → login with new password →
+reused token correctly rejected). **The only thing missing is a real
+email-sending account**, same shape as the RevenueCat setup below:
+
+1. **Create a Resend account** (resend.com, free tier: 3,000 emails/month).
+2. **Grab an API key** from the dashboard → `backend/.env` as `RESEND_API_KEY`.
+3. **Decide on the sender domain**: the shared sandbox sender
+   (`onboarding@resend.dev`, already the default in `.env.example`) only
+   lets you send to *your own* verified email — fine for your own
+   testing, useless for real users. To send to anyone, you need to
+   verify a real domain in Resend's dashboard (DNS records) and set
+   `RESEND_FROM_EMAIL` to an address on it, e.g.
+   `RallyMax <noreply@rallymax.app>`. **Open question I can't answer for
+   you**: does `rallymax.app` actually exist/is it yours? The old
+   "email support@rallymax.app" alert text assumed so, but that was
+   never confirmed this session.
+4. **Set `PUBLIC_BASE_URL`** in `backend/.env` to wherever the backend
+   is actually reachable (already `https://rallymax.167-233-107-31.sslip.io`
+   in `.env.example`) — this is what the reset link in the email points at.
+5. **Restart the backend** so it picks up the new env values.
+6. **Real test**: tap "Forgot password?" in the app, check the inbox
+   for the linked email, click through to `reset-password.html`, set a
+   new password, confirm you can log in with it.
+
+**Also note**: while testing this, I reset the dev account
+`direct@example.com`'s password to `brandnewpass123` to verify the full
+flow end-to-end (login-with-new-password confirmed working) — change it
+if that account matters to you.
+
+---
+
 ## New from the 2026-08-20 evening session
 
 **Premium folded into Home + Lessons, per your friend's feedback.**

@@ -72,6 +72,12 @@ app.use('/drill-clips', express.static(path.join(DATA_DIR, 'runtime', 'drill_cli
 // ball-labeling tool -- see the ball detector project's plan.
 app.use('/ball-label-frames', express.static(path.join(DATA_DIR, '10b_ball_detection', 'candidate_frames')));
 
+// Standalone reset-password.html (self-serve password reset, 2026-08-20)
+// -- served from the backend directly rather than through the Expo app,
+// since only this backend is permanently hosted; the reset email's link
+// points straight at /reset-password.html?token=... on this same origin.
+app.use(express.static(path.join(__dirname, '..', 'public')));
+
 // Basic starting point, not a robust job queue: sweep upload-derived runtime
 // dirs older than a day so /user-clips and /comparison-clips don't grow
 // forever. Pro clips (04_clips, 04_clips_cropped) are never swept -- those

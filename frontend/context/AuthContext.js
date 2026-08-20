@@ -63,6 +63,21 @@ export function AuthProvider({ children }) {
       body: JSON.stringify({ email, password }),
     }).then(handleAuthResponse), [handleAuthResponse]);
 
+  // Always resolves (even for an unknown email) -- the backend responds 204
+  // either way so this never leaks whether an account exists, see
+  // auth.js's /auth/forgot-password comment. Doesn't touch the session.
+  const forgotPassword = useCallback((email) =>
+    fetch(`${API_BASE}/api/auth/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    }).then(async (res) => {
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Something went wrong');
+      }
+    }), []);
+
   const logout = useCallback(async () => {
     await storage.deleteItem(TOKEN_KEY);
     setToken(null);
@@ -115,6 +130,7 @@ export function AuthProvider({ children }) {
     isPremium: user?.tier === 'premium',
     signup,
     login,
+    forgotPassword,
     logout,
     refreshUser,
     updateUser,

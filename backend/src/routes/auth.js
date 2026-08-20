@@ -7,12 +7,14 @@ const path = require('path');
 const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
 const { DATA_DIR } = require('../config/paths');
+const { sendPasswordResetEmail } = require('../utils/email');
 
 const router = express.Router();
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const USERNAME_RE = /^[a-z0-9_]{3,20}$/;
 const TOKEN_TTL = '30d'; // mobile app — favour staying logged in over frequent re-auth
+const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
 // Same path convention highlights.js uses for its per-user clip subdirectory.
 const HIGHLIGHT_CLIPS_DIR = path.join(DATA_DIR, 'runtime', 'highlight_clips');
 
@@ -82,6 +84,71 @@ router.post('/auth/login', async (req, res) => {
   }
 
   res.json({ token: issueToken(user), user: publicUser(user) });
+});
+
+router.post('/auth/forgot-password', async (req, res) => {
+  const { email } = req.body || {};
+  if (!email || !EMAIL_RE.test(email)) {
+    return res.status(400).json({ error: 'A valid email is required' });
+  }
+
+  const normalisedEmail = email.trim().toLowerCase();
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(normalisedEmail);
+
+  // Always respond 204 whether or not the account exists -- same
+  // don't-leak-account-existence reasoning as /auth/login's timing-safe
+  // dummy hash comparison above, just applied to response shape instead
+  // of timing since there's no password to compare against here.
+  if (!user) {
+    return res.status(204).end();
+  }
+
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+  const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS).toISOString();
+  db.prepare(
+    'INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (?, ?, ?)'
+  ).run(user.id, tokenHash, expiresAt);
+
+  const publicBaseUrl = process.env.PUBLIC_BASE_URL || '';
+  const resetUrl = `${publicBaseUrl}/reset-password.html?token=${rawToken}`;
+
+  try {
+    await sendPasswordResetEmail(user.email, resetUrl);
+  } catch (err) {
+    // Not configured yet (no RESEND_API_KEY) or Resend itself failed --
+    // still respond 204 either way so this endpoint's response shape never
+    // reveals email-sending state, but log loudly so a real misconfiguration
+    // is noticeable in the backend console rather than silently swallowed.
+    console.error('[auth/forgot-password] sendPasswordResetEmail failed:', err.message);
+  }
+
+  res.status(204).end();
+});
+
+router.post('/auth/reset-password', async (req, res) => {
+  const { token, newPassword } = req.body || {};
+  if (!token || !newPassword) {
+    return res.status(400).json({ error: 'Token and new password are required' });
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters' });
+  }
+
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const reset = db.prepare(
+    'SELECT * FROM password_resets WHERE token_hash = ? AND used_at IS NULL AND expires_at > ? ORDER BY id DESC LIMIT 1'
+  ).get(tokenHash, new Date().toISOString());
+
+  if (!reset) {
+    return res.status(400).json({ error: 'This reset link is invalid or has expired' });
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, reset.user_id);
+  db.prepare('UPDATE password_resets SET used_at = datetime(\'now\') WHERE id = ?').run(reset.id);
+
+  res.status(204).end();
 });
 
 router.get('/auth/me', requireAuth, (req, res) => {

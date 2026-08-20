@@ -498,4 +498,23 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_coach_notes_analysis_id ON coach_notes(a
 db.exec('CREATE INDEX IF NOT EXISTS idx_push_tokens_user_id ON push_tokens(user_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_drill_practice_attempts_step_user ON drill_practice_attempts(step_id, user_id)');
 
+// Self-serve password reset. Only the sha256 hash of the reset token is
+// ever stored (auth.js hashes it before the INSERT) -- same reasoning as
+// never storing a plaintext password, even though this token is
+// short-lived (1 hour, enforced in auth.js). used_at is set rather than
+// deleting the row, so a reused/replayed token fails cleanly instead of
+// just not being found.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS password_resets (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id),
+    token_hash TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at    TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+`);
+db.exec('CREATE INDEX IF NOT EXISTS idx_password_resets_token_hash ON password_resets(token_hash)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_password_resets_user_id ON password_resets(user_id)');
+
 module.exports = db;
