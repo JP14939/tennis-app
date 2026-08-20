@@ -202,13 +202,24 @@ it would run **~$2.70**. Not run yet — waiting on your go-ahead. Run it
 with `detect_rallies.py` once you're ready (same command pattern as the
 IMG_5822 run).
 
-**39 more unprocessed clips sitting in Downloads.** `IMG_5757`–`5774`,
-`IMG_5795`–`5815` (39 files, mostly small — 3-110MB), plus `finesse
-shot.mov` and `game-winnder-stable.mov`, have never been run through
-even the free candidate-count dry-run. Say the word and I'll run the
-free dry-run (`dry_run_candidate_count.py`, no Claude cost) across all of
-them so you have real candidate counts/cost estimates for the whole
-batch, not just the two big files.
+~~**39 more unprocessed clips sitting in Downloads.**~~ — dry-run done
+2026-08-20 (free, no Claude cost). `IMG_5757`–`5774` (17 files, `5768`
+doesn't exist), `IMG_5795`–`5815` (21 files), `finesse shot.mov`,
+`game-winnder-stable.mov` — 39 files, **149 raw swing candidates** over
+**11.9 minutes** of footage. At IMG_5822's measured real rate
+(~$0.0093/Claude call), fully verifying all 39 would run **~$1.39**.
+Two low-signal outliers worth knowing about before spending on them:
+`finesse shot.mov` only got pose detected on 25% of sampled frames, and
+`game-winnder-stable.mov` on 49% — both much lower than every other
+clip's 82-100%, so their "1 candidate" counts are probably undercounts
+from poor pose tracking (bad lighting/distance/angle) rather than
+genuinely quiet footage; worth a look before including them in any
+verification run. Not run through Claude verification yet — waiting on
+your go-ahead, same as `IMG_5755` was.
+
+Also spotted **newer, not-yet-processed clips** since this list was made:
+`IMG_5823.MOV`, `IMG_5842.MOV`, `IMG_5843.MOV` — not included in the
+count above, say the word if you want these dry-run'd too.
 
 **GitHub repo created.** `https://github.com/JP14939/tennis-app` —
 currently **public** (flipped from private at your request 2026-08-20,
