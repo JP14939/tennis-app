@@ -1,8 +1,9 @@
 import { useCallback, useState } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet, SafeAreaView,
-  ScrollView, ActivityIndicator, Alert, Platform, Switch,
+  ScrollView, ActivityIndicator, Platform, Switch,
 } from 'react-native';
+import Alert from '../utils/alert';
 import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../context/AuthContext';

@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, Image,
-  StyleSheet, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, Alert, Linking,
+  StyleSheet, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, Linking,
 } from 'react-native';
+import Alert from '../utils/alert';
 import { useAuth } from '../context/AuthContext';
 import { playTapSound } from '../utils/sounds';
 import { colors, fonts, radius, spacing } from '../theme';

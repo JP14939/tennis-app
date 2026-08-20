@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator } from 'react-native';
+import Alert from '../utils/alert';
 import { useFocusEffect } from '@react-navigation/native';
 import PlatformVideo from '../components/PlatformVideo';
 import { useAuth } from '../context/AuthContext';

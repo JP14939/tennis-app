@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ActivityIndicator, Alert, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ActivityIndicator, Platform } from 'react-native';
+import Alert from '../utils/alert';
 import PlatformVideo from '../components/PlatformVideo';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE } from '../config/api';

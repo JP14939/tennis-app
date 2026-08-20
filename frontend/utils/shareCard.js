@@ -1,4 +1,4 @@
-import { Alert } from 'react-native';
+import Alert from './alert';
 import { captureRef } from 'react-native-view-shot';
 import * as Sharing from 'expo-sharing';
 

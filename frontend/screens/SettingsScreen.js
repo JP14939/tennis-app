@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, Switch, Alert,
+  View, Text, TextInput, TouchableOpacity, Switch,
   StyleSheet, SafeAreaView, ScrollView,
 } from 'react-native';
+import Alert from '../utils/alert';
 import { useAuth } from '../context/AuthContext';
 import { changePassword } from '../api/account';
 import { colors, fonts, radius, spacing } from '../theme';

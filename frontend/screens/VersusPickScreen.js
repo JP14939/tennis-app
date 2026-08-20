@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, Alert,
+  View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView,
 } from 'react-native';
+import Alert from '../utils/alert';
 import * as ImagePicker from 'expo-image-picker';
 import { playTapSound } from '../utils/sounds';
 import { colors, fonts, radius, spacing } from '../theme';

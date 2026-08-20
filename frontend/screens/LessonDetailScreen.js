@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator } from 'react-native';
+import Alert from '../utils/alert';
 import PlatformVideo from '../components/PlatformVideo';
 import TipDiagram from '../components/TipDiagram';
 import { colors, fonts, radius, spacing } from '../theme';

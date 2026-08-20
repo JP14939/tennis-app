@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, SafeAreaView,
-  Dimensions, Alert, Platform, ScrollView, LayoutAnimation, UIManager,
+  Dimensions, Platform, ScrollView, LayoutAnimation, UIManager,
 } from 'react-native';
+import Alert from '../utils/alert';
 import * as ImagePicker from 'expo-image-picker';
 import PlatformVideo from '../components/PlatformVideo';
 import FenceTutorialContent from '../components/FenceTutorialContent';

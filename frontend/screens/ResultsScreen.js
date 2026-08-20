@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet, SafeAreaView,
-  ScrollView, ActivityIndicator, Platform, Alert, Modal,
+  ScrollView, ActivityIndicator, Platform, Modal,
 } from 'react-native';
+import Alert from '../utils/alert';
 import { API_BASE } from '../config/api';
 import { useAuth } from '../context/AuthContext';
 import { saveHistory, flagNotShot, confirmRealShot, correctShotType } from '../api/history';

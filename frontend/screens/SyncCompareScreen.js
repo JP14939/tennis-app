@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet, SafeAreaView,
-  ScrollView, PanResponder, Animated, Alert,
+  ScrollView, PanResponder, Animated,
 } from 'react-native';
+import Alert from '../utils/alert';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import PlatformVideo from '../components/PlatformVideo';
 import SkeletonOverlay from '../components/SkeletonOverlay';

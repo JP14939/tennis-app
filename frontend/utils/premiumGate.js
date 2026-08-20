@@ -1,5 +1,6 @@
-import { Alert, Platform } from 'react-native';
+import { Platform } from 'react-native';
 import { useAuth } from '../context/AuthContext';
+import Alert from './alert';
 
 // Shared by PremiumFeaturesSection.js (Home) and PremiumScreen.js itself --
 // extracted from what used to be PremiumScreen.js's own local gated()

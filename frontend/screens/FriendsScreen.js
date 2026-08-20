@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet,
-  SafeAreaView, ScrollView, ActivityIndicator, Alert, Share,
+  SafeAreaView, ScrollView, ActivityIndicator, Share,
 } from 'react-native';
+import Alert from '../utils/alert';
 import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';

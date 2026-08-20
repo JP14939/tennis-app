@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet,
-  SafeAreaView, ScrollView, ActivityIndicator, Alert,
+  SafeAreaView, ScrollView, ActivityIndicator,
 } from 'react-native';
+import Alert from '../utils/alert';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { getInviteCode, linkCoach, listStudents, getStudentHistory } from '../api/coach';
