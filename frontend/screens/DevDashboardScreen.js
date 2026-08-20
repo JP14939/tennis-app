@@ -50,6 +50,12 @@ const TOOLS = [
     screen: 'DevProClipReview',
   },
   {
+    key: 'ball-label',
+    label: 'Ball Label (free, manual)',
+    sub: 'Draw a box around the ball on frames the automated ball-detector labeling pipeline could not resolve on its own',
+    screen: 'DevBallLabel',
+  },
+  {
     key: 'drills-editor',
     label: 'Drills & Lessons Editor',
     sub: 'Create/edit the free Drills library and paid Lessons routines shown on the History screen',

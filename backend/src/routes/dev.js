@@ -50,6 +50,12 @@ const LOG_PRO_CLIP_REVIEW = path.join(SCRIPTS_DIR, '06_database_build', 'log_pro
 const PRO_CLIP_REVIEW_CANDIDATES_TIMEOUT_MS = 30 * 1000;
 const LOG_PRO_CLIP_REVIEW_TIMEOUT_MS = 15 * 1000; // just appends a line to one JSONL file
 
+const LIST_BALL_LABEL_CANDIDATES = path.join(SCRIPTS_DIR, '07_ball_racket_tracking', 'list_ball_label_candidates.py');
+const LOG_MANUAL_BALL_LABEL = path.join(SCRIPTS_DIR, '07_ball_racket_tracking', 'log_manual_ball_label.py');
+// Just reads a JSON labels file + the review log -- near-instant.
+const BALL_LABEL_CANDIDATES_TIMEOUT_MS = 30 * 1000;
+const LOG_BALL_LABEL_TIMEOUT_MS = 15 * 1000; // just appends a line to one JSONL file
+
 // Hidden Dev Page (Profile -> Settings -> Dev Page) -- every route here is
 // requireAuth + requireAdmin, a real 403 for anyone but the admin allowlist
 // in middleware/requireAdmin.js, regardless of what the frontend hides.
@@ -300,6 +306,79 @@ router.post('/dev/pro-clip-review/label', requireAuth, requireAdmin, (req, res) 
     clearTimeout(timeout);
     console.error('[dev] failed to spawn python:', err);
     res.status(500).json({ error: 'Failed to start pro clip review logging' });
+  });
+
+  proc.stdin.write(JSON.stringify(req.body));
+  proc.stdin.end();
+});
+
+// Manual ball-labeling tool for the fine-tuned ball detector project --
+// serves frames the classical-detector-plus-Claude-confirm pipeline
+// couldn't resolve (needs_manual_review), plus a small spot-check slice
+// of already-confirmed ones, for Jack to draw a box on directly.
+router.get('/dev/ball-label-candidates', requireAuth, requireAdmin, (req, res) => {
+  const args = [LIST_BALL_LABEL_CANDIDATES];
+  if (req.query.limit) args.push(String(req.query.limit));
+  const proc = spawn(PYTHON, args);
+
+  let stdout = '';
+  let stderr = '';
+  proc.stdout.on('data', (chunk) => { stdout += chunk; });
+  proc.stderr.on('data', (chunk) => { stderr += chunk; });
+
+  const timeout = setTimeout(() => proc.kill(), BALL_LABEL_CANDIDATES_TIMEOUT_MS);
+
+  proc.on('close', (code) => {
+    clearTimeout(timeout);
+    if (code !== 0) {
+      console.error('[dev] list_ball_label_candidates.py failed:', stderr.slice(-2000));
+      return res.status(500).json({ error: 'Failed to list ball label candidates' });
+    }
+    try {
+      res.json(JSON.parse(stdout));
+    } catch {
+      console.error('[dev] failed to parse list_ball_label_candidates.py output:', stdout.slice(-2000));
+      res.status(500).json({ error: 'Ball label candidate list produced invalid output' });
+    }
+  });
+
+  proc.on('error', (err) => {
+    clearTimeout(timeout);
+    console.error('[dev] failed to spawn python:', err);
+    res.status(500).json({ error: 'Failed to start ball label candidate listing' });
+  });
+});
+
+// Logs Jack's manually-drawn ball box (or "no ball" verdict). Body is
+// {file, bucket, ball_visible, box_norm}.
+router.post('/dev/ball-label/label', requireAuth, requireAdmin, (req, res) => {
+  const proc = spawn(PYTHON, [LOG_MANUAL_BALL_LABEL]);
+
+  let stdout = '';
+  let stderr = '';
+  proc.stdout.on('data', (chunk) => { stdout += chunk; });
+  proc.stderr.on('data', (chunk) => { stderr += chunk; });
+
+  const timeout = setTimeout(() => proc.kill(), LOG_BALL_LABEL_TIMEOUT_MS);
+
+  proc.on('close', (code) => {
+    clearTimeout(timeout);
+    if (code !== 0) {
+      console.error('[dev] log_manual_ball_label.py failed:', stderr.slice(-2000));
+      return res.status(500).json({ error: 'Failed to log ball label' });
+    }
+    try {
+      res.json(JSON.parse(stdout));
+    } catch {
+      console.error('[dev] failed to parse log_manual_ball_label.py output:', stdout.slice(-2000));
+      res.status(500).json({ error: 'Log ball label produced invalid output' });
+    }
+  });
+
+  proc.on('error', (err) => {
+    clearTimeout(timeout);
+    console.error('[dev] failed to spawn python:', err);
+    res.status(500).json({ error: 'Failed to start ball label logging' });
   });
 
   proc.stdin.write(JSON.stringify(req.body));

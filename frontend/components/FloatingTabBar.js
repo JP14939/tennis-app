@@ -2,14 +2,32 @@ import { useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Animated, Platform } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { colors, fonts } from '../theme';
-import { HomeIcon, HistoryIcon, FriendsIcon, ProfileIcon, MapPinIcon, PremiumIcon } from './icons';
+import { useWindowWidth } from '../utils/responsive';
+import { HomeIcon, HistoryIcon, FriendsIcon, ProfileIcon, MapPinIcon } from './icons';
 
-const ICONS = { Home: HomeIcon, Premium: PremiumIcon, History: HistoryIcon, Friends: FriendsIcon, FindGames: MapPinIcon, Profile: ProfileIcon };
+const ICONS = { Home: HomeIcon, History: HistoryIcon, Friends: FriendsIcon, FindGames: MapPinIcon, Profile: ProfileIcon };
 const BAR_PAD = 8;
+
+// Below this width (a genuinely small phone, e.g. iPhone SE at 375 or a
+// small Android at 360), the bar's fixed margins/icon/label sizes were
+// reported as visibly compressed -- these are the smaller values used
+// under that breakpoint. Was compounded by Premium being a 6th tab; now
+// 5 tabs (Premium moved to Home, see PremiumFeaturesSection) but still
+// worth scaling down for genuinely narrow screens rather than relying on
+// one fewer tab alone to fix it.
+const SMALL_SCREEN_BREAKPOINT = 375;
+const SIDE_MARGIN = { normal: 16, small: 10 };
+const ICON_SIZE = { normal: 20, small: 17 };
+const LABEL_FONT_SIZE = { normal: 10.5, small: 9.5 };
 
 export default function FloatingTabBar({ state, descriptors, navigation }) {
   const [barWidth, setBarWidth] = useState(0);
   const indicatorX = useRef(new Animated.Value(0)).current;
+  const windowWidth = useWindowWidth();
+  const isSmallScreen = windowWidth < SMALL_SCREEN_BREAKPOINT;
+  const sideMargin = isSmallScreen ? SIDE_MARGIN.small : SIDE_MARGIN.normal;
+  const iconSize = isSmallScreen ? ICON_SIZE.small : ICON_SIZE.normal;
+  const labelFontSize = isSmallScreen ? LABEL_FONT_SIZE.small : LABEL_FONT_SIZE.normal;
 
   const itemWidth = barWidth > 0 ? (barWidth - BAR_PAD * 2) / state.routes.length : 0;
 
@@ -23,7 +41,10 @@ export default function FloatingTabBar({ state, descriptors, navigation }) {
   }, [state.index, itemWidth]);
 
   return (
-    <View style={styles.wrap} onLayout={(e) => setBarWidth(e.nativeEvent.layout.width)}>
+    <View
+      style={[styles.wrap, { left: sideMargin, right: sideMargin }]}
+      onLayout={(e) => setBarWidth(e.nativeEvent.layout.width)}
+    >
       <BlurView intensity={60} tint="light" style={StyleSheet.absoluteFillObject} />
       <View style={styles.tint} pointerEvents="none" />
       {itemWidth > 0 && (
@@ -49,8 +70,8 @@ export default function FloatingTabBar({ state, descriptors, navigation }) {
 
         return (
           <TouchableOpacity key={route.key} onPress={onPress} style={styles.item} activeOpacity={0.8}>
-            {Icon && <Icon size={20} color={focused ? colors.white : colors.muted} />}
-            <Text style={[styles.label, { color: focused ? colors.white : colors.muted }]}>{label}</Text>
+            {Icon && <Icon size={iconSize} color={focused ? colors.white : colors.muted} />}
+            <Text style={[styles.label, { fontSize: labelFontSize, color: focused ? colors.white : colors.muted }]}>{label}</Text>
           </TouchableOpacity>
         );
       })}

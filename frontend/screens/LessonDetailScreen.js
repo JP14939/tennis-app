@@ -67,7 +67,7 @@ export default function LessonDetailScreen({ route, navigation }) {
                 : "Couldn't load this — check your connection."}
           </Text>
           {loadError === 'locked' ? (
-            <TouchableOpacity style={s.retryBtn} onPress={() => navigation.navigate('MainTabs', { screen: 'Premium' })}>
+            <TouchableOpacity style={s.retryBtn} onPress={() => navigation.navigate('Premium')}>
               <Text style={s.retryBtnText}>See Premium</Text>
             </TouchableOpacity>
           ) : loadError === 'generic' ? (

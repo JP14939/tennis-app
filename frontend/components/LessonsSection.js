@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { colors, fonts, radius, spacing } from '../theme';
 import { FilmIcon, TennisBallIcon, LockIcon } from './icons';
 import { useAuth } from '../context/AuthContext';
+import { useGatedNavigate } from '../utils/premiumGate';
 import { listDrills } from '../api/drills';
 
 const SHOT_TYPE_LABELS = {
@@ -57,6 +58,7 @@ const cc = StyleSheet.create({
 
 export default function LessonsSection({ navigation }) {
   const { token, isPremium } = useAuth();
+  const gatedNavigate = useGatedNavigate(navigation);
   const [loading, setLoading] = useState(true);
   const [lessons, setLessons] = useState([]);
 
@@ -74,16 +76,15 @@ export default function LessonsSection({ navigation }) {
     return acc;
   }, {});
 
+  // item.locked is per-lesson (some lessons are free even without
+  // Premium, see the empty-state copy below) -- only gate the ones
+  // actually flagged locked, straight to checkout now (useGatedNavigate),
+  // same "press it and payment appears" behavior as PremiumFeaturesSection
+  // on Home, no confirm-alert step first. Unlocked lessons navigate
+  // directly regardless of the viewer's own premium status.
   const onPressLesson = (item) => {
     if (item.locked) {
-      Alert.alert(
-        'Premium lesson',
-        'Upgrade to Premium to unlock the full watch-learn-practice flow for this lesson.',
-        [
-          { text: 'Upgrade', onPress: () => navigation.navigate('Premium') },
-          { text: 'Not now', style: 'cancel' },
-        ]
-      );
+      gatedNavigate('Premium');
       return;
     }
     navigation.navigate('LessonDetail', { id: item.id });

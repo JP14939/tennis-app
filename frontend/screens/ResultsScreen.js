@@ -324,7 +324,7 @@ export default function ResultsScreen({ navigation, route }) {
           {isDailyLimit ? (
             <TouchableOpacity
               style={s.retryBtn}
-              onPress={() => navigation.navigate('MainTabs', { screen: 'Premium' })}
+              onPress={() => navigation.navigate('Premium')}
             >
               <Text style={s.retryBtnText}>Upgrade to Premium</Text>
             </TouchableOpacity>
@@ -419,7 +419,7 @@ export default function ResultsScreen({ navigation, route }) {
             {saveStatus === 'limit' && (
               <TouchableOpacity
                 style={s.saveBannerAction}
-                onPress={() => navigation.navigate('MainTabs', { screen: 'Premium' })}
+                onPress={() => navigation.navigate('Premium')}
               >
                 <Text style={s.saveBannerActionText}>Free plan limit reached (3/3) — upgrade to save unlimited →</Text>
               </TouchableOpacity>

@@ -68,6 +68,9 @@ app.use('/comparison-clips', express.static(path.join(DATA_DIR, 'runtime', 'comp
 // Drills & Lessons instructional videos, uploaded via the Dev Page editor
 // (routes/dev.js) -- persistent like /pro-clips, never swept.
 app.use('/drill-clips', express.static(path.join(DATA_DIR, 'runtime', 'drill_clips')));
+// Static candidate frames (JPEGs, not video) for the Dev Page's manual
+// ball-labeling tool -- see the ball detector project's plan.
+app.use('/ball-label-frames', express.static(path.join(DATA_DIR, '10b_ball_detection', 'candidate_frames')));
 
 // Basic starting point, not a robust job queue: sweep upload-derived runtime
 // dirs older than a day so /user-clips and /comparison-clips don't grow

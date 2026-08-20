@@ -44,6 +44,7 @@ import DevRallyBoundaryReviewScreen from './screens/DevRallyBoundaryReviewScreen
 import DevSwingReviewScreen from './screens/DevSwingReviewScreen';
 import DevTipReviewScreen from './screens/DevTipReviewScreen';
 import DevProClipReviewScreen from './screens/DevProClipReviewScreen';
+import DevBallLabelScreen from './screens/DevBallLabelScreen';
 import { AuthProvider } from './context/AuthContext';
 
 const DARK   = '#0d0d0d';
@@ -59,7 +60,6 @@ function MainTabs() {
       tabBar={(props) => <FloatingTabBar {...props} />}
     >
       <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Premium" component={PremiumScreen} />
       <Tab.Screen name="History" component={HistoryScreen} />
       <Tab.Screen name="Friends" component={FriendsScreen} />
       <Tab.Screen name="FindGames" component={FindGamesScreen} options={{ tabBarLabel: 'Find Games' }} />
@@ -107,13 +107,19 @@ export default function App() {
             <Stack.Screen name="FenceTutorial" component={FenceTutorialScreen} options={{ title: 'Camera Setup' }} />
             <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
             <Stack.Screen name="Coach" component={CoachScreen} options={{ title: 'Coach Mode' }} />
-            {/* No separate top-level "Premium" stack screen -- it used to be
-                registered here AND as a tab (MainTabs above), so
-                navigate('Premium') from a screen registered directly on
-                this stack (e.g. ResultsScreen) resolved to THIS one instead
-                of the tabbed version, landing on a headered screen with no
-                floating tab bar. Those call sites now explicitly target
-                the tab via navigate('MainTabs', { screen: 'Premium' }). */}
+            {/* Premium used to be registered both here AND as a tab
+                (MainTabs above) -- that dual registration meant
+                navigate('Premium') from a screen on this stack (e.g.
+                ResultsScreen) resolved to THIS one instead of the tabbed
+                version, landing on a headered screen with no floating tab
+                bar (worked around at the time via navigate('MainTabs',
+                { screen: 'Premium' })). Premium is no longer a tab at all
+                (its features live on Home now, see PremiumFeaturesSection),
+                so it's a single ordinary top-level screen like Settings/
+                Coach below -- no more ambiguity, every navigate('Premium')
+                call site (including the ones that used to need the
+                MainTabs workaround) just targets this directly now. */}
+            <Stack.Screen name="Premium" component={PremiumScreen} options={{ title: 'Premium' }} />
             <Stack.Screen name="MessageThread" component={MessageThreadScreen} options={{ headerShown: false }} />
             {/* Hidden dev tools (Profile -> Settings -> Dev Page) -- gated by
                 frontend/utils/isAdmin.js on the entry point only; real access
@@ -127,6 +133,7 @@ export default function App() {
             <Stack.Screen name="DevSwingReview" component={DevSwingReviewScreen} options={{ title: 'Swing Review' }} />
             <Stack.Screen name="DevTipReview" component={DevTipReviewScreen} options={{ title: 'Tip Review' }} />
             <Stack.Screen name="DevProClipReview" component={DevProClipReviewScreen} options={{ title: 'Pro Clip Review' }} />
+            <Stack.Screen name="DevBallLabel" component={DevBallLabelScreen} options={{ title: 'Ball Label' }} />
             <Stack.Screen name="DevDrillsEditor" component={DevDrillsEditorScreen} options={{ title: 'Drills & Lessons Editor' }} />
           </Stack.Navigator>
         </NavigationContainer>

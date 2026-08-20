@@ -9,6 +9,7 @@ import CourtBackground from '../components/CourtBackground';
 import ScoreRing from '../components/ScoreRing';
 import PlayerCard from '../components/PlayerCard';
 import LeaderboardSection from '../components/LeaderboardSection';
+import PremiumFeaturesSection from '../components/PremiumFeaturesSection';
 import { TennisBallIcon, ChevronRightIcon } from '../components/icons';
 import { playTapSound, playAchievementSound } from '../utils/sounds';
 import { storage } from '../utils/storage';
@@ -213,6 +214,11 @@ export default function HomeScreen({ navigation }) {
             <LeaderboardSection />
           </>
         )}
+
+        {/* Premium features -- moved here from the old standalone Premium
+            tab (see PremiumFeaturesSection.js) so they're visible without
+            needing to already know a separate page exists. */}
+        <PremiumFeaturesSection navigation={navigation} />
 
       </ScrollView>
     </SafeAreaView>

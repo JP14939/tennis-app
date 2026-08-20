@@ -183,15 +183,39 @@ only happens at native-build time — you won't see them in Expo Go. Needs
 an Expo prebuild or EAS build to actually check (same build step already
 needed for App Store prep above — worth doing together).
 
-**Data-quality: `coaching_tips_database.json` has a mojibake encoding
-bug.** Found while seeding Drills content from it — em-dashes and similar
-punctuation in the tip/drill text render as mangled characters (e.g. "â€""
-instead of "—"). This is in the source JSON file itself (pre-existing, not
-introduced by the Drills seeding), and it was already affecting the
-per-analysis tips shown on `ResultsScreen.js` — now also visible in the
-new Drills library. Worth a cleanup pass re-encoding that file correctly
-(likely a one-time UTF-8-read-as-Latin1-then-rewritten bug in whatever
-originally generated it).
+~~**Data-quality: `coaching_tips_database.json` mojibake encoding bug.**~~
+— checked 2026-08-20, couldn't reproduce: scanned the whole file
+programmatically for the mangled-character pattern and for em/en dashes
+generally, found zero of either. Looks like it was already fixed at some
+point between when this was flagged and now (unclear exactly when/how).
+Leaving this line struck rather than deleted in case it resurfaces —
+if you spot mangled punctuation in a tip again, it's worth a fresh look.
+
+---
+
+## New from the 2026-08-20 session
+
+**Decide on IMG_5755.MOV Claude verification spend.** Free dry-run (no
+API cost) found **290 raw swing candidates** across its 33 minutes. At
+IMG_5822's real measured rate (~$0.0093/call on Haiku), fully verifying
+it would run **~$2.70**. Not run yet — waiting on your go-ahead. Run it
+with `detect_rallies.py` once you're ready (same command pattern as the
+IMG_5822 run).
+
+**39 more unprocessed clips sitting in Downloads.** `IMG_5757`–`5774`,
+`IMG_5795`–`5815` (39 files, mostly small — 3-110MB), plus `finesse
+shot.mov` and `game-winnder-stable.mov`, have never been run through
+even the free candidate-count dry-run. Say the word and I'll run the
+free dry-run (`dry_run_candidate_count.py`, no Claude cost) across all of
+them so you have real candidate counts/cost estimates for the whole
+batch, not just the two big files.
+
+**GitHub repo created.** `https://github.com/JP14939/tennis-app` —
+currently **public** (flipped from private at your request 2026-08-20,
+for sharing purposes). `data/` and `.env` are correctly gitignored and
+never went up. If this was meant to be temporary, flip it back to
+private when you're done sharing it (`gh repo edit JP14939/tennis-app
+--visibility private`).
 
 ---
 
@@ -262,20 +286,19 @@ call first.
    accelerometer/gyroscope tilt at record time instead of inferring it
    from the video — near-free, solves elevation outright rather than
    patching the vision-only approach further.
-6. **Coaching tip selection has no manual QA tool.** You flagged this
-   yourself as probably the most important stage to verify, since it's
-   what converts everything else into what the user actually sees/acts on.
-   Build a "Tip Review" Dev Page tool mirroring Swing Review: your swing
-   next to the matched pro, which tip got surfaced and why (deviation
-   magnitude/phase), agree/disagree — extends the existing
-   `tip_training_log.py` loop the same free way Swing Review does for shot
-   verification.
-7. **Tip severity is computed but never shown to users** — quick win.
-   `tip_selector.py` already labels every tip mild/moderate/severe
-   (`_severity()`), but it's dropped before reaching the frontend (checked
-   `ResultsScreen.js` — no reference to it at all). Thread it through
-   `/api/analyse`'s response and show a severity pill next to each tip so
-   users know what to prioritize. *I can do this directly, small change.*
+6. ~~**Coaching tip selection has no manual QA tool.**~~ — built
+   2026-08-19. **Tip Review** Dev Page tool (`DevTipReviewScreen.js`):
+   your swing next to the matched pro, which tip got surfaced and why
+   (full re-derived scored-issue list, not just the final pick),
+   agree/disagree — extends `tip_training_log.py`'s loop the same free
+   way Swing Review does for shot verification. Also fixed a real bug
+   found while building it: the video wasn't wired to play at all (no
+   ref/trigger on `PlatformVideo`).
+7. ~~**Tip severity is computed but never shown to users.**~~ — shipped
+   2026-08-20. `compare_swing.py` now carries `severity` through on each
+   tip; `TipsSection.js` shows a mild/moderate/severe pill next to the fix
+   text (same component both `ResultsScreen.js` and
+   `VersusResultsScreen.js` already share, so both got it for free).
 8. **z-depth is disabled in the DTW trajectory comparison**
    (`Z_WEIGHT = 0.0` in `trajectory_compare.py`) — a real signal sitting
    unused. A past attempt to enable it tanked similarity scores 45-75% on
