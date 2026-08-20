@@ -202,24 +202,30 @@ it would run **~$2.70**. Not run yet — waiting on your go-ahead. Run it
 with `detect_rallies.py` once you're ready (same command pattern as the
 IMG_5822 run).
 
-~~**39 more unprocessed clips sitting in Downloads.**~~ — dry-run done
-2026-08-20 (free, no Claude cost). `IMG_5757`–`5774` (17 files, `5768`
-doesn't exist), `IMG_5795`–`5815` (21 files), `finesse shot.mov`,
-`game-winnder-stable.mov` — 39 files, **149 raw swing candidates** over
-**11.9 minutes** of footage. At IMG_5822's measured real rate
-(~$0.0093/Claude call), fully verifying all 39 would run **~$1.39**.
-Two low-signal outliers worth knowing about before spending on them:
-`finesse shot.mov` only got pose detected on 25% of sampled frames, and
-`game-winnder-stable.mov` on 49% — both much lower than every other
-clip's 82-100%, so their "1 candidate" counts are probably undercounts
-from poor pose tracking (bad lighting/distance/angle) rather than
-genuinely quiet footage; worth a look before including them in any
-verification run. Not run through Claude verification yet — waiting on
-your go-ahead, same as `IMG_5755` was.
+~~**39 more unprocessed clips sitting in Downloads.**~~ — fully run
+2026-08-20 (both the free dry-run and real Claude verification).
+`IMG_5757`–`5774` (17 files, `5768` doesn't exist), `IMG_5795`–`5815`
+(21 files), `finesse shot.mov`, `game-winnder-stable.mov` — 39 files,
+**149 raw swing candidates** over 11.9 minutes of footage. Ran full
+verification (`detect_rallies.py`) on all of them — result: **0 real
+swings confirmed, 0 rallies, across every single clip**, and **actual
+spend was $0.00**, not the ~$1.39 estimated: every candidate's
+contact-evidence type (`no_evidence` — no racket/ball detected near the
+wrist-velocity peak) has earned enough trust from past real Claude
+verdicts (96% historical agreement, 840 logged examples) that the
+student model now handles that bucket alone, no Claude call needed. Two
+of these clips (`finesse shot.mov`, `game-winnder-stable.mov`) also had
+unusually poor pose-detection rates (25%/49% vs. 82-100% on the rest),
+consistent with this being casual/poorly-framed footage rather than
+deliberately-shot analysis video. Net result: **nothing usable came out
+of this batch** — no swing clips, no new training data. Not worth
+re-running as-is; if any of this footage matters to you, it'd need
+better framing/distance to give the ball/racket detector something to
+work with.
 
-Also spotted **newer, not-yet-processed clips** since this list was made:
-`IMG_5823.MOV`, `IMG_5842.MOV`, `IMG_5843.MOV` — not included in the
-count above, say the word if you want these dry-run'd too.
+`IMG_5823.MOV` dry-run separately: **6 raw candidates** over 40.5s, not
+yet Claude-verified (`IMG_5842`/`5843.MOV` confirmed not tennis footage,
+skipped).
 
 **GitHub repo created.** `https://github.com/JP14939/tennis-app` —
 currently **public** (flipped from private at your request 2026-08-20,
