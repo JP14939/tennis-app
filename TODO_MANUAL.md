@@ -2,8 +2,24 @@
 
 Everything here needs a human clicking through a dashboard, creating an
 account, or physically testing with a device — none of it is something I
-can do myself. Grouped by priority: **tomorrow** (finish payments, which is
-mid-build) vs. **later** (deferred on purpose, don't lose track of them).
+can do myself. Grouped chronologically by session below; skim for `~~struck
+through~~` (resolved) vs. plain (still open) headings if you're catching up.
+
+**Quick status as of 2026-08-21, for a fresh chat starting cold:**
+everything's committed, pushed, and actually deployed/working on the
+hosted server (`https://rallymax.167-233-107-31.sslip.io` — see `HANDOVER.md`
+item #41 for how deploys work now, they're **not automatic**). Real
+open items, cheapest first:
+- **Resend account** needed for password reset emails to actually send
+  (`RESEND_API_KEY` unset) — see "self-serve password reset" section below.
+- **IMG_5823.MOV**: dry-run only (6 candidates), never Claude-verified.
+- **230 ball-label frames** waiting on manual review in the Dev Page's
+  Ball Label tool.
+- **IMG_5755.MOV**: ~$2.70 Claude verification spend, waiting on a go-ahead.
+- **20 high-camera-angle pro clips**: offered to generate contact sheets
+  for a first-pass review, never followed up.
+- RevenueCat's `active_entitlements`/`items` field-name loose end
+  (only matters if Premium ever unlocks late instead of instantly).
 
 ---
 
@@ -345,15 +361,15 @@ auto-labeled, 230 sitting in the new Ball Label Dev Page tool waiting on
 your manual review time.
 
 **Everything committed and pushed** — nothing outstanding in git as of
-this session (commit `877c0ad` on `master`,
-`https://github.com/JP14939/tennis-app`).
+2026-08-21 (`https://github.com/JP14939/tennis-app`, `master` branch;
+check `git log` for the latest hash rather than trusting a specific one
+written here, since this file itself gets committed after code changes
+and would otherwise always be one commit behind).
 
-**Still open, not done this session** (repeated from above so it isn't
-lost): the 5 confirmed-mismatched pro-database clips
-(`forehand_2003`/`2007`/`2016`/`2035`/`2046`, found via manual
-contact-sheet review) haven't been logged to `clip_review_log.jsonl`
-yet, and the 39 unprocessed Downloads clips (`IMG_5757`–`5774`,
-`IMG_5795`–`5815`) still haven't had even the free dry-run run on them.
+~~**Still open, not done this session**: the 5 mismatched pro clips,
+the 39-clip dry-run.~~ — both done later the same session, see the
+resolved entries above/below this one. Left struck rather than deleted
+so it's clear this was chased down, not forgotten.
 
 ---
 
