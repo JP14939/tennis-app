@@ -236,32 +236,53 @@ private when you're done sharing it (`gh repo edit JP14939/tennis-app
 
 ---
 
-## Urgent: hosted backend needs a redeploy (2026-08-20)
+## ~~Urgent: hosted backend needs a redeploy~~ — resolved 2026-08-21
 
-**Dev Page's Ball Label / Pro Clip Review / Tip Review tools all show
-"couldn't load candidates."** Diagnosed, not a code bug: all three
-routes (`/api/dev/ball-label-candidates`, `/pro-clip-review-candidates`,
-`/tip-review-candidates`) return a plain Express `Cannot GET` 404 from
-the **hosted** server (`rallymax.167-233-107-31.sslip.io`) — meaning the
-code running on the Hetzner box predates these features entirely and
-was never redeployed after they were built. Confirmed the scripts
-themselves run correctly locally and the routes exist correctly in the
-repo — this is purely a stale-deployment gap, and I don't have SSH
-access to fix it myself. Steps (see `DEPLOY.md` for the full picture):
+Root cause of Ball Label / Pro Clip Review / Tip Review all showing
+"couldn't load candidates": the Hetzner box (`rallymax-vps`,
+`167.233.107.31`) had never been redeployed since these features were
+built — **and it turned out `/opt/tennis_app` on the server wasn't
+even a git repo** (it was set up via a one-time file copy, not
+`git clone`), so `git pull` couldn't have worked there from day one.
+Also hit real SSH trouble along the way, all fixed now — worth knowing
+for next time:
 
-1. SSH into the Hetzner box, `cd` into the repo, `git pull`.
-2. From this machine: `rsync -avz data/10b_ball_detection/ user@<server>:/path/to/tennis_app/data/10b_ball_detection/`
-   (Ball Label's candidate frames/labels are brand new today and were
-   never synced up — Pro Clip Review's data, the pro database, was
-   already there and returned 200 when I checked).
-3. Back on the server: `docker compose up --build app` to rebuild with
-   the new code and restart.
-4. Re-check all three Dev Page tools load after that.
+- **SSH password login was denied even with a freshly-reset root
+  password.** Cause: Hetzner's Ubuntu image ships with
+  `PermitRootLogin prohibit-password` by default in `/etc/ssh/sshd_config`
+  (only SSH keys allowed for root, not passwords) — fixed via Hetzner's
+  browser Console (Server page → the `>_` icon), editing that file and
+  `PasswordAuthentication` to `yes`, then `systemctl restart ssh`.
+- **There's already a working keypair for this server**:
+  `~/.ssh/rallymax_key` / `rallymax_key.pub` on this machine — it was
+  already authorized on the server the whole time (`ssh -i
+  ~/.ssh/rallymax_key root@167.233.107.31` just works, no password
+  needed). Use this for any future SSH/scp to the box instead of
+  fighting the password flow again.
+- **Converted `/opt/tennis_app` into a real git repo** in place
+  (`git init` + `git remote add origin ...` + `git fetch` + `git reset
+  origin/master` + `git checkout -- .` — none of which touch
+  already-untracked files like `data/`/`.env`, so nothing was at risk),
+  then `docker compose up --build app` to rebuild and restart with
+  current code. One harmless untracked leftover file was found and can
+  be deleted whenever (`backend/src/routes/db.js` — not a real part of
+  the app, nothing requires it).
+- **Ball detector data (`data/10b_ball_detection/`, 151MB) and the
+  net-detection model weight (`data/10_net_detection/yolo_pose_run_v4/
+  weights/best.pt`, 5.4MB) were both missing on the server** — `rsync`
+  isn't installed in this environment, so both were sent via `tar` +
+  `scp` instead (using the `rallymax_key` above) and extracted directly
+  into place, then `docker compose restart app`. Confirmed after: all
+  three Dev Page tools return real data, `reset-password.html` serves,
+  and `calibration_server` (the live camera-calibration subprocess,
+  previously crash-looping on the missing model weight) now logs
+  `models loaded, listening on 127.0.0.1:5055` cleanly.
 
-Worth doing this redeploy any time you've pushed real backend/scripts
-changes going forward, not just for this — the password reset feature
-just built this session is in the same boat (backend code exists in
-git, isn't live on the hosted server yet either).
+**Going forward**: any time real backend/scripts changes get pushed,
+they need a manual `git pull` + `docker compose up --build app` on the
+server to actually go live — this isn't automatic yet (no CI/CD). If
+`data/` gains new files too (like the ball detector project did), those
+need a manual copy over as well, same as above.
 
 ---
 
