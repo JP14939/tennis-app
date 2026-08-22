@@ -2,17 +2,17 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
 const requireAuth = require('../middleware/requireAuth');
 const requirePremium = require('../middleware/requirePremium');
 const { PYTHON, DATA_DIR } = require('../config/paths');
+const { SHOT_TYPES } = require('../config/shotTypes');
 const { persistAndCrop, toUrl } = require('../utils/videoCrop');
+const { runPythonJson } = require('../utils/runPythonJson');
 
 const router = express.Router();
 
 const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads');
 const MATCHER = path.join(__dirname, '..', 'services', 'video_matcher.py');
-const SHOT_TYPES = ['forehand', 'backhand', 'serve'];
 const COMPARE_TIMEOUT_MS = 3 * 60 * 1000; // two videos processed sequentially, needs more headroom than /analyse
 // Both uploaded videos used to be deleted right after comparison -- kept
 // here now so the sync-compare screen can play them back afterward.
@@ -68,31 +68,8 @@ router.post('/compare-videos', requireAuth, requirePremium, upload.fields([
     }
   }
 
-  const proc = spawn(PYTHON, args);
-
-  let stdout = '';
-  let stderr = '';
-  proc.stdout.on('data', (chunk) => { stdout += chunk; });
-  proc.stderr.on('data', (chunk) => { stderr += chunk; });
-
-  const timeout = setTimeout(() => {
-    proc.kill();
-  }, COMPARE_TIMEOUT_MS);
-
-  proc.on('close', async (code) => {
-    clearTimeout(timeout);
-
-    if (code !== 0) {
-      cleanup();
-      console.error('[compare-videos] video_matcher.py failed:', stderr.slice(-2000));
-      let error = 'Comparison failed';
-      try { error = JSON.parse(stdout).error || error; } catch { /* stdout wasn't JSON */ }
-      return res.status(500).json({ error });
-    }
-
-    try {
-      const result = JSON.parse(stdout);
-
+  runPythonJson(PYTHON, args, { timeoutMs: COMPARE_TIMEOUT_MS, label: 'video_matcher.py' })
+    .then(async (result) => {
       // Comparison succeeded -- keep both videos (used to be deleted here)
       // and crop each for the sync-compare screen. Cropping failure is
       // non-fatal per video; the screen falls back to the original.
@@ -107,19 +84,19 @@ router.post('/compare-videos', requireAuth, requirePremium, upload.fields([
       result.your_clip_cropped_url = toUrl('/comparison-clips', COMPARISON_CLIPS_DIR, yours.croppedPath);
 
       res.json(result);
-    } catch (e) {
+    })
+    .catch((err) => {
       cleanup();
-      console.error('[compare-videos] failed to parse video_matcher.py output:', stdout.slice(-2000));
-      res.status(500).json({ error: 'Comparison produced invalid output' });
-    }
-  });
-
-  proc.on('error', (err) => {
-    clearTimeout(timeout);
-    cleanup();
-    console.error('[compare-videos] failed to spawn python:', err);
-    res.status(500).json({ error: 'Failed to start comparison process' });
-  });
+      console.error(`[compare-videos] ${err.message}`, err.stderr?.slice(-2000));
+      const messages = {
+        spawn_failed: 'Failed to start comparison process',
+        invalid_json: 'Comparison produced invalid output',
+        nonzero_exit: (() => {
+          try { return JSON.parse(err.stdout).error; } catch { return 'Comparison failed'; }
+        })(),
+      };
+      res.status(500).json({ error: messages[err.kind] || 'Comparison failed' });
+    });
 });
 
 module.exports = router;

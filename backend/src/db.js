@@ -484,11 +484,11 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_club_watches_club_id ON club_watches(clu
 // polling, coach-note lookups, push-token lookups, and Drills & Lessons
 // practice-attempt counts. Deliberately NOT indexed here (already covered):
 // users.email (UNIQUE, auto-indexed), and coach_links(coach_id,student_id),
-// shared_analyses(analysis_id,friend_id), friend_links(user_a_id,user_b_id),
-// user_blocks(blocker_id,blocked_id) -- each already has a UNIQUE(...)
-// constraint whose auto-index (or its leftmost-column prefix) already
-// covers every real query against that table, confirmed by reading each
-// query site rather than assumed from the schema.
+// shared_analyses(analysis_id,friend_id), user_blocks(blocker_id,blocked_id)
+// -- each already has a UNIQUE(...) constraint whose auto-index (or its
+// leftmost-column prefix) already covers every real query against that
+// table, confirmed by reading each query site rather than assumed from the
+// schema.
 db.exec('CREATE INDEX IF NOT EXISTS idx_analyses_user_id ON analyses(user_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_messages_user_a_b ON messages(user_a_id, user_b_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_rally_clips_user_id ON rally_clips(user_id)');
@@ -497,6 +497,25 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_highlight_jobs_user_id ON highlight_jobs
 db.exec('CREATE INDEX IF NOT EXISTS idx_coach_notes_analysis_id ON coach_notes(analysis_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_push_tokens_user_id ON push_tokens(user_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_drill_practice_attempts_step_user ON drill_practice_attempts(step_id, user_id)');
+
+// The six below were added after auditing real query sites against what
+// was actually indexed (2026-08-22). Two shapes kept showing up:
+//   1. `WHERE user_a_id = ? OR user_b_id = ?` (messages.js, leaderboard.js)
+//      -- a compound index, or a UNIQUE(user_a_id, user_b_id) constraint's
+//      auto-index, only serves the LEFTMOST column of an OR query; the
+//      second leg still forces a full table scan. friend_links(user_a_id,
+//      user_b_id) was previously assumed "already covered" by its UNIQUE
+//      constraint above -- that assumption was wrong for this query shape.
+//   2. A column with real per-request query traffic but no index at all
+//      (analysis_usage.user_id on every /api/analyse call; court_id on two
+//      courts.js routes against a ~33k-court table; analyses.shot_type on
+//      the worldwide leaderboard).
+db.exec('CREATE INDEX IF NOT EXISTS idx_messages_user_b_id ON messages(user_b_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_friend_links_user_b_id ON friend_links(user_b_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_analysis_usage_user_created ON analysis_usage(user_id, created_at)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_court_watches_court_id ON court_watches(court_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_availability_posts_court_id ON availability_posts(court_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_analyses_shot_type ON analyses(shot_type)');
 
 // Self-serve password reset. Only the sha256 hash of the reset token is
 // ever stored (auth.js hashes it before the INSERT) -- same reasoning as
@@ -516,5 +535,14 @@ db.exec(`
 `);
 db.exec('CREATE INDEX IF NOT EXISTS idx_password_resets_token_hash ON password_resets(token_hash)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_password_resets_user_id ON password_resets(user_id)');
+
+// analysis_usage only exists to answer "how many today" (see
+// usageLimit.js's `date(created_at) = date('now')`) -- every row past
+// yesterday is dead weight. It was previously only ever pruned on a
+// failed analysis (usageLimit.releaseUsageSlot) or full account deletion,
+// so a normal successful-analysis row lived forever. A 2-day retention
+// keeps yesterday's rows around for any date-boundary edge case around
+// midnight, at negligible size (one row per free-tier analysis).
+db.prepare("DELETE FROM analysis_usage WHERE created_at < datetime('now', '-2 days')").run();
 
 module.exports = db;

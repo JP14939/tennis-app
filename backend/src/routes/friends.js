@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
 const { sendPushNotification } = require('../utils/pushNotifications');
+const { redeemInviteCode } = require('../utils/inviteCodes');
 
 const router = express.Router();
 
@@ -79,20 +80,24 @@ router.post('/friends/link', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'code is required' });
   }
 
-  const invite = db.prepare('SELECT * FROM friend_codes WHERE code = ? AND used_at IS NULL')
-    .get(String(code).toUpperCase());
-  if (!invite) {
+  const { outcome, CODE_NOT_FOUND, SELF_LINK } = redeemInviteCode({
+    inviteTable: 'friend_codes',
+    ownerIdColumn: 'user_id',
+    code,
+    requesterId: req.user.id,
+    insertLink: (invite) => {
+      const [a, b] = sortedPair(req.user.id, invite.user_id);
+      db.prepare('INSERT OR IGNORE INTO friend_links (user_a_id, user_b_id) VALUES (?, ?)').run(a, b);
+    },
+  });
+  if (outcome === CODE_NOT_FOUND) {
     return res.status(404).json({ error: 'Invalid or already-used invite code' });
   }
-  if (invite.user_id === req.user.id) {
+  if (outcome === SELF_LINK) {
     return res.status(400).json({ error: "You can't add yourself as a friend" });
   }
 
-  const [a, b] = sortedPair(req.user.id, invite.user_id);
-  db.prepare('INSERT OR IGNORE INTO friend_links (user_a_id, user_b_id) VALUES (?, ?)').run(a, b);
-  db.prepare("UPDATE friend_codes SET used_at = datetime('now') WHERE id = ?").run(invite.id);
-
-  const friend = db.prepare('SELECT id, name, username FROM users WHERE id = ?').get(invite.user_id);
+  const friend = db.prepare('SELECT id, name, username FROM users WHERE id = ?').get(outcome);
   res.status(201).json({ friend });
 });
 
@@ -114,13 +119,30 @@ router.get('/friends', requireAuth, (req, res) => {
 });
 
 router.delete('/friends/:userId', requireAuth, (req, res) => {
-  const [a, b] = sortedPair(req.user.id, parseInt(req.params.userId, 10));
+  const otherId = parseInt(req.params.userId, 10);
+  if (!Number.isInteger(otherId)) {
+    return res.status(400).json({ error: 'Invalid user id' });
+  }
+  // 204 whether or not a link actually existed -- delete is idempotent by
+  // design here (the frontend's unfriend() doesn't distinguish "removed"
+  // from "already gone", e.g. a double-tap or a stale friend list), unlike
+  // the invalid-input case above which IS a real client bug worth a 400.
+  const [a, b] = sortedPair(req.user.id, otherId);
   db.prepare('DELETE FROM friend_links WHERE user_a_id = ? AND user_b_id = ?').run(a, b);
   res.status(204).end();
 });
 
 router.get('/friends/:userId/matches', requireAuth, (req, res) => {
   const friendId = parseInt(req.params.userId, 10);
+  // Matches the guard the DELETE /friends/:userId handler above already
+  // has -- was missing here, so a non-numeric :userId silently degraded to
+  // isFriends() returning false (a correct-looking 403) instead of a clean
+  // 400. Harmless today, but fragile: any future change to isFriends()/
+  // getMatchesBetween() that does arithmetic on the id before the DB call
+  // would turn that into an unhandled crash instead of a clean rejection.
+  if (!Number.isInteger(friendId)) {
+    return res.status(400).json({ error: 'Invalid user id' });
+  }
   if (!isFriends(req.user.id, friendId)) {
     return res.status(403).json({ error: 'Not friends with this user' });
   }
@@ -131,6 +153,9 @@ router.post('/friends/:userId/matches', requireAuth, (req, res) => {
   const friendId = parseInt(req.params.userId, 10);
   const { playedAt, setsWon, setsLost, scoreDetail } = req.body || {};
 
+  if (!Number.isInteger(friendId)) {
+    return res.status(400).json({ error: 'Invalid user id' });
+  }
   if (!isFriends(req.user.id, friendId)) {
     return res.status(403).json({ error: 'Not friends with this user' });
   }

@@ -22,6 +22,23 @@ function isBlocked(userId, otherId) {
   ).get(userId, otherId, otherId, userId);
 }
 
+// POST /messages/thread/:otherUserId previously required only auth -- any
+// logged-in user could message (and push-notify) any other user id with no
+// relationship check at all, which is a spam vector if `otherUserId` is
+// iterated. Allowed to send if: friends, linked as coach/student (either
+// direction), or a thread with this person already exists (so an existing
+// conversation -- e.g. one that predates this check -- can still continue).
+function canMessage(myId, otherId) {
+  const [a, b] = threadPair(myId, otherId);
+  const isFriend = !!db.prepare('SELECT 1 FROM friend_links WHERE user_a_id = ? AND user_b_id = ?').get(a, b);
+  if (isFriend) return true;
+  const isCoachLinked = !!db.prepare(
+    'SELECT 1 FROM coach_links WHERE (coach_id = ? AND student_id = ?) OR (coach_id = ? AND student_id = ?)'
+  ).get(myId, otherId, otherId, myId);
+  if (isCoachLinked) return true;
+  return !!db.prepare('SELECT 1 FROM messages WHERE user_a_id = ? AND user_b_id = ? LIMIT 1').get(a, b);
+}
+
 router.get('/messages/threads', requireAuth, (req, res) => {
   const myId = req.user.id;
   const rows = db.prepare(`
@@ -96,6 +113,9 @@ router.post('/messages/thread/:otherUserId', requireAuth, (req, res) => {
 
   if (isBlocked(myId, otherId)) {
     return res.status(403).json({ error: "You can't message this user" });
+  }
+  if (!canMessage(myId, otherId)) {
+    return res.status(403).json({ error: 'You can only message friends or a linked coach/student' });
   }
 
   const [a, b] = threadPair(myId, otherId);

@@ -108,29 +108,58 @@ router.post('/courts/:id/confirm', requireAuth, (req, res) => {
     return res.status(400).json({ error: "You can't confirm a court you submitted yourself" });
   }
 
-  db.prepare('INSERT OR IGNORE INTO court_confirmations (court_id, user_id) VALUES (?, ?)')
-    .run(court.id, req.user.id);
+  // Insert + count + conditional verify-flip wrapped as one synchronous
+  // transaction -- same check-then-write shape as history.js's
+  // insertAnalysis. Unwrapped, two concurrent confirmations that both land
+  // on count == CONFIRMATION_THRESHOLD - 1 could both read the same stale
+  // count and disagree on whether this confirmation was the one that
+  // crossed the threshold.
+  const confirmCourt = db.transaction(() => {
+    db.prepare('INSERT OR IGNORE INTO court_confirmations (court_id, user_id) VALUES (?, ?)')
+      .run(court.id, req.user.id);
 
-  const { count } = db.prepare(
-    'SELECT COUNT(*) AS count FROM court_confirmations WHERE court_id = ?'
-  ).get(court.id);
+    const { count } = db.prepare(
+      'SELECT COUNT(*) AS count FROM court_confirmations WHERE court_id = ?'
+    ).get(court.id);
 
-  if (!court.verified && count >= CONFIRMATION_THRESHOLD) {
-    db.prepare('UPDATE courts SET verified = 1 WHERE id = ?').run(court.id);
-  }
+    if (!court.verified && count >= CONFIRMATION_THRESHOLD) {
+      db.prepare('UPDATE courts SET verified = 1 WHERE id = ?').run(court.id);
+    }
 
+    return count;
+  });
+
+  const count = confirmCourt();
   const updated = db.prepare('SELECT * FROM courts WHERE id = ?').get(court.id);
   res.json({ court: { ...updated, confirmation_count: count, already_confirmed: true } });
 });
 
+const COST_INFO_MAX_LENGTH = 500;
+
+// Deliberately open to any authenticated user, not just the court's
+// submitter -- same crowd-sourced trust model as POST /courts/:id/confirm
+// above (anyone who's actually played there can correct stale pricing).
+// What WAS a real bug: no validation at all. `cost_info` bound directly to
+// the UPDATE meant a non-string body (e.g. `{cost_info: {...}}`) threw
+// inside better-sqlite3, and there was no length cap, so a malicious body
+// could write an arbitrarily large string into a field served to every
+// user who views this court.
 router.patch('/courts/:id/cost', requireAuth, (req, res) => {
   const { cost_info } = req.body || {};
+  if (cost_info !== null && cost_info !== undefined) {
+    if (typeof cost_info !== 'string') {
+      return res.status(400).json({ error: 'cost_info must be a string' });
+    }
+    if (cost_info.length > COST_INFO_MAX_LENGTH) {
+      return res.status(400).json({ error: `cost_info must be ${COST_INFO_MAX_LENGTH} characters or fewer` });
+    }
+  }
   const court = db.prepare('SELECT * FROM courts WHERE id = ?').get(req.params.id);
   if (!court) return res.status(404).json({ error: 'Court not found' });
 
   db.prepare(
     `UPDATE courts SET cost_info = ?, cost_updated_by = ?, cost_updated_at = datetime('now') WHERE id = ?`
-  ).run(cost_info ?? null, req.user.id, court.id);
+  ).run(cost_info?.trim() || null, req.user.id, court.id);
 
   res.json({ court: db.prepare('SELECT * FROM courts WHERE id = ?').get(court.id) });
 });

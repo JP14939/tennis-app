@@ -2,10 +2,9 @@ const express = require('express');
 const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
 const { requireAdmin } = require('../middleware/requireAdmin');
+const { SHOT_TYPES } = require('../config/shotTypes');
 
 const router = express.Router();
-
-const SHOT_TYPES = ['forehand', 'backhand', 'serve'];
 
 function validateShotType(req, res) {
   const shotType = req.query.shotType || req.body?.shotType;

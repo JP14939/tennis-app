@@ -2,6 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
+const { redeemInviteCode } = require('../utils/inviteCodes');
 
 const router = express.Router();
 
@@ -42,20 +43,24 @@ router.post('/coach/link', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'code is required' });
   }
 
-  const invite = db.prepare('SELECT * FROM coach_invite_codes WHERE code = ? AND used_at IS NULL')
-    .get(String(code).toUpperCase());
-  if (!invite) {
+  const { outcome, CODE_NOT_FOUND, SELF_LINK } = redeemInviteCode({
+    inviteTable: 'coach_invite_codes',
+    ownerIdColumn: 'student_id',
+    code,
+    requesterId: req.user.id,
+    insertLink: (invite) => {
+      db.prepare('INSERT OR IGNORE INTO coach_links (coach_id, student_id) VALUES (?, ?)')
+        .run(req.user.id, invite.student_id);
+    },
+  });
+  if (outcome === CODE_NOT_FOUND) {
     return res.status(404).json({ error: 'Invalid or already-used invite code' });
   }
-  if (invite.student_id === req.user.id) {
+  if (outcome === SELF_LINK) {
     return res.status(400).json({ error: "You can't link to your own invite code" });
   }
 
-  db.prepare('INSERT OR IGNORE INTO coach_links (coach_id, student_id) VALUES (?, ?)')
-    .run(req.user.id, invite.student_id);
-  db.prepare("UPDATE coach_invite_codes SET used_at = datetime('now') WHERE id = ?").run(invite.id);
-
-  const student = db.prepare('SELECT id, name FROM users WHERE id = ?').get(invite.student_id);
+  const student = db.prepare('SELECT id, name FROM users WHERE id = ?').get(outcome);
   res.status(201).json({ student });
 });
 
@@ -71,6 +76,12 @@ router.get('/coach/students', requireAuth, (req, res) => {
 
 router.get('/coach/students/:studentId/history', requireAuth, (req, res) => {
   const studentId = Number(req.params.studentId);
+  // A non-numeric :studentId used to silently become NaN and degrade to
+  // isLinked() returning false (a correct-looking 403) instead of a clean
+  // 400 -- same reasoning/fix as friends.js's matches routes.
+  if (!Number.isInteger(studentId)) {
+    return res.status(400).json({ error: 'Invalid student id' });
+  }
   if (!isLinked(req.user.id, studentId)) {
     return res.status(403).json({ error: 'Not linked to this student' });
   }

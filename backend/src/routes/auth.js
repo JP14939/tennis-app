@@ -57,9 +57,22 @@ router.post('/auth/signup', async (req, res) => {
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
-  const info = db.prepare(
-    'INSERT INTO users (email, password_hash, name) VALUES (?, ?, ?)'
-  ).run(normalisedEmail, passwordHash, name.trim());
+  // The SELECT above and this INSERT aren't atomic -- two concurrent
+  // signups for the same email can both pass the check, and the second
+  // INSERT then hits users.email's UNIQUE constraint. Catch that specific
+  // case and report it the same way the pre-check does (409), rather than
+  // letting it fall through to the generic 500 handler in server.js.
+  let info;
+  try {
+    info = db.prepare(
+      'INSERT INTO users (email, password_hash, name) VALUES (?, ?, ?)'
+    ).run(normalisedEmail, passwordHash, name.trim());
+  } catch (err) {
+    if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      return res.status(409).json({ error: 'An account with this email already exists' });
+    }
+    throw err;
+  }
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
   res.status(201).json({ token: issueToken(user), user: publicUser(user) });
@@ -110,7 +123,18 @@ router.post('/auth/forgot-password', async (req, res) => {
     'INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES (?, ?, ?)'
   ).run(user.id, tokenHash, expiresAt);
 
-  const publicBaseUrl = process.env.PUBLIC_BASE_URL || '';
+  const publicBaseUrl = process.env.PUBLIC_BASE_URL;
+  if (!publicBaseUrl) {
+    // Used to default to '' here, which built a relative reset link
+    // (/reset-password.html?token=...) -- the email would "send"
+    // successfully and the endpoint would return 204, but the link is dead
+    // in every mail client. Skip sending rather than mail out a broken
+    // link; still respond 204 either way so the response shape never
+    // reveals email-sending state, same reasoning as the account-existence
+    // check above.
+    console.error('[auth/forgot-password] PUBLIC_BASE_URL is not set -- refusing to send a reset email with a relative (dead) link. Set PUBLIC_BASE_URL in backend/.env.');
+    return res.status(204).end();
+  }
   const resetUrl = `${publicBaseUrl}/reset-password.html?token=${rawToken}`;
 
   try {
@@ -136,17 +160,45 @@ router.post('/auth/reset-password', async (req, res) => {
   }
 
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-  const reset = db.prepare(
-    'SELECT * FROM password_resets WHERE token_hash = ? AND used_at IS NULL AND expires_at > ? ORDER BY id DESC LIMIT 1'
-  ).get(tokenHash, new Date().toISOString());
 
-  if (!reset) {
+  // Cheap pre-check so an obviously invalid/expired/used token doesn't pay
+  // for a bcrypt hash below. This check alone is racy (see the transactional
+  // re-check further down, which is what actually closes it) -- it's purely
+  // an optimization to bail out early on the common invalid-token case.
+  const precheck = db.prepare(
+    'SELECT 1 FROM password_resets WHERE token_hash = ? AND used_at IS NULL AND expires_at > ? LIMIT 1'
+  ).get(tokenHash, new Date().toISOString());
+  if (!precheck) {
     return res.status(400).json({ error: 'This reset link is invalid or has expired' });
   }
 
   const passwordHash = await bcrypt.hash(newPassword, 10);
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, reset.user_id);
-  db.prepare('UPDATE password_resets SET used_at = datetime(\'now\') WHERE id = ?').run(reset.id);
+
+  // Re-check + both updates wrapped as one synchronous transaction, same
+  // check-then-write shape as history.js's insertAnalysis. Without this,
+  // two concurrent requests using the same still-valid token (e.g. a reset
+  // link opened twice, or replayed within the request window) could both
+  // pass the used_at IS NULL check before either UPDATE lands, making a
+  // "single-use" token usable twice. bcrypt.hash() is async and can't run
+  // inside a synchronous better-sqlite3 transaction, so it's computed above,
+  // before this re-check -- the re-check is what makes the token single-use,
+  // not the precheck above.
+  const TOKEN_INVALID = Symbol('TOKEN_INVALID');
+  const resetPassword = db.transaction(() => {
+    const reset = db.prepare(
+      'SELECT * FROM password_resets WHERE token_hash = ? AND used_at IS NULL AND expires_at > ? ORDER BY id DESC LIMIT 1'
+    ).get(tokenHash, new Date().toISOString());
+    if (!reset) return TOKEN_INVALID;
+
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, reset.user_id);
+    db.prepare('UPDATE password_resets SET used_at = datetime(\'now\') WHERE id = ?').run(reset.id);
+    return reset.user_id;
+  });
+
+  const outcome = resetPassword();
+  if (outcome === TOKEN_INVALID) {
+    return res.status(400).json({ error: 'This reset link is invalid or has expired' });
+  }
 
   res.status(204).end();
 });
@@ -162,8 +214,14 @@ router.get('/auth/me', requireAuth, (req, res) => {
 router.patch('/auth/me', requireAuth, (req, res) => {
   const { name, notifications_enabled, username } = req.body || {};
 
+  if (name !== undefined && typeof name !== 'string') {
+    return res.status(400).json({ error: 'Name must be a string' });
+  }
   if (name !== undefined && !name.trim()) {
     return res.status(400).json({ error: 'Name is required' });
+  }
+  if (username !== undefined && typeof username !== 'string') {
+    return res.status(400).json({ error: 'Username must be a string' });
   }
 
   let normalisedUsername;
@@ -276,6 +334,13 @@ router.delete('/auth/me', requireAuth, async (req, res) => {
     db.prepare('DELETE FROM court_confirmations WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM availability_posts WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM friend_codes WHERE user_id = ?').run(userId);
+    db.prepare('DELETE FROM drill_practice_attempts WHERE user_id = ?').run(userId);
+    // Any reset token issued before the deletion request must die with the
+    // account -- SQLite foreign keys aren't enforced here, so an emailed,
+    // still-unexpired token would otherwise go on satisfying
+    // /auth/reset-password's lookup and set a new password on the
+    // now-anonymized row below.
+    db.prepare('DELETE FROM password_resets WHERE user_id = ?').run(userId);
     // Pure relationship-state records (no independent content the other
     // party would lose) -- safe to delete outright, unlike messages.
     db.prepare('DELETE FROM friend_links WHERE user_a_id = ? OR user_b_id = ?').run(userId, userId);

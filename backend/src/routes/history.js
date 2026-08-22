@@ -5,6 +5,7 @@ const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
 const { currentTier } = require('../utils/tier');
 const { DATA_DIR } = require('../config/paths');
+const { SHOT_TYPES } = require('../config/shotTypes');
 
 const router = express.Router();
 
@@ -39,7 +40,6 @@ function logUserFlag(analysisId, isRealShot) {
 // and that module's agreement_rate()/should_trust_student() were updated
 // this session to exclude agreed=null records from the trust math.
 const SHOT_CLASSIFIER_LOG_PATH = path.join(DATA_DIR, '14_shot_classifier', 'shot_classifier_training_log.jsonl');
-const SHOT_TYPES = ['forehand', 'backhand', 'serve'];
 
 function logShotTypeCorrection(analysisId, correctedShotType) {
   fs.mkdirSync(path.dirname(SHOT_CLASSIFIER_LOG_PATH), { recursive: true });
@@ -124,6 +124,25 @@ router.post('/history', requireAuth, (req, res) => {
   const limit = limitForTier(tier);
   const top = result.matches?.[0] || {};
 
+  // This endpoint trusts req.body as a whole (it's meant to be called with
+  // whatever /analyse just returned) with no signature or correlation check
+  // tying it back to a real analysis -- so any authenticated user can POST
+  // an arbitrary body here directly. shotType was already checked above;
+  // the score wasn't, and it goes straight into a REAL column. An
+  // unvalidated non-numeric value (e.g. a string) gets stored as-is under
+  // SQLite's type affinity, and TEXT sorts above REAL/INTEGER in SQLite's
+  // ordering rules -- so a bad value here would permanently look like a
+  // top score to profile.js's `similarity >= 75` rank check and
+  // leaderboard.js's `ORDER BY score DESC`.
+  const rawScore = top.overall_score ?? top.similarity;
+  let similarity = 0;
+  if (rawScore !== undefined && rawScore !== null) {
+    similarity = Number(rawScore);
+    if (!Number.isFinite(similarity)) {
+      return res.status(400).json({ error: 'matches[0] score must be a finite number' });
+    }
+  }
+
   // Check-then-insert wrapped as one synchronous transaction (better-sqlite3
   // transactions are synchronous) so the count check and the insert can't be
   // split by a concurrent request against the same user -- was previously
@@ -140,7 +159,7 @@ router.post('/history', requireAuth, (req, res) => {
     ).run(
       req.user.id,
       shotType,
-      top.overall_score ?? top.similarity ?? 0,
+      similarity,
       top.pro_id ?? null,
       result.angle_label ?? null,
       top.tips?.[0]?.tip_text ?? null,
@@ -209,9 +228,26 @@ router.patch('/history/:id', requireAuth, (req, res) => {
   res.json(serializeRow(updated));
 });
 
+// SQLite foreign keys aren't enforced in this app (see db.js), so a bare
+// DELETE FROM analyses leaves coach_notes/shared_analyses/swing_annotations/
+// drill_practice_attempts rows pointing at a now-dead analysis_id forever.
+// The account-deletion path in auth.js already cleans these same four
+// tables for the "delete everything" case -- this mirrors it for the
+// "delete one swing" case.
+const deleteAnalysisAndChildren = db.transaction((analysisId, userId) => {
+  const owned = db.prepare('SELECT id FROM analyses WHERE id = ? AND user_id = ?').get(analysisId, userId);
+  if (!owned) return 0;
+  db.prepare('DELETE FROM coach_notes WHERE analysis_id = ?').run(analysisId);
+  db.prepare('DELETE FROM shared_analyses WHERE analysis_id = ?').run(analysisId);
+  db.prepare('DELETE FROM swing_annotations WHERE analysis_id = ?').run(analysisId);
+  db.prepare('DELETE FROM drill_practice_attempts WHERE analysis_id = ?').run(analysisId);
+  db.prepare('DELETE FROM analyses WHERE id = ?').run(analysisId);
+  return 1;
+});
+
 router.delete('/history/:id', requireAuth, (req, res) => {
-  const info = db.prepare('DELETE FROM analyses WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
-  if (info.changes === 0) {
+  const deleted = deleteAnalysisAndChildren(req.params.id, req.user.id);
+  if (deleted === 0) {
     return res.status(404).json({ error: 'Analysis not found' });
   }
   res.status(204).end();

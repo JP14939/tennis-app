@@ -2,12 +2,28 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
 const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
 const { requireAdmin } = require('../middleware/requireAdmin');
 const { SCRIPTS_DIR, PYTHON } = require('../config/paths');
 const { CLIPS_DIR: DRILL_CLIPS_DIR, toClipUrl } = require('../utils/drillClips');
+const { runPythonJson } = require('../utils/runPythonJson');
+
+// Every GET-list / POST-label route below follows the same shape: spawn a
+// script, get back JSON. Centralised here so the error-message mapping
+// (and the double-response-on-spawn-failure fix in runPythonJson) is
+// written once instead of 8 times. `messages` are the exact per-route
+// strings the frontend/logs already expect, keyed by runPythonJson's
+// PythonProcessError.kind.
+async function sendPythonJson(res, args, { timeoutMs, stdinBody, label, logTag, messages }) {
+  try {
+    const result = await runPythonJson(PYTHON, args, { timeoutMs, stdinBody, label });
+    res.json(result);
+  } catch (err) {
+    console.error(`[dev] ${logTag}:`, err.stderr?.slice(-2000) || err.message);
+    res.status(500).json({ error: messages[err.kind] || messages.nonzero_exit });
+  }
+}
 
 const router = express.Router();
 
@@ -60,33 +76,15 @@ const LOG_BALL_LABEL_TIMEOUT_MS = 15 * 1000; // just appends a line to one JSONL
 // requireAuth + requireAdmin, a real 403 for anyone but the admin allowlist
 // in middleware/requireAdmin.js, regardless of what the frontend hides.
 router.get('/dev/ml-status', requireAuth, requireAdmin, (req, res) => {
-  const proc = spawn(PYTHON, [ML_STATUS_REPORTER]);
-
-  let stdout = '';
-  let stderr = '';
-  proc.stdout.on('data', (chunk) => { stdout += chunk; });
-  proc.stderr.on('data', (chunk) => { stderr += chunk; });
-
-  const timeout = setTimeout(() => proc.kill(), REPORT_TIMEOUT_MS);
-
-  proc.on('close', (code) => {
-    clearTimeout(timeout);
-    if (code !== 0) {
-      console.error('[dev] ml_status_report.py failed:', stderr.slice(-2000));
-      return res.status(500).json({ error: 'Failed to generate ML status report' });
-    }
-    try {
-      res.json(JSON.parse(stdout));
-    } catch {
-      console.error('[dev] failed to parse ml_status_report.py output:', stdout.slice(-2000));
-      res.status(500).json({ error: 'ML status report produced invalid output' });
-    }
-  });
-
-  proc.on('error', (err) => {
-    clearTimeout(timeout);
-    console.error('[dev] failed to spawn python:', err);
-    res.status(500).json({ error: 'Failed to start ML status report' });
+  sendPythonJson(res, [ML_STATUS_REPORTER], {
+    timeoutMs: REPORT_TIMEOUT_MS,
+    label: 'ml_status_report.py',
+    logTag: 'ml_status_report.py failed',
+    messages: {
+      nonzero_exit: 'Failed to generate ML status report',
+      invalid_json: 'ML status report produced invalid output',
+      spawn_failed: 'Failed to start ML status report',
+    },
   });
 });
 
@@ -94,33 +92,15 @@ router.get('/dev/ml-status', requireAuth, requireAdmin, (req, res) => {
 // candidate for a job's rally clips, with the geometric student's opinion
 // (no Claude involved) for reference by log-manual-review below.
 router.get('/dev/swing-candidates/:jobId', requireAuth, requireAdmin, (req, res) => {
-  const proc = spawn(PYTHON, [LIST_SWING_CANDIDATES, req.params.jobId]);
-
-  let stdout = '';
-  let stderr = '';
-  proc.stdout.on('data', (chunk) => { stdout += chunk; });
-  proc.stderr.on('data', (chunk) => { stderr += chunk; });
-
-  const timeout = setTimeout(() => proc.kill(), CANDIDATES_TIMEOUT_MS);
-
-  proc.on('close', (code) => {
-    clearTimeout(timeout);
-    if (code !== 0) {
-      console.error('[dev] list_swing_candidates.py failed:', stderr.slice(-2000));
-      return res.status(500).json({ error: 'Failed to list swing candidates' });
-    }
-    try {
-      res.json(JSON.parse(stdout));
-    } catch {
-      console.error('[dev] failed to parse list_swing_candidates.py output:', stdout.slice(-2000));
-      res.status(500).json({ error: 'Swing candidate list produced invalid output' });
-    }
-  });
-
-  proc.on('error', (err) => {
-    clearTimeout(timeout);
-    console.error('[dev] failed to spawn python:', err);
-    res.status(500).json({ error: 'Failed to start swing candidate listing' });
+  sendPythonJson(res, [LIST_SWING_CANDIDATES, req.params.jobId], {
+    timeoutMs: CANDIDATES_TIMEOUT_MS,
+    label: 'list_swing_candidates.py',
+    logTag: 'list_swing_candidates.py failed',
+    messages: {
+      nonzero_exit: 'Failed to list swing candidates',
+      invalid_json: 'Swing candidate list produced invalid output',
+      spawn_failed: 'Failed to start swing candidate listing',
+    },
   });
 });
 
@@ -129,37 +109,17 @@ router.get('/dev/swing-candidates/:jobId', requireAuth, requireAdmin, (req, res)
 // candidate object from GET /dev/swing-candidates/:jobId (student_* fields)
 // plus his verdict (is_real_shot, shot_type).
 router.post('/dev/swing-candidates/label', requireAuth, requireAdmin, (req, res) => {
-  const proc = spawn(PYTHON, [LOG_MANUAL_REVIEW]);
-
-  let stdout = '';
-  let stderr = '';
-  proc.stdout.on('data', (chunk) => { stdout += chunk; });
-  proc.stderr.on('data', (chunk) => { stderr += chunk; });
-
-  const timeout = setTimeout(() => proc.kill(), LOG_REVIEW_TIMEOUT_MS);
-
-  proc.on('close', (code) => {
-    clearTimeout(timeout);
-    if (code !== 0) {
-      console.error('[dev] log_manual_review.py failed:', stderr.slice(-2000));
-      return res.status(500).json({ error: 'Failed to log review' });
-    }
-    try {
-      res.json(JSON.parse(stdout));
-    } catch {
-      console.error('[dev] failed to parse log_manual_review.py output:', stdout.slice(-2000));
-      res.status(500).json({ error: 'Log review produced invalid output' });
-    }
+  sendPythonJson(res, [LOG_MANUAL_REVIEW], {
+    timeoutMs: LOG_REVIEW_TIMEOUT_MS,
+    stdinBody: req.body,
+    label: 'log_manual_review.py',
+    logTag: 'log_manual_review.py failed',
+    messages: {
+      nonzero_exit: 'Failed to log review',
+      invalid_json: 'Log review produced invalid output',
+      spawn_failed: 'Failed to start review logging',
+    },
   });
-
-  proc.on('error', (err) => {
-    clearTimeout(timeout);
-    console.error('[dev] failed to spawn python:', err);
-    res.status(500).json({ error: 'Failed to start review logging' });
-  });
-
-  proc.stdin.write(JSON.stringify(req.body));
-  proc.stdin.end();
 });
 
 // Free, no-API-cost manual review tool for coaching-tip selection: lists
@@ -171,33 +131,15 @@ router.post('/dev/swing-candidates/label', requireAuth, requireAdmin, (req, res)
 router.get('/dev/tip-review-candidates', requireAuth, requireAdmin, (req, res) => {
   const args = [LIST_TIP_REVIEW_CANDIDATES];
   if (req.query.limit) args.push(String(req.query.limit));
-  const proc = spawn(PYTHON, args);
-
-  let stdout = '';
-  let stderr = '';
-  proc.stdout.on('data', (chunk) => { stdout += chunk; });
-  proc.stderr.on('data', (chunk) => { stderr += chunk; });
-
-  const timeout = setTimeout(() => proc.kill(), TIP_REVIEW_CANDIDATES_TIMEOUT_MS);
-
-  proc.on('close', (code) => {
-    clearTimeout(timeout);
-    if (code !== 0) {
-      console.error('[dev] list_tip_review_candidates.py failed:', stderr.slice(-2000));
-      return res.status(500).json({ error: 'Failed to list tip review candidates' });
-    }
-    try {
-      res.json(JSON.parse(stdout));
-    } catch {
-      console.error('[dev] failed to parse list_tip_review_candidates.py output:', stdout.slice(-2000));
-      res.status(500).json({ error: 'Tip review candidate list produced invalid output' });
-    }
-  });
-
-  proc.on('error', (err) => {
-    clearTimeout(timeout);
-    console.error('[dev] failed to spawn python:', err);
-    res.status(500).json({ error: 'Failed to start tip review candidate listing' });
+  sendPythonJson(res, args, {
+    timeoutMs: TIP_REVIEW_CANDIDATES_TIMEOUT_MS,
+    label: 'list_tip_review_candidates.py',
+    logTag: 'list_tip_review_candidates.py failed',
+    messages: {
+      nonzero_exit: 'Failed to list tip review candidates',
+      invalid_json: 'Tip review candidate list produced invalid output',
+      spawn_failed: 'Failed to start tip review candidate listing',
+    },
   });
 });
 
@@ -205,37 +147,17 @@ router.get('/dev/tip-review-candidates', requireAuth, requireAdmin, (req, res) =
 // substitute for a paid Claude teacher call. Body is
 // {analysis_id, shot_type, deviation_features, shown_tip_ids, reviewer_pick_ids}.
 router.post('/dev/tip-review/label', requireAuth, requireAdmin, (req, res) => {
-  const proc = spawn(PYTHON, [LOG_MANUAL_TIP_REVIEW]);
-
-  let stdout = '';
-  let stderr = '';
-  proc.stdout.on('data', (chunk) => { stdout += chunk; });
-  proc.stderr.on('data', (chunk) => { stderr += chunk; });
-
-  const timeout = setTimeout(() => proc.kill(), LOG_TIP_REVIEW_TIMEOUT_MS);
-
-  proc.on('close', (code) => {
-    clearTimeout(timeout);
-    if (code !== 0) {
-      console.error('[dev] log_manual_tip_review.py failed:', stderr.slice(-2000));
-      return res.status(500).json({ error: 'Failed to log tip review' });
-    }
-    try {
-      res.json(JSON.parse(stdout));
-    } catch {
-      console.error('[dev] failed to parse log_manual_tip_review.py output:', stdout.slice(-2000));
-      res.status(500).json({ error: 'Log tip review produced invalid output' });
-    }
+  sendPythonJson(res, [LOG_MANUAL_TIP_REVIEW], {
+    timeoutMs: LOG_TIP_REVIEW_TIMEOUT_MS,
+    stdinBody: req.body,
+    label: 'log_manual_tip_review.py',
+    logTag: 'log_manual_tip_review.py failed',
+    messages: {
+      nonzero_exit: 'Failed to log tip review',
+      invalid_json: 'Log tip review produced invalid output',
+      spawn_failed: 'Failed to start tip review logging',
+    },
   });
-
-  proc.on('error', (err) => {
-    clearTimeout(timeout);
-    console.error('[dev] failed to spawn python:', err);
-    res.status(500).json({ error: 'Failed to start tip review logging' });
-  });
-
-  proc.stdin.write(JSON.stringify(req.body));
-  proc.stdin.end();
 });
 
 // Free manual data-quality review tool for the pro database itself --
@@ -246,70 +168,32 @@ router.post('/dev/tip-review/label', requireAuth, requireAdmin, (req, res) => {
 router.get('/dev/pro-clip-review-candidates', requireAuth, requireAdmin, (req, res) => {
   const args = [LIST_PRO_CLIP_REVIEW_CANDIDATES];
   if (req.query.limit) args.push(String(req.query.limit));
-  const proc = spawn(PYTHON, args);
-
-  let stdout = '';
-  let stderr = '';
-  proc.stdout.on('data', (chunk) => { stdout += chunk; });
-  proc.stderr.on('data', (chunk) => { stderr += chunk; });
-
-  const timeout = setTimeout(() => proc.kill(), PRO_CLIP_REVIEW_CANDIDATES_TIMEOUT_MS);
-
-  proc.on('close', (code) => {
-    clearTimeout(timeout);
-    if (code !== 0) {
-      console.error('[dev] list_pro_clip_review_candidates.py failed:', stderr.slice(-2000));
-      return res.status(500).json({ error: 'Failed to list pro clip review candidates' });
-    }
-    try {
-      res.json(JSON.parse(stdout));
-    } catch {
-      console.error('[dev] failed to parse list_pro_clip_review_candidates.py output:', stdout.slice(-2000));
-      res.status(500).json({ error: 'Pro clip review candidate list produced invalid output' });
-    }
-  });
-
-  proc.on('error', (err) => {
-    clearTimeout(timeout);
-    console.error('[dev] failed to spawn python:', err);
-    res.status(500).json({ error: 'Failed to start pro clip review candidate listing' });
+  sendPythonJson(res, args, {
+    timeoutMs: PRO_CLIP_REVIEW_CANDIDATES_TIMEOUT_MS,
+    label: 'list_pro_clip_review_candidates.py',
+    logTag: 'list_pro_clip_review_candidates.py failed',
+    messages: {
+      nonzero_exit: 'Failed to list pro clip review candidates',
+      invalid_json: 'Pro clip review candidate list produced invalid output',
+      spawn_failed: 'Failed to start pro clip review candidate listing',
+    },
   });
 });
 
 // Logs Jack's manual data-quality verdict on one pro-database clip. Body
 // is {id, verdict, note}, verdict one of 'ok'|'mismatched'|'slow_motion'|'wrong_boundary'.
 router.post('/dev/pro-clip-review/label', requireAuth, requireAdmin, (req, res) => {
-  const proc = spawn(PYTHON, [LOG_PRO_CLIP_REVIEW]);
-
-  let stdout = '';
-  let stderr = '';
-  proc.stdout.on('data', (chunk) => { stdout += chunk; });
-  proc.stderr.on('data', (chunk) => { stderr += chunk; });
-
-  const timeout = setTimeout(() => proc.kill(), LOG_PRO_CLIP_REVIEW_TIMEOUT_MS);
-
-  proc.on('close', (code) => {
-    clearTimeout(timeout);
-    if (code !== 0) {
-      console.error('[dev] log_pro_clip_review.py failed:', stderr.slice(-2000));
-      return res.status(500).json({ error: 'Failed to log pro clip review' });
-    }
-    try {
-      res.json(JSON.parse(stdout));
-    } catch {
-      console.error('[dev] failed to parse log_pro_clip_review.py output:', stdout.slice(-2000));
-      res.status(500).json({ error: 'Log pro clip review produced invalid output' });
-    }
+  sendPythonJson(res, [LOG_PRO_CLIP_REVIEW], {
+    timeoutMs: LOG_PRO_CLIP_REVIEW_TIMEOUT_MS,
+    stdinBody: req.body,
+    label: 'log_pro_clip_review.py',
+    logTag: 'log_pro_clip_review.py failed',
+    messages: {
+      nonzero_exit: 'Failed to log pro clip review',
+      invalid_json: 'Log pro clip review produced invalid output',
+      spawn_failed: 'Failed to start pro clip review logging',
+    },
   });
-
-  proc.on('error', (err) => {
-    clearTimeout(timeout);
-    console.error('[dev] failed to spawn python:', err);
-    res.status(500).json({ error: 'Failed to start pro clip review logging' });
-  });
-
-  proc.stdin.write(JSON.stringify(req.body));
-  proc.stdin.end();
 });
 
 // Manual ball-labeling tool for the fine-tuned ball detector project --
@@ -319,70 +203,32 @@ router.post('/dev/pro-clip-review/label', requireAuth, requireAdmin, (req, res) 
 router.get('/dev/ball-label-candidates', requireAuth, requireAdmin, (req, res) => {
   const args = [LIST_BALL_LABEL_CANDIDATES];
   if (req.query.limit) args.push(String(req.query.limit));
-  const proc = spawn(PYTHON, args);
-
-  let stdout = '';
-  let stderr = '';
-  proc.stdout.on('data', (chunk) => { stdout += chunk; });
-  proc.stderr.on('data', (chunk) => { stderr += chunk; });
-
-  const timeout = setTimeout(() => proc.kill(), BALL_LABEL_CANDIDATES_TIMEOUT_MS);
-
-  proc.on('close', (code) => {
-    clearTimeout(timeout);
-    if (code !== 0) {
-      console.error('[dev] list_ball_label_candidates.py failed:', stderr.slice(-2000));
-      return res.status(500).json({ error: 'Failed to list ball label candidates' });
-    }
-    try {
-      res.json(JSON.parse(stdout));
-    } catch {
-      console.error('[dev] failed to parse list_ball_label_candidates.py output:', stdout.slice(-2000));
-      res.status(500).json({ error: 'Ball label candidate list produced invalid output' });
-    }
-  });
-
-  proc.on('error', (err) => {
-    clearTimeout(timeout);
-    console.error('[dev] failed to spawn python:', err);
-    res.status(500).json({ error: 'Failed to start ball label candidate listing' });
+  sendPythonJson(res, args, {
+    timeoutMs: BALL_LABEL_CANDIDATES_TIMEOUT_MS,
+    label: 'list_ball_label_candidates.py',
+    logTag: 'list_ball_label_candidates.py failed',
+    messages: {
+      nonzero_exit: 'Failed to list ball label candidates',
+      invalid_json: 'Ball label candidate list produced invalid output',
+      spawn_failed: 'Failed to start ball label candidate listing',
+    },
   });
 });
 
 // Logs Jack's manually-drawn ball box (or "no ball" verdict). Body is
 // {file, bucket, ball_visible, box_norm}.
 router.post('/dev/ball-label/label', requireAuth, requireAdmin, (req, res) => {
-  const proc = spawn(PYTHON, [LOG_MANUAL_BALL_LABEL]);
-
-  let stdout = '';
-  let stderr = '';
-  proc.stdout.on('data', (chunk) => { stdout += chunk; });
-  proc.stderr.on('data', (chunk) => { stderr += chunk; });
-
-  const timeout = setTimeout(() => proc.kill(), LOG_BALL_LABEL_TIMEOUT_MS);
-
-  proc.on('close', (code) => {
-    clearTimeout(timeout);
-    if (code !== 0) {
-      console.error('[dev] log_manual_ball_label.py failed:', stderr.slice(-2000));
-      return res.status(500).json({ error: 'Failed to log ball label' });
-    }
-    try {
-      res.json(JSON.parse(stdout));
-    } catch {
-      console.error('[dev] failed to parse log_manual_ball_label.py output:', stdout.slice(-2000));
-      res.status(500).json({ error: 'Log ball label produced invalid output' });
-    }
+  sendPythonJson(res, [LOG_MANUAL_BALL_LABEL], {
+    timeoutMs: LOG_BALL_LABEL_TIMEOUT_MS,
+    stdinBody: req.body,
+    label: 'log_manual_ball_label.py',
+    logTag: 'log_manual_ball_label.py failed',
+    messages: {
+      nonzero_exit: 'Failed to log ball label',
+      invalid_json: 'Log ball label produced invalid output',
+      spawn_failed: 'Failed to start ball label logging',
+    },
   });
-
-  proc.on('error', (err) => {
-    clearTimeout(timeout);
-    console.error('[dev] failed to spawn python:', err);
-    res.status(500).json({ error: 'Failed to start ball label logging' });
-  });
-
-  proc.stdin.write(JSON.stringify(req.body));
-  proc.stdin.end();
 });
 
 // Drills & Lessons editor -- unfiltered (incl. archived/premium) so the
@@ -483,9 +329,14 @@ router.post('/dev/drills', requireAuth, requireAdmin, uploadDrillVideo.single('v
     // Only steps genuinely dropped from the submitted list get removed --
     // this deletion is a real edit, not the old delete-everything-then-
     // reinsert artifact that used to orphan every step's practice history.
+    // A genuinely removed step still needs its own practice_attempts rows
+    // cleaned up first, though (SQLite foreign keys aren't enforced here) --
+    // otherwise those attempts survive pointing at a dead step_id forever,
+    // same failure shape the id-reconciliation above was built to avoid.
     const removedStepIds = [...existingStepIds].filter((sid) => !keptStepIds.has(sid));
     if (removedStepIds.length) {
       const placeholders = removedStepIds.map(() => '?').join(',');
+      db.prepare(`DELETE FROM drill_practice_attempts WHERE step_id IN (${placeholders})`).run(...removedStepIds);
       db.prepare(`DELETE FROM drill_routine_steps WHERE id IN (${placeholders})`).run(...removedStepIds);
     }
 

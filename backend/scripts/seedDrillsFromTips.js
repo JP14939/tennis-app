@@ -14,9 +14,9 @@
 const path = require('path');
 const fs = require('fs');
 const db = require(path.join(__dirname, '..', 'src', 'db'));
+const { SHOT_TYPES } = require(path.join(__dirname, '..', 'src', 'config', 'shotTypes'));
 
 const TIPS_DB_PATH = path.join(__dirname, '..', '..', 'data', '08_coaching_ai', 'coaching_tips_database.json');
-const SHOT_TYPES = ['forehand', 'backhand', 'serve'];
 
 function main() {
   const data = JSON.parse(fs.readFileSync(TIPS_DB_PATH, 'utf8'));

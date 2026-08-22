@@ -91,10 +91,20 @@ function runJob(jobId, videoPath, userId) {
         INSERT INTO rally_clips (job_id, user_id, clip_path, start_sec, end_sec, duration_sec, swing_count)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `);
-      for (const rally of result.rallies) {
-        insert.run(jobId, userId, rally.clip_path, rally.start_sec, rally.end_sec, rally.duration_sec, rally.swing_count);
-      }
-      db.prepare(`UPDATE highlight_jobs SET status = 'done', completed_at = datetime('now') WHERE id = ?`).run(jobId);
+      // Transactional so a bad rally mid-list (e.g. a null clip_path
+      // hitting the NOT NULL constraint) can't leave a partial set of
+      // rally_clips rows inserted while the job status still ends up
+      // 'failed' -- previously the loop and the status update were
+      // separate statements, so a throw partway through left orphaned
+      // clips that still rendered via GET /highlights/:jobId/clips despite
+      // the job never being marked 'done'.
+      const ingest = db.transaction(() => {
+        for (const rally of result.rallies) {
+          insert.run(jobId, userId, rally.clip_path, rally.start_sec, rally.end_sec, rally.duration_sec, rally.swing_count);
+        }
+        db.prepare(`UPDATE highlight_jobs SET status = 'done', completed_at = datetime('now') WHERE id = ?`).run(jobId);
+      });
+      ingest();
       sendPushNotification(
         userId,
         'Your rallies are ready',

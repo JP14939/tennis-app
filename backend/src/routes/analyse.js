@@ -4,11 +4,13 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const db = require('../db');
-const optionalAuth = require('../middleware/optionalAuth');
+const requireAuth = require('../middleware/requireAuth');
 const { currentTier } = require('../utils/tier');
 const { PYTHON, DATA_DIR, SCRIPTS_DIR } = require('../config/paths');
+const { SHOT_TYPES } = require('../config/shotTypes');
 const { persistAndCrop, croppedProClipPath, toUrl, PRO_CLIPS_DIR, PRO_CLIPS_CROPPED_DIR } = require('../utils/videoCrop');
 const { reserveDailyUsageSlot, releaseUsageSlot, LIMIT_EXCEEDED } = require('../utils/usageLimit');
+const { runPythonJson } = require('../utils/runPythonJson');
 
 const router = express.Router();
 
@@ -21,7 +23,6 @@ const MATCHER = path.join(__dirname, '..', 'services', 'pro_matcher.py');
 // running it inline added that directly to every user's response time for
 // a step that gives them nothing back, so it's fully decoupled instead.
 const CONTACT_FRAME_LOGGER = path.join(SCRIPTS_DIR, '07_ball_racket_tracking', 'log_user_contact_frame_cli.py');
-const SHOT_TYPES = ['forehand', 'backhand', 'serve'];
 const ANALYSIS_TIMEOUT_MS = 2 * 60 * 1000; // pose extraction on a short clip should finish well within this
 const FREE_DAILY_LIMIT = 2;
 // Where the user's uploaded video is kept after analysis (used to be
@@ -42,7 +43,7 @@ const upload = multer({
   limits: { fileSize: 200 * 1024 * 1024 }, // 200MB
 });
 
-router.post('/analyse', optionalAuth, upload.single('video'), (req, res) => {
+router.post('/analyse', requireAuth, upload.single('video'), async (req, res) => {
   const cleanup = () => {
     if (req.file) fs.unlink(req.file.path, () => {});
   };
@@ -57,9 +58,11 @@ router.post('/analyse', optionalAuth, upload.single('video'), (req, res) => {
     return res.status(400).json({ error: `shotType must be one of ${SHOT_TYPES.join(', ')}` });
   }
 
-  // Guests and premium accounts are unlimited -- only identifiable free-tier
-  // accounts are capped, and only checked (not forced to log in) so this
-  // doesn't change today's unauthenticated behavior for anyone else.
+  // Premium accounts are unlimited -- only free-tier accounts are capped.
+  // /analyse requires auth (requireAuth above) specifically so this can't be
+  // bypassed by dropping the Authorization header: an earlier optionalAuth
+  // version let a capped free user do exactly that and get unlimited
+  // analyses as an "anonymous" caller, since req.user was simply absent.
   //
   // The count-check and the usage INSERT used to happen up to
   // ANALYSIS_TIMEOUT_MS (2 minutes) apart -- check here, insert only after
@@ -71,7 +74,7 @@ router.post('/analyse', optionalAuth, upload.single('video'), (req, res) => {
   // async work starts. If the analysis later fails, the reservation is
   // released so a failed attempt still doesn't count against the user --
   // same behavior as before, just race-free.
-  const isFreeUser = req.user && currentTier(req.user.id) === 'free';
+  const isFreeUser = currentTier(req.user.id) === 'free';
   let usageRowId = null;
   if (isFreeUser) {
     const reserved = reserveDailyUsageSlot(db, req.user.id, FREE_DAILY_LIMIT);
@@ -98,97 +101,81 @@ router.post('/analyse', optionalAuth, upload.single('video'), (req, res) => {
     args.push('--view-direction-hint', viewDirectionHint);
   }
 
-  const proc = spawn(PYTHON, args);
+  try {
+    // NOT parallelized with Promise.all, despite persistAndCrop not reading
+    // `result` -- looks independent by data-flow alone, but persistAndCrop
+    // copies-then-unlinks req.file.path (videoCrop.js's EXDEV workaround),
+    // and the matcher subprocess below is given that same path as an argv
+    // string and opens/reads it itself over its own runtime. Running them
+    // concurrently would race a synchronous unlink against a Python
+    // interpreter + MediaPipe import + video-open that's slower by a wide
+    // margin, i.e. the file being deleted out from under the still-running
+    // matcher on essentially every request, not as a rare edge case.
+    const result = await runPythonJson(PYTHON, args, { timeoutMs: ANALYSIS_TIMEOUT_MS, label: 'pro_matcher.py' });
 
-  let stdout = '';
-  let stderr = '';
-  proc.stdout.on('data', (chunk) => { stdout += chunk; });
-  proc.stderr.on('data', (chunk) => { stderr += chunk; });
+    // Analysis succeeded -- keep the user's video (used to be deleted
+    // here) and crop it for the sync-compare screen. Cropping failure is
+    // non-fatal: croppedPath just comes back null and the screen falls
+    // back to the original video.
+    const uploadId = path.parse(req.file.filename).name;
+    const { originalPath, croppedPath } = await persistAndCrop(req.file.path, path.join(USER_CLIPS_DIR, uploadId));
 
-  const timeout = setTimeout(() => {
-    proc.kill();
-  }, ANALYSIS_TIMEOUT_MS);
-
-  proc.on('close', async (code) => {
-    clearTimeout(timeout);
-
-    if (code !== 0) {
-      cleanup();
-      releaseUsageSlot(db, usageRowId);
-      console.error('[analyse] pro_matcher.py failed:', stderr.slice(-2000));
-      let error = 'Analysis failed';
-      try { error = JSON.parse(stdout).error || error; } catch { /* stdout wasn't JSON */ }
-      return res.status(500).json({ error });
-    }
-
+    // Defensive check -- don't hand back a URL that 404s or points at a
+    // truncated file (e.g. an interrupted upload on a bad connection).
+    // Doesn't fix whatever the underlying cause is, but turns a silent
+    // broken video into an honest "unavailable" instead of a black box
+    // with no error the frontend has no way to explain.
+    let persistedOk = false;
     try {
-      const result = JSON.parse(stdout);
-
-      // Analysis succeeded -- keep the user's video (used to be deleted
-      // here) and crop it for the sync-compare screen. Cropping failure is
-      // non-fatal: croppedPath just comes back null and the screen falls
-      // back to the original video.
-      const uploadId = path.parse(req.file.filename).name;
-      const { originalPath, croppedPath } = await persistAndCrop(req.file.path, path.join(USER_CLIPS_DIR, uploadId));
-
-      // Defensive check -- don't hand back a URL that 404s or points at a
-      // truncated file (e.g. an interrupted upload on a bad connection).
-      // Doesn't fix whatever the underlying cause is, but turns a silent
-      // broken video into an honest "unavailable" instead of a black box
-      // with no error the frontend has no way to explain.
-      let persistedOk = false;
-      try {
-        persistedOk = fs.statSync(originalPath).size > 0;
-      } catch { /* file missing */ }
-      if (!persistedOk) {
-        console.error('[analyse] persisted user clip missing or empty:', originalPath);
-      }
-
-      result.user_clip_url = persistedOk ? toUrl('/user-clips', USER_CLIPS_DIR, originalPath) : null;
-      result.user_clip_cropped_url = persistedOk ? toUrl('/user-clips', USER_CLIPS_DIR, croppedPath) : null;
-
-      const top = result.matches?.[0];
-      if (top?.clip_path) {
-        // pro_database.json stores clip_path relative to PRO_CLIPS_DIR (not
-        // an absolute path -- it used to be, which broke the moment the
-        // database built on one machine got deployed to another, since
-        // toUrl()'s path.relative() only makes sense against a real path on
-        // the *current* OS). Resolve to a real absolute path here, once,
-        // right where it's actually used.
-        const proClipAbsPath = path.join(PRO_CLIPS_DIR, top.clip_path);
-        const proCroppedPath = await croppedProClipPath(proClipAbsPath, top.shot_type || shotType);
-        top.pro_clip_url = toUrl('/pro-clips', PRO_CLIPS_DIR, proClipAbsPath);
-        top.pro_clip_cropped_url = toUrl('/pro-clips-cropped', PRO_CLIPS_CROPPED_DIR, proCroppedPath);
-      }
-
-      res.json(result);
-
-      // Fire-and-forget, AFTER the response -- see CONTACT_FRAME_LOGGER's
-      // comment above. persistedOk guards against logging against a
-      // missing/empty file; contactTime was already validated as a real
-      // number earlier in this handler (or this request would have 400'd),
-      // so no need to re-validate here.
-      if (persistedOk && contactTime !== undefined && contactTime !== '') {
-        const bgProc = spawn(PYTHON, [CONTACT_FRAME_LOGGER, originalPath, String(parseFloat(contactTime))], {
-          detached: true, stdio: 'ignore',
-        });
-        bgProc.unref();
-      }
-    } catch (e) {
-      cleanup();
-      releaseUsageSlot(db, usageRowId);
-      console.error('[analyse] failed to parse pro_matcher.py output:', stdout.slice(-2000));
-      res.status(500).json({ error: 'Analysis produced invalid output' });
+      persistedOk = fs.statSync(originalPath).size > 0;
+    } catch { /* file missing */ }
+    if (!persistedOk) {
+      console.error('[analyse] persisted user clip missing or empty:', originalPath);
     }
-  });
 
-  proc.on('error', (err) => {
-    clearTimeout(timeout);
+    result.user_clip_url = persistedOk ? toUrl('/user-clips', USER_CLIPS_DIR, originalPath) : null;
+    result.user_clip_cropped_url = persistedOk ? toUrl('/user-clips', USER_CLIPS_DIR, croppedPath) : null;
+
+    const top = result.matches?.[0];
+    if (top?.clip_path) {
+      // pro_database.json stores clip_path relative to PRO_CLIPS_DIR (not
+      // an absolute path -- it used to be, which broke the moment the
+      // database built on one machine got deployed to another, since
+      // toUrl()'s path.relative() only makes sense against a real path on
+      // the *current* OS). Resolve to a real absolute path here, once,
+      // right where it's actually used.
+      const proClipAbsPath = path.join(PRO_CLIPS_DIR, top.clip_path);
+      const proCroppedPath = await croppedProClipPath(proClipAbsPath, top.shot_type || shotType);
+      top.pro_clip_url = toUrl('/pro-clips', PRO_CLIPS_DIR, proClipAbsPath);
+      top.pro_clip_cropped_url = toUrl('/pro-clips-cropped', PRO_CLIPS_CROPPED_DIR, proCroppedPath);
+    }
+
+    res.json(result);
+
+    // Fire-and-forget, AFTER the response -- see CONTACT_FRAME_LOGGER's
+    // comment above. persistedOk guards against logging against a
+    // missing/empty file; contactTime was already validated as a real
+    // number earlier in this handler (or this request would have 400'd),
+    // so no need to re-validate here.
+    if (persistedOk && contactTime !== undefined && contactTime !== '') {
+      const bgProc = spawn(PYTHON, [CONTACT_FRAME_LOGGER, originalPath, String(parseFloat(contactTime))], {
+        detached: true, stdio: 'ignore',
+      });
+      bgProc.unref();
+    }
+  } catch (err) {
     cleanup();
     releaseUsageSlot(db, usageRowId);
-    console.error('[analyse] failed to spawn python:', err);
-    res.status(500).json({ error: 'Failed to start analysis process' });
-  });
+    console.error(`[analyse] ${err.message}`, err.stderr?.slice(-2000));
+    const messages = {
+      spawn_failed: 'Failed to start analysis process',
+      invalid_json: 'Analysis produced invalid output',
+      nonzero_exit: (() => {
+        try { return JSON.parse(err.stdout).error; } catch { return 'Analysis failed'; }
+      })(),
+    };
+    res.status(500).json({ error: messages[err.kind] || 'Analysis failed' });
+  }
 });
 
 module.exports = router;
