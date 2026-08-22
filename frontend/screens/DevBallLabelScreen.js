@@ -128,7 +128,16 @@ export default function DevBallLabelScreen({ navigation }) {
     setLoadError(false);
     (async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/dev/ball-label-candidates`, {
+        // list_ball_label_candidates.py defaults to 30 candidates per call
+        // (with ~15% of those spent on the spotcheck bucket, not the
+        // needs_manual_review backlog) -- this screen never passed ?limit
+        // despite the backend route already accepting it, so clearing a
+        // real backlog (e.g. 230 frames) took ~9 reopens of this screen.
+        // A generous fixed limit comfortably covers today's and any near-
+        // future backlog in one load; already-reviewed files are filtered
+        // out server-side regardless of limit, so this doesn't re-serve
+        // completed work.
+        const res = await fetch(`${API_BASE}/api/dev/ball-label-candidates?limit=500`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -147,7 +156,15 @@ export default function DevBallLabelScreen({ navigation }) {
   const current = candidates[index];
 
   useEffect(() => {
-    setDrawnBox(null);
+    // Spot-check frames come with an existing auto-confirmed box
+    // (current.existing_box_norm) that DrawableImage already renders as a
+    // preview -- but rendering alone never told this screen's own state
+    // there was a box, so "Confirm box" stayed disabled (!drawnBox) even
+    // when the visible box was exactly what should be confirmed. Seeding
+    // it here means agreeing with an auto-label is a single tap, same as
+    // every other review tool in this app; drawing a new box (or "No ball
+    // in this frame") still overrides it as before.
+    setDrawnBox(current?.purpose === 'spotcheck' && current.existing_box_norm ? current.existing_box_norm : null);
   }, [current]);
 
   const advance = () => {

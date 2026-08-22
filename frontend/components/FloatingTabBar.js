@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Animated, Platform } from 'react-native';
+import { View, Text, StyleSheet, Animated, Platform } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { colors, fonts } from '../theme';
+import { colors, fonts, springs, durations, easing } from '../theme';
+import { useReducedMotion } from '../utils/useReducedMotion';
+import PressableScale from './PressableScale';
 import { useWindowWidth } from '../utils/responsive';
 import { HomeIcon, HistoryIcon, FriendsIcon, ProfileIcon, MapPinIcon } from './icons';
 
@@ -23,6 +25,8 @@ const LABEL_FONT_SIZE = { normal: 10.5, small: 9.5 };
 export default function FloatingTabBar({ state, descriptors, navigation }) {
   const [barWidth, setBarWidth] = useState(0);
   const indicatorX = useRef(new Animated.Value(0)).current;
+  const reducedMotion = useReducedMotion();
+  const hasPositioned = useRef(false);
   const windowWidth = useWindowWidth();
   const isSmallScreen = windowWidth < SMALL_SCREEN_BREAKPOINT;
   const sideMargin = isSmallScreen ? SIDE_MARGIN.small : SIDE_MARGIN.normal;
@@ -31,14 +35,44 @@ export default function FloatingTabBar({ state, descriptors, navigation }) {
 
   const itemWidth = barWidth > 0 ? (barWidth - BAR_PAD * 2) / state.routes.length : 0;
 
+  // The indicator is a physical object sliding between slots, so it springs
+  // rather than following a timing curve. This was 350ms of the default
+  // ease-in-out -- on the control people touch more than any other in the
+  // app, that start-slow ramp read as lag every single time.
+  //
+  // Two cases deliberately don't animate: the very first positioning (there's
+  // nothing to travel *from*, so a slide-in from the left edge on mount is
+  // motion that communicates nothing), and a width change from rotation or a
+  // resize, which would otherwise animate the indicator sideways for reasons
+  // unrelated to anything the user did.
+  const prevItemWidth = useRef(itemWidth);
   useEffect(() => {
     if (itemWidth === 0) return;
-    Animated.timing(indicatorX, {
-      toValue: BAR_PAD + state.index * itemWidth + 3,
-      duration: 350,
-      useNativeDriver: true,
-    }).start();
-  }, [state.index, itemWidth]);
+    const target = BAR_PAD + state.index * itemWidth + 3;
+    const widthChanged = prevItemWidth.current !== itemWidth;
+    prevItemWidth.current = itemWidth;
+
+    if (!hasPositioned.current || widthChanged) {
+      hasPositioned.current = true;
+      indicatorX.setValue(target);
+      return;
+    }
+
+    if (reducedMotion) {
+      // Still moves -- this indicator is how you tell which tab is selected,
+      // so removing it outright would cost information. Just made quick and
+      // linear-ish instead of springy.
+      Animated.timing(indicatorX, {
+        toValue: target,
+        duration: durations.instant,
+        easing: easing.out,
+        useNativeDriver: true,
+      }).start();
+      return;
+    }
+
+    Animated.spring(indicatorX, { toValue: target, ...springs.slide }).start();
+  }, [state.index, itemWidth, reducedMotion]);
 
   return (
     <View
@@ -69,10 +103,10 @@ export default function FloatingTabBar({ state, descriptors, navigation }) {
         };
 
         return (
-          <TouchableOpacity key={route.key} onPress={onPress} style={styles.item} activeOpacity={0.8}>
+          <PressableScale key={route.key} onPress={onPress} style={styles.item} scaleTo={0.9}>
             {Icon && <Icon size={iconSize} color={focused ? colors.white : colors.muted} />}
             <Text style={[styles.label, { fontSize: labelFontSize, color: focused ? colors.white : colors.muted }]}>{label}</Text>
-          </TouchableOpacity>
+          </PressableScale>
         );
       })}
     </View>

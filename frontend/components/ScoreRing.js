@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
-import { colors, fonts, scoreColor } from '../theme';
+import { colors, fonts, scoreColor, easing, durations } from '../theme';
+import { useCountUp } from '../utils/useCountUp';
+import { useReducedMotion } from '../utils/useReducedMotion';
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
@@ -19,28 +21,32 @@ export default function ScoreRing({ score, size = 46, strokeWidth = 4, animate =
   const circumference = 2 * Math.PI * radius;
   const progress = Math.max(0, Math.min(1, score / 100));
 
-  const anim = useRef(new Animated.Value(animate ? 0 : progress)).current;
-  const [displayScore, setDisplayScore] = useState(animate ? 0 : score);
+  const reducedMotion = useReducedMotion();
+  const shouldAnimate = animate && !reducedMotion;
+
+  const anim = useRef(new Animated.Value(shouldAnimate ? 0 : progress)).current;
+  // The number used to be driven off this Animated.Value via an addListener
+  // that setState'd on every frame. It now shares the app's one count-up hook
+  // with HomeScreen's stat tiles -- same curve, same duration, no listener.
+  const displayScore = useCountUp(score, durations.reveal, shouldAnimate);
 
   useEffect(() => {
-    if (!animate) {
+    if (!shouldAnimate) {
       anim.setValue(progress);
-      setDisplayScore(score);
       return;
     }
     anim.setValue(0);
-    setDisplayScore(0);
-    const listener = anim.addListener(({ value }) => {
-      setDisplayScore(Math.round((progress > 0 ? value / progress : 0) * score));
-    });
     Animated.timing(anim, {
       toValue: progress,
-      duration: 1100,
+      duration: durations.reveal,
+      // The signature curve: the ring whips out and settles long, the same
+      // shape as the swing it's scoring. Was the default ease-in-out, which
+      // made a 1100ms sweep spend its first third barely moving.
+      easing: easing.swing,
       useNativeDriver: false,
     }).start();
-    return () => anim.removeListener(listener);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [animate, score]);
+  }, [shouldAnimate, score]);
 
   const dashOffset = anim.interpolate({
     inputRange: [0, 1],
@@ -67,7 +73,7 @@ export default function ScoreRing({ score, size = 46, strokeWidth = 4, animate =
         />
       </Svg>
       <View style={styles.inner}>
-        <Text style={[styles.text, { color, fontFamily: fonts.bold }]}>{animate ? displayScore : score}</Text>
+        <Text style={[styles.text, { color, fontFamily: fonts.bold }]}>{shouldAnimate ? displayScore : score}</Text>
       </View>
     </View>
   );

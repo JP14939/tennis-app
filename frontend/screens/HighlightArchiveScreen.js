@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator } from 'react-native';
+import { useCallback, useEffect, useRef, useState, memo } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, FlatList, ActivityIndicator } from 'react-native';
 import Alert from '../utils/alert';
 import { useFocusEffect } from '@react-navigation/native';
 import PlatformVideo from '../components/PlatformVideo';
@@ -9,7 +9,11 @@ import { playTapSound } from '../utils/sounds';
 import { useWindowWidth } from '../utils/responsive';
 import { colors, fonts, radius, spacing } from '../theme';
 
-function ArchiveRow({ clip }) {
+// Backend's GET /highlights/archive has no LIMIT (backend/src/routes/
+// highlights.js) -- an active user's tagged-rally archive is unbounded, and
+// this used to be a plain ScrollView + .map(). Same fix as HistoryScreen and
+// MessageThreadScreen: memoized row, virtualized via FlatList below.
+const ArchiveRow = memo(function ArchiveRow({ clip }) {
   return (
     <View style={r.card}>
       <View style={r.body}>
@@ -27,7 +31,7 @@ function ArchiveRow({ clip }) {
       </TouchableOpacity>
     </View>
   );
-}
+});
 const r = StyleSheet.create({
   card: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
@@ -170,58 +174,73 @@ export default function HighlightArchiveScreen({ navigation }) {
   const failedJobs = jobs.filter(j => j.status === 'failed');
   const doneJobs = jobs.filter(j => j.status === 'done');
 
+  const renderArchiveRow = useCallback(({ item }) => <ArchiveRow clip={item} />, []);
+
+  // Everything that isn't a per-clip row -- title, job-status banners, reel
+  // builders -- moves into the FlatList's header rather than staying above a
+  // ScrollView, same restructuring HistoryScreen's FlatList conversion used.
+  const archiveHeader = (
+    <>
+      <View style={s.header}>
+        <Text style={s.title}>Highlight Archive</Text>
+        <TouchableOpacity style={s.addBtn} onPress={() => navigation.navigate('HighlightUpload')}>
+          <Text style={s.addBtnText}>+ Match</Text>
+        </TouchableOpacity>
+      </View>
+
+      {processingJobs.length > 0 && (
+        <View style={s.processingBanner}>
+          <ActivityIndicator size="small" color={colors.amberText} />
+          <Text style={s.processingBannerText}>
+            {processingJobs.length === 1 ? 'A match is' : `${processingJobs.length} matches are`} still being scanned for rallies — we'll notify you when ready.
+          </Text>
+        </View>
+      )}
+
+      {readyToReview.map(job => (
+        <TouchableOpacity
+          key={job.id}
+          style={s.reviewBanner}
+          onPress={() => navigation.navigate('HighlightReview', { jobId: job.id })}
+        >
+          <Text style={s.reviewBannerText}>
+            {job.pending_review} rall{job.pending_review === 1 ? 'y' : 'ies'} ready to review →
+          </Text>
+        </TouchableOpacity>
+      ))}
+
+      {doneJobs.map(job => <ReelCard key={job.id} job={job} token={token} />)}
+
+      {failedJobs.length > 0 && (
+        <View style={s.failedBanner}>
+          <Text style={s.failedBannerText}>
+            {failedJobs.length === 1 ? 'A match' : `${failedJobs.length} matches`} failed to process. Try uploading again.
+          </Text>
+        </View>
+      )}
+    </>
+  );
+
+  const archiveEmpty = loading && clips.length === 0 ? (
+    <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
+  ) : clips.length === 0 && jobs.length === 0 ? (
+    <View style={s.empty}>
+      <Text style={s.emptyTitle}>No clips yet</Text>
+      <Text style={s.emptySub}>Upload a match to start building your archive.</Text>
+    </View>
+  ) : null;
+
   return (
     <SafeAreaView style={s.safe}>
-      <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
-        <View style={s.header}>
-          <Text style={s.title}>Highlight Archive</Text>
-          <TouchableOpacity style={s.addBtn} onPress={() => navigation.navigate('HighlightUpload')}>
-            <Text style={s.addBtnText}>+ Match</Text>
-          </TouchableOpacity>
-        </View>
-
-        {processingJobs.length > 0 && (
-          <View style={s.processingBanner}>
-            <ActivityIndicator size="small" color={colors.amberText} />
-            <Text style={s.processingBannerText}>
-              {processingJobs.length === 1 ? 'A match is' : `${processingJobs.length} matches are`} still being scanned for rallies — we'll notify you when ready.
-            </Text>
-          </View>
-        )}
-
-        {readyToReview.map(job => (
-          <TouchableOpacity
-            key={job.id}
-            style={s.reviewBanner}
-            onPress={() => navigation.navigate('HighlightReview', { jobId: job.id })}
-          >
-            <Text style={s.reviewBannerText}>
-              {job.pending_review} rall{job.pending_review === 1 ? 'y' : 'ies'} ready to review →
-            </Text>
-          </TouchableOpacity>
-        ))}
-
-        {doneJobs.map(job => <ReelCard key={job.id} job={job} token={token} />)}
-
-        {failedJobs.length > 0 && (
-          <View style={s.failedBanner}>
-            <Text style={s.failedBannerText}>
-              {failedJobs.length === 1 ? 'A match' : `${failedJobs.length} matches`} failed to process. Try uploading again.
-            </Text>
-          </View>
-        )}
-
-        {loading && clips.length === 0 ? (
-          <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
-        ) : clips.length === 0 && jobs.length === 0 ? (
-          <View style={s.empty}>
-            <Text style={s.emptyTitle}>No clips yet</Text>
-            <Text style={s.emptySub}>Upload a match to start building your archive.</Text>
-          </View>
-        ) : (
-          clips.map(clip => <ArchiveRow key={clip.id} clip={clip} />)
-        )}
-      </ScrollView>
+      <FlatList
+        data={clips}
+        keyExtractor={(item) => String(item.id)}
+        renderItem={renderArchiveRow}
+        contentContainerStyle={s.scroll}
+        showsVerticalScrollIndicator={false}
+        ListHeaderComponent={archiveHeader}
+        ListEmptyComponent={archiveEmpty}
+      />
     </SafeAreaView>
   );
 }

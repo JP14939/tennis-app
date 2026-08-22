@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, memo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, SafeAreaView,
-  ScrollView, ActivityIndicator, Platform,
+  ScrollView, FlatList, ActivityIndicator, Platform,
 } from 'react-native';
 import Alert from '../utils/alert';
 import { useFocusEffect } from '@react-navigation/native';
@@ -15,13 +15,13 @@ import ProgressShareCard from '../components/ProgressShareCard';
 import { captureAndShare } from '../utils/shareCard';
 import { TennisBallIcon, PlusIcon, VideoIcon, CheckIcon, ShareIcon, FlagIcon } from '../components/icons';
 import { API_BASE } from '../config/api';
+import { SHOT_TYPES } from '../config/shotTypes';
+import { parseServerDate } from '../utils/formatDate';
 import FriendPickerModal from '../components/FriendPickerModal';
 import { shareSwing } from '../api/friends';
 import DrillsSection from '../components/DrillsSection';
 import LessonsSection from '../components/LessonsSection';
 import { playTapSound } from '../utils/sounds';
-
-const SHOT_TYPES = ['forehand', 'backhand', 'serve'];
 
 function ScoreBar({ value }) {
   return (
@@ -36,16 +36,22 @@ const sb = StyleSheet.create({
 });
 
 function formatDate(isoString) {
-  if (!isoString) return '';
-  // SQLite's datetime('now') is UTC with no 'Z' suffix — append one so the
-  // browser/RN Date parser treats it as UTC instead of local time.
-  const d = new Date(isoString.includes('Z') ? isoString : `${isoString.replace(' ', 'T')}Z`);
-  if (Number.isNaN(d.getTime())) return '';
+  const d = parseServerDate(isoString);
+  if (!d) return '';
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ', ' +
     d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
-function AnalysisCard({ item, onPress, onLongPress, onWatchCompare, onToggleFlag, onToggleConfirm, onCorrectType, onSendToFriend }) {
+// Memoized, and every callback prop below is now the screen's stable
+// (useCallback'd) handler passed straight through -- previously the parent's
+// .map() built a fresh `() => handler(item)` closure per card per render, so
+// every card's props failed a shallow-equality check on every HistoryScreen
+// re-render (e.g. opening the send-to-friend modal from one card re-rendered
+// every other card too). Handlers here take `item` themselves; this
+// component's own onPress={() => onPress(item)} wrappers are cheap because
+// they only run when this card actually re-renders, which memo now prevents
+// for renders unrelated to this specific item.
+const AnalysisCard = memo(function AnalysisCard({ item, onPress, onLongPress, onWatchCompare, onToggleFlag, onToggleConfirm, onCorrectType, onSendToFriend }) {
   const score = Math.round(item.similarity ?? 0);
   const top = item.result?.matches?.[0];
   const canWatchCompare = !!(top?.pro_clip_url && item.result?.user_clip_url);
@@ -53,7 +59,12 @@ function AnalysisCard({ item, onPress, onLongPress, onWatchCompare, onToggleFlag
   const confirmed = !!item.confirmed_real_shot;
   const [showTypePicker, setShowTypePicker] = useState(false);
   return (
-    <TouchableOpacity style={[c.card, flagged && c.cardFlagged]} onPress={onPress} onLongPress={onLongPress} activeOpacity={0.8}>
+    <TouchableOpacity
+      style={[c.card, flagged && c.cardFlagged]}
+      onPress={() => onPress(item)}
+      onLongPress={() => onLongPress(item)}
+      activeOpacity={0.8}
+    >
       <View style={c.cardHeader}>
         <View style={c.shotBadge}>
           <TennisBallIcon size={18} color={colors.primary} />
@@ -94,7 +105,7 @@ function AnalysisCard({ item, onPress, onLongPress, onWatchCompare, onToggleFlag
       <View style={c.verifyRow}>
         <TouchableOpacity
           style={[c.verifyBtn, confirmed && c.verifyBtnConfirmed]}
-          onPress={(e) => { e.stopPropagation?.(); onToggleConfirm(); }}
+          onPress={(e) => { e.stopPropagation?.(); onToggleConfirm(item); }}
           activeOpacity={0.8}
         >
           <CheckIcon size={12} color={confirmed ? colors.white : colors.primary} />
@@ -102,7 +113,7 @@ function AnalysisCard({ item, onPress, onLongPress, onWatchCompare, onToggleFlag
         </TouchableOpacity>
         <TouchableOpacity
           style={[c.verifyBtn, flagged && c.verifyBtnFlagged]}
-          onPress={(e) => { e.stopPropagation?.(); onToggleFlag(); }}
+          onPress={(e) => { e.stopPropagation?.(); onToggleFlag(item); }}
           activeOpacity={0.8}
         >
           <FlagIcon size={12} color={flagged ? colors.white : colors.coral} />
@@ -126,7 +137,7 @@ function AnalysisCard({ item, onPress, onLongPress, onWatchCompare, onToggleFlag
             <TouchableOpacity
               key={st}
               style={[c.typePickerBtn, st === item.shot_type && c.typePickerBtnActive]}
-              onPress={(e) => { e.stopPropagation?.(); setShowTypePicker(false); onCorrectType(st); }}
+              onPress={(e) => { e.stopPropagation?.(); setShowTypePicker(false); onCorrectType(item, st); }}
               activeOpacity={0.8}
             >
               <Text style={[c.typePickerBtnText, st === item.shot_type && c.typePickerBtnTextActive]}>
@@ -140,7 +151,7 @@ function AnalysisCard({ item, onPress, onLongPress, onWatchCompare, onToggleFlag
       {canWatchCompare && (
         <TouchableOpacity
           style={c.watchBtn}
-          onPress={(e) => { e.stopPropagation?.(); onWatchCompare(); }}
+          onPress={(e) => { e.stopPropagation?.(); onWatchCompare(item); }}
           activeOpacity={0.8}
         >
           <VideoIcon size={13} color={colors.primary} />
@@ -150,14 +161,14 @@ function AnalysisCard({ item, onPress, onLongPress, onWatchCompare, onToggleFlag
 
       <TouchableOpacity
         style={c.sendBtn}
-        onPress={(e) => { e.stopPropagation?.(); onSendToFriend(); }}
+        onPress={(e) => { e.stopPropagation?.(); onSendToFriend(item); }}
         activeOpacity={0.8}
       >
         <Text style={c.sendBtnText}>Send to a friend</Text>
       </TouchableOpacity>
     </TouchableOpacity>
   );
-}
+});
 const c = StyleSheet.create({
   card: {
     backgroundColor: colors.surface, borderRadius: radius.lg, padding: 16, marginBottom: 12,
@@ -500,15 +511,20 @@ export default function HistoryScreen({ navigation, route }) {
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const handleUpload = ({ videoUri, shotType }) => {
+  // All six handlers below are wrapped in useCallback and take `item`
+  // explicitly (rather than closing over it) so AnalysisCard receives the
+  // same function reference across HistoryScreen re-renders -- required for
+  // memo(AnalysisCard) above to actually skip re-rendering cards whose data
+  // hasn't changed. See the comment on AnalysisCard.
+  const handleUpload = useCallback(({ videoUri, shotType }) => {
     setShowUpload(false);
     // Navigate to contact marking so they can pick the exact frame — saving
     // happens automatically from ResultsScreen once analysis completes, and
     // this list picks it up next time the tab regains focus.
     navigation.navigate('Upload', { videoUri, shotType });
-  };
+  }, [navigation]);
 
-  const handleToggleFlag = async (item) => {
+  const handleToggleFlag = useCallback(async (item) => {
     const nextFlagged = !item.flagged_not_shot;
     // Optimistic update -- toggling this should feel instant, and a failed
     // request just gets corrected back on the next load() below. Mutually
@@ -522,9 +538,9 @@ export default function HistoryScreen({ navigation, route }) {
       Alert.alert('Could not update flag', err.message || 'Something went wrong');
       load();
     }
-  };
+  }, [token, load]);
 
-  const handleToggleConfirm = async (item) => {
+  const handleToggleConfirm = useCallback(async (item) => {
     const nextConfirmed = !item.confirmed_real_shot;
     setAnalyses((prev) => prev.map((a) => (a.id === item.id
       ? { ...a, confirmed_real_shot: nextConfirmed, flagged_not_shot: nextConfirmed ? false : a.flagged_not_shot }
@@ -535,9 +551,9 @@ export default function HistoryScreen({ navigation, route }) {
       Alert.alert('Could not update confirmation', err.message || 'Something went wrong');
       load();
     }
-  };
+  }, [token, load]);
 
-  const handleCorrectType = async (item, newShotType) => {
+  const handleCorrectType = useCallback(async (item, newShotType) => {
     if (newShotType === item.shot_type) return;
     const prevShotType = item.shot_type;
     setAnalyses((prev) => prev.map((a) => (a.id === item.id ? { ...a, shot_type: newShotType } : a)));
@@ -547,13 +563,13 @@ export default function HistoryScreen({ navigation, route }) {
       Alert.alert('Could not update shot type', err.message || 'Something went wrong');
       setAnalyses((prev) => prev.map((a) => (a.id === item.id ? { ...a, shot_type: prevShotType } : a)));
     }
-  };
+  }, [token]);
 
   // History cards only carry a slimmed-down result (no overlay trajectories
   // -- see backend/src/routes/history.js's serializeRowSummary), so opening
   // a card needs the real thing fetched fresh, not whatever's already on
   // the item.
-  const openResult = async (item) => {
+  const openResult = useCallback(async (item) => {
     try {
       const full = await fetchHistoryItem(token, item.id);
       navigation.navigate('Results', {
@@ -566,9 +582,9 @@ export default function HistoryScreen({ navigation, route }) {
     } catch (err) {
       Alert.alert('Could not open analysis', err.message || 'Something went wrong');
     }
-  };
+  }, [token, navigation]);
 
-  const handleDelete = (item) => {
+  const handleDelete = useCallback((item) => {
     Alert.alert('Delete this analysis?', `${formatProId(item.pro_id, item.result?.matches?.[0]?.player_name)} — this can't be undone.`, [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -584,7 +600,16 @@ export default function HistoryScreen({ navigation, route }) {
         },
       },
     ]);
-  };
+  }, [token, load]);
+
+  const handleWatchCompare = useCallback((item) => {
+    navigateToWatchCompare(navigation, token, item);
+  }, [navigation, token]);
+
+  const handleSendToFriendPress = useCallback((item) => {
+    setSendItem(item);
+    setFriendPickerVisible(true);
+  }, []);
 
   const atCap = limit != null && analyses.length >= limit;
   const filteredAnalyses = listFilter === 'great' ? analyses.filter(a => a.similarity >= 75) : analyses;
@@ -631,126 +656,143 @@ export default function HistoryScreen({ navigation, route }) {
     );
   }
 
+  // The card list used to be a plain `.map()` inside the screen's one big
+  // ScrollView -- every saved analysis rendered (and re-rendered) at once,
+  // unbounded, with no windowing. Fine for 3 free-tier rows, real for a
+  // premium account with hundreds. Only the 'history' segment has this
+  // problem (drills/lessons don't render per-analysis rows), so only it
+  // gets a FlatList; everything that used to sit above the cards (title,
+  // segment toggle, upload panel, progress/stats, cap notice, filter
+  // banner) moves into ListHeaderComponent, and the two empty-state
+  // messages move into ListEmptyComponent.
+  const renderAnalysisCard = useCallback(({ item }) => (
+    <AnalysisCard
+      item={item}
+      onPress={openResult}
+      onLongPress={handleDelete}
+      onWatchCompare={handleWatchCompare}
+      onToggleFlag={handleToggleFlag}
+      onToggleConfirm={handleToggleConfirm}
+      onCorrectType={handleCorrectType}
+      onSendToFriend={handleSendToFriendPress}
+    />
+  ), [openResult, handleDelete, handleWatchCompare, handleToggleFlag, handleToggleConfirm, handleCorrectType, handleSendToFriendPress]);
+
+  // Matches the original `{!loading && (...)}` gate, which hid the cards
+  // (and both empty states) during a refetch even though stale `analyses`
+  // was still sitting in state -- preserved rather than "improved" here,
+  // since changing that is a separate, unrequested behaviour change.
+  const historyListData = loading ? [] : filteredAnalyses;
+
+  const historyListHeader = (
+    <>
+      <View style={s.header}>
+        <Text style={s.title}>History</Text>
+        {!showUpload && (
+          <TouchableOpacity style={s.newBtn} onPress={() => setShowUpload(true)}>
+            <PlusIcon size={13} color={colors.white} />
+            <Text style={s.newBtnText}>New</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {SegmentToggle}
+
+      {showUpload && (
+        <UploadPanel onCancel={() => setShowUpload(false)} onUpload={handleUpload} />
+      )}
+
+      {loading && (
+        <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
+      )}
+
+      {!loading && !showUpload && analyses.length > 0 && (
+        <ProgressSection analyses={analyses} />
+      )}
+
+      {!loading && !showUpload && analyses.length > 0 && (
+        <View style={s.statsRow}>
+          <View style={s.stat}>
+            <Text style={s.statNum}>{limit != null ? `${analyses.length}/${limit}` : analyses.length}</Text>
+            <Text style={s.statLabel}>{limit != null ? 'Saved' : 'Analyses'}</Text>
+          </View>
+          <View style={s.statDivider} />
+          <View style={s.stat}>
+            <Text style={s.statNum}>
+              {Math.round(analyses.reduce((sum, a) => sum + a.similarity, 0) / Math.max(1, analyses.length))}
+            </Text>
+            <Text style={s.statLabel}>Avg score</Text>
+          </View>
+          <View style={s.statDivider} />
+          <View style={s.stat}>
+            <Text style={s.statNum}>
+              {analyses.filter(a => a.similarity >= 75).length}
+            </Text>
+            <Text style={s.statLabel}>Great swings</Text>
+          </View>
+        </View>
+      )}
+
+      {!loading && !showUpload && atCap && !isPremium && (
+        <TouchableOpacity
+          style={s.capCard}
+          onPress={() => navigation.navigate('Premium')}
+        >
+          <Text style={s.capText}>You've saved {limit}/{limit} shots on the free plan. Delete one, or <Text style={s.capTextBold}>upgrade to save unlimited →</Text></Text>
+        </TouchableOpacity>
+      )}
+
+      {!loading && listFilter === 'great' && (
+        <View style={s.filterBanner}>
+          <Text style={s.filterBannerText}>Showing {filteredAnalyses.length} great swing{filteredAnalyses.length === 1 ? '' : 's'} (score ≥ 75)</Text>
+          <TouchableOpacity onPress={() => setListFilter(null)}>
+            <Text style={s.filterBannerClear}>Clear filter</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </>
+  );
+
+  const historyListEmpty = loading ? null : (
+    <>
+      {analyses.length === 0 && !showUpload && (
+        <View style={s.empty}>
+          <Text style={s.emptyTitle}>No analyses yet</Text>
+          <Text style={s.emptySub}>Upload a swing video to get matched to a pro and receive personalised coaching tips.</Text>
+          <TouchableOpacity style={s.emptyBtn} onPress={() => setShowUpload(true)}>
+            <Text style={s.emptyBtnText}>Upload your first swing →</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+      {analyses.length > 0 && filteredAnalyses.length === 0 && (
+        <Text style={s.emptySub}>No great swings yet — keep practising, or clear the filter to see everything.</Text>
+      )}
+    </>
+  );
+
   return (
     <SafeAreaView style={s.safe}>
       <CourtBackground />
-      <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
-
-        {/* Header */}
-        <View style={s.header}>
-          <Text style={s.title}>{segment === 'drills' ? 'Drills' : segment === 'lessons' ? 'Lessons' : 'History'}</Text>
-          {segment === 'history' && !showUpload && (
-            <TouchableOpacity style={s.newBtn} onPress={() => setShowUpload(true)}>
-              <PlusIcon size={13} color={colors.white} />
-              <Text style={s.newBtnText}>New</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {SegmentToggle}
-
-        {segment === 'drills' && <DrillsSection navigation={navigation} />}
-        {segment === 'lessons' && <LessonsSection navigation={navigation} />}
-
-        {segment === 'history' && (
-        <>
-        {/* Upload panel */}
-        {showUpload && (
-          <UploadPanel
-            onCancel={() => setShowUpload(false)}
-            onUpload={handleUpload}
-          />
-        )}
-
-        {loading && (
-          <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
-        )}
-
-        {!loading && (
-          <>
-            {/* Progress trend */}
-            {!showUpload && analyses.length > 0 && (
-              <ProgressSection analyses={analyses} />
-            )}
-
-            {/* Stats strip */}
-            {!showUpload && analyses.length > 0 && (
-              <View style={s.statsRow}>
-                <View style={s.stat}>
-                  <Text style={s.statNum}>{limit != null ? `${analyses.length}/${limit}` : analyses.length}</Text>
-                  <Text style={s.statLabel}>{limit != null ? 'Saved' : 'Analyses'}</Text>
-                </View>
-                <View style={s.statDivider} />
-                <View style={s.stat}>
-                  <Text style={s.statNum}>
-                    {Math.round(analyses.reduce((sum, a) => sum + a.similarity, 0) / Math.max(1, analyses.length))}
-                  </Text>
-                  <Text style={s.statLabel}>Avg score</Text>
-                </View>
-                <View style={s.statDivider} />
-                <View style={s.stat}>
-                  <Text style={s.statNum}>
-                    {analyses.filter(a => a.similarity >= 75).length}
-                  </Text>
-                  <Text style={s.statLabel}>Great swings</Text>
-                </View>
-              </View>
-            )}
-
-            {/* Free-tier cap notice */}
-            {!showUpload && atCap && !isPremium && (
-              <TouchableOpacity
-                style={s.capCard}
-                onPress={() => navigation.navigate('Premium')}
-              >
-                <Text style={s.capText}>You've saved {limit}/{limit} shots on the free plan. Delete one, or <Text style={s.capTextBold}>upgrade to save unlimited →</Text></Text>
-              </TouchableOpacity>
-            )}
-
-            {/* Great-swings filter banner (from Home's stat tile) */}
-            {listFilter === 'great' && (
-              <View style={s.filterBanner}>
-                <Text style={s.filterBannerText}>Showing {filteredAnalyses.length} great swing{filteredAnalyses.length === 1 ? '' : 's'} (score ≥ 75)</Text>
-                <TouchableOpacity onPress={() => setListFilter(null)}>
-                  <Text style={s.filterBannerClear}>Clear filter</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* Analysis cards */}
-            {filteredAnalyses.map(item => (
-              <AnalysisCard
-                key={item.id}
-                item={item}
-                onPress={() => openResult(item)}
-                onLongPress={() => handleDelete(item)}
-                onWatchCompare={() => navigateToWatchCompare(navigation, token, item)}
-                onToggleFlag={() => handleToggleFlag(item)}
-                onToggleConfirm={() => handleToggleConfirm(item)}
-                onCorrectType={(newType) => handleCorrectType(item, newType)}
-                onSendToFriend={() => { setSendItem(item); setFriendPickerVisible(true); }}
-              />
-            ))}
-
-            {/* Empty state */}
-            {analyses.length === 0 && !showUpload && (
-              <View style={s.empty}>
-                <Text style={s.emptyTitle}>No analyses yet</Text>
-                <Text style={s.emptySub}>Upload a swing video to get matched to a pro and receive personalised coaching tips.</Text>
-                <TouchableOpacity style={s.emptyBtn} onPress={() => setShowUpload(true)}>
-                  <Text style={s.emptyBtnText}>Upload your first swing →</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-            {analyses.length > 0 && filteredAnalyses.length === 0 && (
-              <Text style={s.emptySub}>No great swings yet — keep practising, or clear the filter to see everything.</Text>
-            )}
-          </>
-        )}
-        </>
-        )}
-
-      </ScrollView>
+      {segment === 'history' ? (
+        <FlatList
+          data={historyListData}
+          keyExtractor={(item) => String(item.id)}
+          renderItem={renderAnalysisCard}
+          contentContainerStyle={s.scroll}
+          showsVerticalScrollIndicator={false}
+          ListHeaderComponent={historyListHeader}
+          ListEmptyComponent={historyListEmpty}
+        />
+      ) : (
+        <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
+          <View style={s.header}>
+            <Text style={s.title}>{segment === 'drills' ? 'Drills' : 'Lessons'}</Text>
+          </View>
+          {SegmentToggle}
+          {segment === 'drills' && <DrillsSection navigation={navigation} />}
+          {segment === 'lessons' && <LessonsSection navigation={navigation} />}
+        </ScrollView>
+      )}
 
       <FriendPickerModal
         visible={friendPickerVisible}

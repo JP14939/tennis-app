@@ -28,8 +28,15 @@ async function appendVideo(formData, field, videoUri) {
 
 async function buildCompareFormData(reference, yours, shotType) {
   const formData = new FormData();
-  await appendVideo(formData, 'reference', reference.videoUri);
-  await appendVideo(formData, 'yours', yours.videoUri);
+  // The two appendVideo calls were previously sequential awaits, but each
+  // only fetches its own local blob: URI (web only -- native's branch is
+  // synchronous, no real await cost) and appends under its own field name;
+  // neither reads the other's result. Parallelized -- FormData.append() is
+  // synchronous so there's no ordering hazard once both resolve.
+  await Promise.all([
+    appendVideo(formData, 'reference', reference.videoUri),
+    appendVideo(formData, 'yours', yours.videoUri),
+  ]);
   formData.append('shotType', shotType);
   if (reference.contactTimeSec !== undefined && reference.contactTimeSec !== null) {
     formData.append('contactTimeA', String(reference.contactTimeSec));

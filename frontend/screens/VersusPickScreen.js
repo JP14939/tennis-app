@@ -6,8 +6,7 @@ import Alert from '../utils/alert';
 import * as ImagePicker from 'expo-image-picker';
 import { playTapSound } from '../utils/sounds';
 import { colors, fonts, radius, spacing } from '../theme';
-
-const SHOT_TYPES = ['forehand', 'backhand', 'serve'];
+import { SHOT_TYPES } from '../config/shotTypes';
 
 function VideoPicker({ label, sub, fileName, picking, onPress }) {
   return (

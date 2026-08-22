@@ -7,12 +7,9 @@ import { getFriendsLeaderboard, getWorldwideLeaderboard, addCelebrity } from '..
 import { colors, fonts, radius } from '../theme';
 import { playTapSound } from '../utils/sounds';
 import { isAdmin } from '../utils/isAdmin';
+import { SHOT_TYPES as SHOT_TYPE_VALUES } from '../config/shotTypes';
 
-const SHOT_TYPES = [
-  { label: 'Forehand', value: 'forehand' },
-  { label: 'Backhand', value: 'backhand' },
-  { label: 'Serve', value: 'serve' },
-];
+const SHOT_TYPES = SHOT_TYPE_VALUES.map((value) => ({ label: value[0].toUpperCase() + value.slice(1), value }));
 
 function Row({ rank, name, score, badge, highlighted }) {
   return (
@@ -128,7 +125,12 @@ export default function LeaderboardSection() {
       ) : leaderboard.length === 0 ? (
         <Text style={s.empty}>
           {tab === 'friends'
-            ? 'No scores yet — add friends and analyse a swing to appear here.'
+            // Home only renders this section once the user has at least one
+            // analysis (see HomeScreen.js), so by the time this can show,
+            // the one thing actually missing is friends -- not "add friends
+            // and analyse a swing", which asked for two things and reads as
+            // neither.
+            ? 'No scores yet — add friends to see how you compare.'
             : 'No scores yet for this category.'}
         </Text>
       ) : (

@@ -11,13 +11,13 @@ import LiveCalibrationCamera from '../components/LiveCalibrationCamera';
 import { storage } from '../utils/storage';
 import { playTapSound } from '../utils/sounds';
 import { API_BASE } from '../config/api';
+import { SHOT_TYPES } from '../config/shotTypes';
 import { colors, fonts, radius, spacing } from '../theme';
 import CourtBackground from '../components/CourtBackground';
 import { BackChevronIcon, VideoIcon, CameraIcon } from '../components/icons';
 
 const ASSUMED_FPS = 30;
 const FINE_RADIUS = 50;
-const SHOT_TYPES  = ['forehand', 'backhand', 'serve'];
 const IS_WEB      = Platform.OS === 'web';
 const TUTORIAL_SEEN_KEY = 'tennisai_seen_fence_tutorial';
 

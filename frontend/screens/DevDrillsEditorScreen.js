@@ -11,15 +11,18 @@ import { API_BASE } from '../config/api';
 import { colors, fonts, radius, spacing } from '../theme';
 import { playTapSound } from '../utils/sounds';
 import RequireAdmin from '../components/RequireAdmin';
+import { SHOT_TYPES as ANALYSIS_SHOT_TYPES } from '../config/shotTypes';
 
 const KINDS = [
   { value: 'drill', label: 'Drill (free)' },
   { value: 'lesson', label: 'Lesson (watch + learn + practice)' },
 ];
+// 'footwork' isn't one of the three shot types the ML pipeline actually
+// analyses (config/shotTypes.js) -- it's a drill-only category, so it's
+// kept as a local addition on top of the shared list rather than folded
+// into it.
 const SHOT_TYPES = [
-  { value: 'forehand', label: 'Forehand' },
-  { value: 'backhand', label: 'Backhand' },
-  { value: 'serve', label: 'Serve' },
+  ...ANALYSIS_SHOT_TYPES.map((value) => ({ value, label: value[0].toUpperCase() + value.slice(1) })),
   { value: 'footwork', label: 'Footwork' },
 ];
 

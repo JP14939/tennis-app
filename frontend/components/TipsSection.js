@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Animated } from 'react-native';
-import { colors, fonts, radius } from '../theme';
+import { colors, fonts, radius, easing, durations } from '../theme';
 import TipDiagram from './TipDiagram';
 import { ChevronDownIcon } from './icons';
 
@@ -22,7 +22,14 @@ export function Collapsible({ open, children }) {
   useEffect(() => {
     Animated.timing(heightAnim, {
       toValue: open ? contentHeight : 0,
-      duration: 300,
+      // inOut, not the app-wide `out`: this panel both expands and collapses
+      // in place, which is one of the few cases a symmetric curve is right.
+      // Duration and curve are shared with useRotate() below so the chevron
+      // and the panel stay locked together -- they were 300ms and 250ms of
+      // two different default curves, so the two halves of a single gesture
+      // visibly finished at different times.
+      duration: durations.base,
+      easing: easing.inOut,
       useNativeDriver: false,
     }).start();
   }, [open, contentHeight]);
@@ -45,7 +52,13 @@ export function Collapsible({ open, children }) {
 export function useRotate(open) {
   const rotateAnim = useRef(new Animated.Value(open ? 1 : 0)).current;
   useEffect(() => {
-    Animated.timing(rotateAnim, { toValue: open ? 1 : 0, duration: 250, useNativeDriver: true }).start();
+    // Matches Collapsible's duration and curve exactly -- see the note there.
+    Animated.timing(rotateAnim, {
+      toValue: open ? 1 : 0,
+      duration: durations.base,
+      easing: easing.inOut,
+      useNativeDriver: true,
+    }).start();
   }, [open]);
   return rotateAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] });
 }

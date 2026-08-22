@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, SafeAreaView, Image } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
@@ -8,10 +8,14 @@ import { colors, fonts, radius, spacing, scoreColor } from '../theme';
 import CourtBackground from '../components/CourtBackground';
 import ScoreRing from '../components/ScoreRing';
 import PlayerCard from '../components/PlayerCard';
+import FirstSwingCard from '../components/FirstSwingCard';
 import LeaderboardSection from '../components/LeaderboardSection';
 import PremiumFeaturesSection from '../components/PremiumFeaturesSection';
+import PressableScale from '../components/PressableScale';
 import { TennisBallIcon, ChevronRightIcon } from '../components/icons';
 import { playTapSound, playAchievementSound } from '../utils/sounds';
+import { useCountUp } from '../utils/useCountUp';
+import { parseServerDate } from '../utils/formatDate';
 import { storage } from '../utils/storage';
 
 const QUICK_SHOTS = [
@@ -19,8 +23,6 @@ const QUICK_SHOTS = [
   { label: 'Backhand', value: 'backhand' },
   { label: 'Serve',    value: 'serve' },
 ];
-
-function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
 
 // Rank tiers only ever go up (earned by cumulative great-swing count, no
 // demotion mechanic exists) -- so any change from a previously-seen rank
@@ -35,27 +37,14 @@ async function checkRankUp(rankName) {
   await storage.setItem(LAST_SEEN_RANK_KEY, rankName).catch(() => {});
 }
 
-function useCountUp(target, durationMs = 1100) {
-  const [value, setValue] = useState(0);
-  const frame = useRef(null);
-  useEffect(() => {
-    const start = performance.now();
-    const tick = (now) => {
-      const t = Math.min(1, (now - start) / durationMs);
-      setValue(Math.round(target * easeOutCubic(t)));
-      if (t < 1) frame.current = requestAnimationFrame(tick);
-    };
-    frame.current = requestAnimationFrame(tick);
-    return () => frame.current && cancelAnimationFrame(frame.current);
-  }, [target, durationMs]);
-  return value;
-}
+// useCountUp used to be defined here, with a second, differently-implemented
+// copy inside ScoreRing. It now lives in utils/useCountUp.js and is shared by
+// both, so the stat tiles, the history rings and the Results score all count
+// on one curve for one duration -- and all honour reduce-motion together.
 
 function formatDate(isoString) {
-  if (!isoString) return '';
-  const d = new Date(isoString.includes('Z') ? isoString : `${isoString.replace(' ', 'T')}Z`);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const d = parseServerDate(isoString);
+  return d ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
 }
 
 function RecentRow({ item }) {
@@ -125,15 +114,16 @@ export default function HomeScreen({ navigation }) {
             <Text style={s.dayLabel}>{dayLabel}</Text>
             <Text style={s.greeting}>Let's play, {playerName}.</Text>
           </View>
-          <TouchableOpacity style={s.avatar} onPress={() => navigation.navigate('Profile')} activeOpacity={0.8}>
+          <PressableScale style={s.avatar} onPress={() => navigation.navigate('Profile')} scaleTo={0.92}>
             <Image source={require('../assets/mascot.png')} style={s.avatarImage} resizeMode="cover" />
-          </TouchableOpacity>
+          </PressableScale>
         </View>
 
-        {/* Primary CTA */}
-        <TouchableOpacity
+        {/* Primary CTA. Was activeOpacity={0.9} -- a 10% fade, which on the
+            single most important button in the app was near-invisible. */}
+        <PressableScale
           style={s.ctaCard}
-          activeOpacity={0.9}
+          scaleTo={0.98}
           onPress={() => { playTapSound(); navigation.navigate('Upload'); }}
         >
           <View style={s.ctaTopRow}>
@@ -146,67 +136,84 @@ export default function HomeScreen({ navigation }) {
             <Text style={s.ctaPillText}>Start analysis</Text>
             <Text style={s.ctaPillArrow}>→</Text>
           </View>
-        </TouchableOpacity>
+        </PressableScale>
 
         {/* Quick shot picks */}
         <View style={s.quickRow}>
           {QUICK_SHOTS.map(shot => (
-            <TouchableOpacity
+            <PressableScale
               key={shot.value}
               style={s.quickPill}
+              scaleTo={0.94}
               onPress={() => navigation.navigate('Upload', { shotType: shot.value })}
-              activeOpacity={0.85}
             >
               <TennisBallIcon size={15} color={colors.primary} />
               <Text style={s.quickLabel}>{shot.label}</Text>
-            </TouchableOpacity>
+            </PressableScale>
           ))}
         </View>
 
-        {/* Stats */}
-        <View style={s.statsRow}>
-          <View style={s.stat}>
-            <View style={[s.statAccent, { backgroundColor: colors.primary }]} />
-            <Text style={s.statNum}>{analysesCount}</Text>
-            <Text style={s.statLabel}>Analyses</Text>
+        {/* Stats -- replaced with FirstSwingCard for a zero-analysis account
+            (also true of a logged-out user) so nobody's greeted by tiles
+            reading 0 and 0. */}
+        {analyses.length === 0 ? (
+          <FirstSwingCard />
+        ) : (
+          <View style={s.statsRow}>
+            <View style={s.stat}>
+              <View style={[s.statAccent, { backgroundColor: colors.primary }]} />
+              <Text style={s.statNum}>{analysesCount}</Text>
+              <Text style={s.statLabel}>Analyses</Text>
+            </View>
+            <View style={s.stat}>
+              <View style={[s.statAccent, { backgroundColor: colors.gold }]} />
+              <Text style={s.statNum}>{avgCount}</Text>
+              <Text style={s.statLabel}>Avg score</Text>
+            </View>
           </View>
-          <View style={s.stat}>
-            <View style={[s.statAccent, { backgroundColor: colors.gold }]} />
-            <Text style={s.statNum}>{avgCount}</Text>
-            <Text style={s.statLabel}>Avg score</Text>
-          </View>
-        </View>
+        )}
 
         {/* Rank + playing style -- great-swing count now lives here (with a
             progress bar toward the next rank) instead of a bare stat tile. */}
         {isAuthenticated && rank && (
-          <TouchableOpacity
-            activeOpacity={0.9}
+          <PressableScale
+            scaleTo={0.98}
             onPress={() => navigation.navigate('MainTabs', { screen: 'History', params: { initialFilter: 'great' } })}
           >
             <PlayerCard rank={rank} playerType={playerType} />
-          </TouchableOpacity>
+          </PressableScale>
         )}
 
-        {/* Recent activity */}
-        <View style={s.sectionHeader}>
-          <Text style={s.sectionTitle}>Recent activity</Text>
-          <TouchableOpacity onPress={() => navigation.jumpTo('History')}>
-            <Text style={s.seeAll}>See all</Text>
-          </TouchableOpacity>
-        </View>
+        {/* Recent activity -- dropped entirely (not just the apology line)
+            for an authenticated zero-analysis account: FirstSwingCard above
+            already covers "what happens next", so a header, a dead "See all"
+            link into an equally-empty History, and an apology added nothing.
+            Unchanged for everyone else. */}
+        {isAuthenticated && recents.length > 0 && (
+          <>
+            <View style={s.sectionHeader}>
+              <Text style={s.sectionTitle}>Recent activity</Text>
+              <TouchableOpacity onPress={() => navigation.jumpTo('History')}>
+                <Text style={s.seeAll}>See all</Text>
+              </TouchableOpacity>
+            </View>
+            {recents.map(item => <RecentRow key={item.id} item={item} />)}
+          </>
+        )}
         {!isAuthenticated && (
           <TouchableOpacity style={s.loginPrompt} onPress={() => navigation.navigate('Login')}>
             <Text style={s.loginPromptText}>Log in to track your analysis history →</Text>
           </TouchableOpacity>
         )}
-        {isAuthenticated && recents.length === 0 && (
-          <Text style={s.noRecents}>No analyses yet — upload a swing to get started.</Text>
-        )}
-        {recents.map(item => <RecentRow key={item.id} item={item} />)}
 
-        {/* Leaderboard */}
-        {isAuthenticated && (
+        {/* Leaderboard -- hidden rather than shown-empty at zero analyses.
+            The instinct might be to default to the worldwide tab instead
+            (pro/celebrity rows would be motivating pre-first-swing), but the
+            celebrity_scores table has 0 seeded rows right now, so that tab is
+            just as empty as friends -- showing it would be the same dead
+            chrome on a different tab. Revisit defaulting to worldwide once
+            celebrity rows actually exist. */}
+        {isAuthenticated && analyses.length > 0 && (
           <>
             <View style={s.sectionHeader}>
               <Text style={s.sectionTitle}>Leaderboard</Text>
@@ -282,5 +289,4 @@ const s = StyleSheet.create({
     backgroundColor: colors.surface, borderRadius: radius.lg, padding: 16, alignItems: 'center',
   },
   loginPromptText: { color: colors.primary, fontSize: 13, fontFamily: fonts.semibold },
-  noRecents: { color: colors.muted, fontSize: 13, textAlign: 'center', paddingVertical: 12, fontFamily: fonts.regular },
 });

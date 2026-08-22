@@ -74,6 +74,17 @@ const PlatformVideo = forwardRef(function PlatformVideo(
       onError?.(el.error?.message || 'Video failed to load');
     };
 
+    // Only the 'play' listener above ever starts the rAF loop, but this
+    // effect's cleanup always stops it -- so any re-render that re-runs the
+    // effect while already playing (or a re-render that races ahead of the
+    // 'play' event when playback begins) left the loop dead and silently
+    // downgraded the overlay to ~4Hz `timeupdate` ticks. Restarting it here
+    // when the element is already rolling makes the effect self-healing
+    // regardless of which order those two things happen in.
+    if (highFrequencyUpdates && !el.paused && !el.ended && rafRef.current == null) {
+      rafRef.current = requestAnimationFrame(rafTick);
+    }
+
     el.addEventListener('timeupdate',    push);
     el.addEventListener('play',          handlePlay);
     el.addEventListener('pause',         handleStop);

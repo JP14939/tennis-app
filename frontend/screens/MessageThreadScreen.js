@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, SafeAreaView,
-  ScrollView, KeyboardAvoidingView, Platform, ActivityIndicator,
+  FlatList, KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
 import Alert from '../utils/alert';
 import { useFocusEffect } from '@react-navigation/native';
@@ -9,6 +9,7 @@ import { useAuth } from '../context/AuthContext';
 import { getThread, sendMessage, reportMessage, blockUser } from '../api/messages';
 import { colors, fonts, radius, spacing } from '../theme';
 import { playTapSound, playNotificationSound } from '../utils/sounds';
+import { parseServerDate } from '../utils/formatDate';
 import { BackChevronIcon } from '../components/icons';
 
 // Same idea as HighlightArchiveScreen's reel-job polling -- no websocket
@@ -17,10 +18,28 @@ import { BackChevronIcon } from '../components/icons';
 const POLL_INTERVAL_MS = 3000;
 
 function formatTime(isoString) {
-  const d = new Date(isoString.includes('Z') ? isoString : `${isoString.replace(' ', 'T')}Z`);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const d = parseServerDate(isoString);
+  return d ? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
 }
+
+// Backend's GET /messages/thread has no LIMIT (backend/src/routes/messages.js)
+// -- a long-running friend conversation is unbounded, and this used to be a
+// plain ScrollView + .map() rendering every bubble at once. Memoized and
+// virtualized the same way HistoryScreen's card list was.
+const MessageBubble = memo(function MessageBubble({ message, mine, onReport }) {
+  return (
+    <View style={[s.bubbleRow, mine && s.bubbleRowMine]}>
+      <TouchableOpacity
+        activeOpacity={mine ? 1 : 0.7}
+        onLongPress={() => onReport(message)}
+        style={[s.bubble, mine ? s.bubbleMine : s.bubbleTheirs]}
+      >
+        <Text style={[s.bubbleText, mine && s.bubbleTextMine]}>{message.body}</Text>
+      </TouchableOpacity>
+      <Text style={s.bubbleTime}>{formatTime(message.created_at)}</Text>
+    </View>
+  );
+});
 
 export default function MessageThreadScreen({ route, navigation }) {
   const { otherUserId, otherUserName } = route.params ?? {};
@@ -29,7 +48,6 @@ export default function MessageThreadScreen({ route, navigation }) {
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
-  const scrollRef = useRef(null);
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
 
@@ -62,7 +80,10 @@ export default function MessageThreadScreen({ route, navigation }) {
     return () => clearInterval(interval);
   }, [load]));
 
-  const handleReport = (message) => {
+  // useCallback so MessageBubble's memo() actually holds across polls --
+  // otherwise a fresh closure every 3s poll would defeat it, same reasoning
+  // as HistoryScreen's card handlers.
+  const handleReport = useCallback((message) => {
     if (message.sender_id === user?.id) return; // reporting your own message makes no sense
     Alert.alert('Report this message?', 'This sends the message to us for review.', [
       { text: 'Cancel', style: 'cancel' },
@@ -76,7 +97,7 @@ export default function MessageThreadScreen({ route, navigation }) {
         },
       },
     ]);
-  };
+  }, [token, user?.id]);
 
   const handleBlock = () => {
     Alert.alert(
@@ -112,6 +133,15 @@ export default function MessageThreadScreen({ route, navigation }) {
     }
   };
 
+  // Newest-first for an inverted FlatList -- this also replaces the old
+  // ScrollView's onContentSizeChange->scrollToEnd hack for pinning to the
+  // bottom, which raced content layout on some platforms; `inverted` makes
+  // "stay at the bottom" the list's natural resting position instead.
+  const reversedMessages = useMemo(() => [...messages].reverse(), [messages]);
+  const renderMessage = useCallback(({ item }) => (
+    <MessageBubble message={item} mine={item.sender_id === user?.id} onReport={handleReport} />
+  ), [user?.id, handleReport]);
+
   return (
     <SafeAreaView style={s.safe}>
       <View style={s.header}>
@@ -127,31 +157,20 @@ export default function MessageThreadScreen({ route, navigation }) {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         {loading ? (
           <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
+        ) : messages.length === 0 ? (
+          // Rendered directly rather than via ListEmptyComponent below --
+          // an inverted FlatList visually flips its header/empty content
+          // through the same transform it uses to pin newest-at-bottom,
+          // which would render this text upside down.
+          <Text style={s.empty}>Say hello — organise a game!</Text>
         ) : (
-          <ScrollView
-            ref={scrollRef}
+          <FlatList
+            inverted
+            data={reversedMessages}
+            keyExtractor={(m) => String(m.id)}
+            renderItem={renderMessage}
             contentContainerStyle={s.scroll}
-            onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
-          >
-            {messages.length === 0 && (
-              <Text style={s.empty}>Say hello — organise a game!</Text>
-            )}
-            {messages.map((m) => {
-              const mine = m.sender_id === user?.id;
-              return (
-                <View key={m.id} style={[s.bubbleRow, mine && s.bubbleRowMine]}>
-                  <TouchableOpacity
-                    activeOpacity={mine ? 1 : 0.7}
-                    onLongPress={() => handleReport(m)}
-                    style={[s.bubble, mine ? s.bubbleMine : s.bubbleTheirs]}
-                  >
-                    <Text style={[s.bubbleText, mine && s.bubbleTextMine]}>{m.body}</Text>
-                  </TouchableOpacity>
-                  <Text style={s.bubbleTime}>{formatTime(m.created_at)}</Text>
-                </View>
-              );
-            })}
-          </ScrollView>
+          />
         )}
 
         <View style={s.composer}>

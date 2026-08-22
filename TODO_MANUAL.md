@@ -548,3 +548,96 @@ call first.
     could reprocess the pro database's *source* footage the same way user
     footage gets auto-clipped, fixing bad swing boundaries at the root
     instead of one-by-one manual curation.
+
+---
+
+## Backend architecture backlog (from code review, 2026-08-22)
+
+Context: a two-axis diff review plus a follow-up database/route audit
+found a batch of real bugs, all fixed the same session (see git log
+around this date — double-response server crashes on spawn failure,
+an unauthenticated resource-exhaustion endpoint, a free-tier cap
+bypass, four orphaned-row bugs, six missing indexes, and a few
+authorization/validation holes). Fixing each site closed the specific
+bugs, but a few of them are symptoms of a broader pattern worth a
+deliberate pass rather than only patching every site the pattern was
+found at. Ranked by impact; each note names whether it's a normal
+follow-up build (I can just do it) or needs your call first.
+
+1. **No enforced convention for `optionalAuth` vs `requireAuth` per
+   route.** This is what caused the `/analyse` free-tier-cap bypass
+   fixed this session — the route was optionally-authed for a reason
+   that made sense once, and nobody revisited it as the product grew.
+   Ranked highest because it's the one most likely to produce the next
+   silent security bug rather than an obvious crash. I can just do
+   it: either a lint rule or a small route-manifest module that
+   asserts each route's intended auth level, checked at startup or in
+   CI.
+2. **SQLite foreign keys are never enforced** (`PRAGMA foreign_keys`
+   is off in `db.js`) — every `REFERENCES` across the 31-table schema
+   is decorative. This is the root cause behind three separate
+   orphaned-row bugs fixed this session (deleted analyses, deleted
+   accounts, deleted drill steps all left dangling child rows). Each
+   known site is now fixed individually, but the pattern means the
+   *next* new delete route will likely repeat it unless someone
+   remembers to check. Turning the pragma on for real would need a
+   real audit of every existing DELETE against every table it could
+   orphan (some deletes are intentionally partial, e.g. account
+   deletion anonymizes rather than deletes rows other users still
+   reference) — needs your call before attempting, since getting it
+   wrong could break account deletion or history deletion outright.
+3. **No CI/CD.** Every deploy is a manual SSH + `git pull` +
+   `docker compose up --build app` — see item #41 in `HANDOVER.md` for
+   how this let the hosted server run stale code across multiple
+   sessions without anyone noticing. Needs your call (GitHub Actions
+   vs. something simpler, and whether the Hetzner box should accept
+   inbound deploy hooks at all).
+4. **SQLite is still standing in for the Postgres `DATABASE_URL`
+   already implies.** `pg` has been an installed-but-unused dependency
+   for a while, and this migration has been scoped as "later" for
+   several sessions without resurfacing. Not urgent — flagged here so
+   it doesn't quietly become permanent by default. Needs your call on
+   timing.
+5. ~~**The Python-subprocess boundary had no shared abstraction.**~~ —
+   fixed 2026-08-22. 12 routes had each hand-rolled their own
+   `spawn` + stdout/stderr collection + timeout + JSON-parse block,
+   which is why the double-response-on-spawn-failure crash bug existed
+   in 12 places simultaneously instead of being one isolated mistake.
+   Now centralized in `backend/src/utils/runPythonJson.js`, which every
+   spawn site was migrated to use.
+
+---
+
+## Frontend: expo-av must be migrated before the SDK 55 upgrade (2026-08-22)
+
+The frontend is pinned to **Expo SDK 54** (`expo@54.0.36`), and as of
+2026-08-22 every Expo-managed dependency matches SDK 54's own version
+map exactly. Don't let that drift.
+
+The one live time-bomb: **`expo-av` is deprecated in SDK 54 and is
+removed outright in SDK 55.** We deliberately kept it — it works fine on
+54, and migrating is a real behavioural change to video playback with no
+frontend tests to catch regressions. But the SDK 55 bump cannot happen
+until this is done. Two call sites, and note they need *two different*
+replacement packages:
+
+- `frontend/components/PlatformVideo.native.js` — uses `Video` +
+  `ResizeMode`, migrates to **`expo-video`**. Careful: this file exposes
+  a hand-written ref interface (`playAsync`/`pauseAsync`/
+  `setPositionAsync`/`setRateAsync`) that `PlatformVideo.web.js`
+  deliberately mirrors, and `SyncCompareScreen` drives both through it.
+  The migration must preserve that shared interface or update both
+  platform files together.
+- `frontend/utils/sounds.js` — uses `Audio`, migrates to
+  **`expo-audio`**, which is **not currently installed** and will need
+  adding.
+
+`expo-video` *was* installed (unused, imported nowhere) and was removed
+on 2026-08-22 along with its stale `app.json` plugin entry, so the
+manifest reflects what the app actually uses. It'll need re-adding as
+part of the real migration.
+
+Native-build note: because the app uses `expo-dev-client`, dependency
+changes like this only reach the native side on the next
+`eas build`/prebuild — the existing dev client still contains the old
+module set until then.

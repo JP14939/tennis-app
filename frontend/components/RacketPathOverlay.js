@@ -1,3 +1,4 @@
+import { memo, useMemo } from 'react';
 import { StyleSheet } from 'react-native';
 import Svg, { Circle, Line } from 'react-native-svg';
 
@@ -41,22 +42,31 @@ function interpolatePoint(trajectory, currentTimeSec) {
   return { x: a.x + (b.x - a.x) * frac, y: a.y + (b.y - a.y) * frac };
 }
 
-export default function RacketPathOverlay({ trajectory, currentTimeSec, width, height, color }) {
-  if (!trajectory || trajectory.length === 0 || !width || !height) return null;
-
-  const px = (p) => ({ x: p.x * width, y: p.y * height });
-
+function RacketPathOverlay({ trajectory, currentTimeSec, width, height, color }) {
   // Draw the whole swing's path (not just the current scrub position) --
   // that's the point of a "path", the arc the racket traced through the
   // whole window. Segments fade from faint (start of the window) to bright
   // (approaching contact/end) so it reads as a directional trail, and a gap
   // in detection just breaks the trail there rather than interpolating
   // through it (would draw a fake straight line across a tracking loss).
-  const points = trajectory.map((f) => pointFor(f.points));
-  const segments = [];
-  for (let i = 0; i < points.length - 1; i++) {
-    if (points[i] && points[i + 1]) segments.push({ a: points[i], b: points[i + 1], idx: i });
-  }
+  //
+  // Keyed on `trajectory` alone, deliberately not on currentTimeSec: the path
+  // is fixed for the whole clip, so rebuilding it on every playback status
+  // tick (20Hz on native, once per animation frame on web) was pure waste --
+  // only the moving dot below actually changes as the playhead moves.
+  const segments = useMemo(() => {
+    if (!trajectory || trajectory.length === 0) return [];
+    const points = trajectory.map((f) => pointFor(f.points));
+    const built = [];
+    for (let i = 0; i < points.length - 1; i++) {
+      if (points[i] && points[i + 1]) built.push({ a: points[i], b: points[i + 1], idx: i });
+    }
+    return built;
+  }, [trajectory]);
+
+  if (!trajectory || trajectory.length === 0 || !width || !height) return null;
+
+  const px = (p) => ({ x: p.x * width, y: p.y * height });
 
   const currentPoint = interpolatePoint(trajectory, currentTimeSec ?? 0);
   const currentPx = currentPoint ? px(currentPoint) : null;
@@ -81,3 +91,5 @@ export default function RacketPathOverlay({ trajectory, currentTimeSec, width, h
     </Svg>
   );
 }
+
+export default memo(RacketPathOverlay);

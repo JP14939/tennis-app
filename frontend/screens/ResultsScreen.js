@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import Alert from '../utils/alert';
 import { API_BASE } from '../config/api';
+import { SHOT_TYPES } from '../config/shotTypes';
 import { useAuth } from '../context/AuthContext';
 import { saveHistory, flagNotShot, confirmRealShot, correctShotType } from '../api/history';
 import { getNotes, addNote } from '../api/coach';
@@ -89,8 +90,6 @@ const n = StyleSheet.create({
   cancelText: { color: colors.muted, fontSize: 12.5, fontFamily: fonts.semibold },
   saveText: { color: colors.primary, fontSize: 12.5, fontFamily: fonts.bold },
 });
-
-const SHOT_TYPES = ['forehand', 'backhand', 'serve'];
 
 function formatProId(proId, playerName) {
   // "forehand_0142" -> "Forehand Technique #142", or "<Name>'s Forehand"

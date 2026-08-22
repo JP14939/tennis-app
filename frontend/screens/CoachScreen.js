@@ -9,6 +9,7 @@ import { useAuth } from '../context/AuthContext';
 import { getInviteCode, linkCoach, listStudents, getStudentHistory } from '../api/coach';
 import { colors, fonts, radius, spacing, scoreColor } from '../theme';
 import { playTapSound, playAchievementSound } from '../utils/sounds';
+import { parseServerDate } from '../utils/formatDate';
 import { TennisBallIcon, BackChevronIcon } from '../components/icons';
 
 function formatProId(proId, playerName) {
@@ -21,10 +22,8 @@ function formatProId(proId, playerName) {
 }
 
 function formatDate(isoString) {
-  if (!isoString) return '';
-  const d = new Date(isoString.includes('Z') ? isoString : `${isoString.replace(' ', 'T')}Z`);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const d = parseServerDate(isoString);
+  return d ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
 }
 
 function Section({ title, children }) {

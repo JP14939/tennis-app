@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { StyleSheet } from 'react-native';
 import Svg, { Circle, Line } from 'react-native-svg';
 
@@ -106,7 +107,7 @@ function interpolatedLandmarks(trajectory, currentTimeSec) {
   return landmarks;
 }
 
-export default function SkeletonOverlay({ trajectory, currentTimeSec, width, height, color }) {
+function SkeletonOverlay({ trajectory, currentTimeSec, width, height, color }) {
   if (!trajectory || trajectory.length === 0 || !width || !height) return null;
 
   const landmarks = interpolatedLandmarks(trajectory, currentTimeSec ?? 0);
@@ -138,3 +139,9 @@ export default function SkeletonOverlay({ trajectory, currentTimeSec, width, hei
     </Svg>
   );
 }
+
+// The per-joint interpolation above is the most expensive work on this
+// screen's playback path -- memo keeps it from rerunning when the pane
+// re-renders for a reason the overlay does not care about (tool changes,
+// annotate mode toggling).
+export default memo(SkeletonOverlay);

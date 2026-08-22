@@ -118,9 +118,18 @@ export default function DevTipReviewScreen({ navigation }) {
   // Jack then adjusts (deselect if a shown tip wasn't actually warranted,
   // select others the real scored list surfaces that got missed) rather
   // than building his picks from nothing every time.
-  useEffect(() => {
-    if (current) setSelectedIds(current.shown_tip_ids ?? []);
-  }, [current]);
+  //
+  // Reset synchronously during render (React's documented pattern for
+  // adjusting state when a prop/key changes) rather than via a
+  // useEffect+setState round-trip -- the effect version committed one frame
+  // with `selectedIds` still holding the *previous* candidate's picks before
+  // the effect ran and corrected it, so every "next" tap flashed stale
+  // checkboxes for a frame.
+  const [lastSeenCandidateId, setLastSeenCandidateId] = useState(current?.analysis_id);
+  if (current?.analysis_id !== lastSeenCandidateId) {
+    setLastSeenCandidateId(current?.analysis_id);
+    setSelectedIds(current?.shown_tip_ids ?? []);
+  }
 
   const toggleIssue = (issueId) => {
     playTapSound();

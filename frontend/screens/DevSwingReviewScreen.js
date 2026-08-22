@@ -8,6 +8,7 @@ import { playTapSound } from '../utils/sounds';
 import { useWindowSize } from '../utils/responsive';
 import RequireAdmin from '../components/RequireAdmin';
 import { colors, fonts, radius, spacing } from '../theme';
+import { SHOT_TYPES as SHOT_TYPE_VALUES } from '../config/shotTypes';
 
 // Free, no-Claude-cost manual review: Jack watches each raw wrist-velocity
 // swing candidate himself and taps his own verdict, one at a time (built
@@ -23,11 +24,7 @@ import { colors, fonts, radius, spacing } from '../theme';
 // student_contact_frame_guess) are deliberately never shown here -- seeing
 // them first would bias Jack's independent judgment, which is the whole
 // point of this being a real teacher signal rather than a rubber stamp.
-const SHOT_TYPES = [
-  { value: 'forehand', label: 'Forehand' },
-  { value: 'backhand', label: 'Backhand' },
-  { value: 'serve',    label: 'Serve' },
-];
+const SHOT_TYPES = SHOT_TYPE_VALUES.map((value) => ({ value, label: value[0].toUpperCase() + value.slice(1) }));
 
 // Same ±50-frame draggable fine-offset slider built for
 // ContactMarkingScreen.js this session -- ported here rather than
