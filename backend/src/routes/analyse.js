@@ -91,8 +91,13 @@ router.post('/analyse', requireAuth, upload.single('video'), async (req, res) =>
   const args = [MATCHER, req.file.path, shotType, '--top', '3'];
   if (contactTime !== undefined && contactTime !== '') {
     const t = parseFloat(contactTime);
-    if (Number.isNaN(t)) {
+    if (!Number.isFinite(t)) {
       cleanup();
+      // Reservation happens above this point when the user is free-tier, so
+      // an invalid contactTime must release the slot it just took -- without
+      // this, a client sending a malformed contactTime (e.g. a typo'd field)
+      // burns one of the user's FREE_DAILY_LIMIT slots for zero analysis work.
+      if (usageRowId !== null) releaseUsageSlot(db, usageRowId);
       return res.status(400).json({ error: 'contactTime must be a number (seconds)' });
     }
     args.push('--contact-time', String(t));
@@ -160,6 +165,16 @@ router.post('/analyse', requireAuth, upload.single('video'), async (req, res) =>
     if (persistedOk && contactTime !== undefined && contactTime !== '') {
       const bgProc = spawn(PYTHON, [CONTACT_FRAME_LOGGER, originalPath, String(parseFloat(contactTime))], {
         detached: true, stdio: 'ignore',
+      });
+      // Without this, a spawn failure (e.g. ENOENT on the script path, or
+      // EMFILE under load) fires Node's 'error' event with no listener,
+      // which throws and crashes the ENTIRE server process for every
+      // concurrent user -- not just this request, since this spawn happens
+      // fire-and-forget after the response was already sent. Same shape of
+      // bug runPythonJson.js's header comment describes fixing for
+      // foreground calls; this detached call bypasses that helper entirely.
+      bgProc.on('error', (err) => {
+        console.error('[analyse] contact-frame logger failed to start:', err.message);
       });
       bgProc.unref();
     }

@@ -192,6 +192,9 @@ app.use((err, req, res, next) => {
     const message = err.code === 'LIMIT_FILE_SIZE' ? 'Uploaded file is too large' : err.message;
     return res.status(400).json({ error: message });
   }
+  if (err.type === 'entity.parse.failed' || err instanceof SyntaxError) {
+    return res.status(400).json({ error: 'Malformed JSON in request body' });
+  }
   console.error('[server] unhandled error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });

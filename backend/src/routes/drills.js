@@ -38,6 +38,15 @@ router.get('/drills', optionalAuth, (req, res) => {
   if (kind && !['drill', 'lesson'].includes(kind)) {
     return res.status(400).json({ error: "kind must be 'drill' or 'lesson'" });
   }
+  // A repeated query key (e.g. ?shot_type=forehand&shot_type=backhand) parses
+  // to an array via Express/qs -- binding that straight into better-sqlite3's
+  // .all(...params) throws "Too many parameter values were provided" (a
+  // single '?' placeholder, multiple values spread in), crashing the route
+  // with a 500 instead of a clean 400. `kind` was already guarded against
+  // this; `shot_type` wasn't.
+  if (shot_type !== undefined && typeof shot_type !== 'string') {
+    return res.status(400).json({ error: 'shot_type must be a single value' });
+  }
 
   let query = 'SELECT * FROM drill_items WHERE archived = 0';
   const params = [];
@@ -98,6 +107,17 @@ router.post('/drills/:stepId/practice', requireAuth, (req, res) => {
   const { analysisId } = req.body;
   const step = db.prepare('SELECT * FROM drill_routine_steps WHERE id = ?').get(req.params.stepId);
   if (!step) return res.status(404).json({ error: 'Step not found' });
+
+  // GET /drills/:id strips content and 403s for a locked premium lesson, but
+  // this endpoint looked up the step directly by id with no check against its
+  // parent drill_item's premium lock -- a free-tier user who knows/enumerates
+  // a stepId belonging to a locked lesson (sequential auto-increment ids)
+  // could record practice attempts against it, bypassing the paywall's usage
+  // gate even though they can never view the step's actual content.
+  const parentItem = db.prepare('SELECT is_premium FROM drill_items WHERE id = ?').get(step.drill_item_id);
+  if (parentItem && isLocked(parentItem, req)) {
+    return res.status(403).json({ error: 'This is a Premium lesson — upgrade to unlock it.', code: 'PREMIUM_REQUIRED' });
+  }
 
   if (analysisId !== undefined && analysisId !== null) {
     const analysis = db.prepare('SELECT id FROM analyses WHERE id = ? AND user_id = ?').get(analysisId, req.user.id);
