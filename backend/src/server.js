@@ -27,6 +27,12 @@ const devRouter = require('./routes/dev');
 const drillsRouter = require('./routes/drills');
 
 const app = express();
+// Hosted behind Caddy (docker-compose.yml) -- without this, req.ip is always
+// the Caddy container's own address, which would make every caller share one
+// IP-keyed rate-limit bucket (middleware/rateLimit.js) instead of being
+// limited individually. `1` trusts exactly one hop, matching the one reverse
+// proxy in front of this container.
+app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json());
 

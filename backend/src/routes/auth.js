@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
+const { rateLimit } = require('../middleware/rateLimit');
 const { DATA_DIR } = require('../config/paths');
 const { sendPasswordResetEmail } = require('../utils/email');
 
@@ -15,6 +16,16 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const USERNAME_RE = /^[a-z0-9_]{3,20}$/;
 const TOKEN_TTL = '30d'; // mobile app — favour staying logged in over frequent re-auth
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+// None of these endpoints had any request cap before -- unlimited login
+// attempts against any known email, unlimited free-account creation (each
+// one gets its own fresh /api/analyse daily allowance), and unlimited
+// forgot-password requests (an email-bombing vector). Limits are per-IP,
+// generous enough not to bother a real user retyping a password a few times.
+const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 15, keyPrefix: 'auth-login' });
+const signupLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 10, keyPrefix: 'auth-signup' });
+const forgotPasswordLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 5, keyPrefix: 'auth-forgot-password' });
+
 // Same path convention highlights.js uses for its per-user clip subdirectory.
 const HIGHLIGHT_CLIPS_DIR = path.join(DATA_DIR, 'runtime', 'highlight_clips');
 
@@ -37,7 +48,7 @@ function publicUser(user) {
   };
 }
 
-router.post('/auth/signup', async (req, res) => {
+router.post('/auth/signup', signupLimiter, async (req, res) => {
   const { email, password, name } = req.body || {};
 
   if (!email || !EMAIL_RE.test(email)) {
@@ -78,7 +89,7 @@ router.post('/auth/signup', async (req, res) => {
   res.status(201).json({ token: issueToken(user), user: publicUser(user) });
 });
 
-router.post('/auth/login', async (req, res) => {
+router.post('/auth/login', loginLimiter, async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) {
     return res.status(400).json({ error: 'Email and password are required' });
@@ -99,7 +110,7 @@ router.post('/auth/login', async (req, res) => {
   res.json({ token: issueToken(user), user: publicUser(user) });
 });
 
-router.post('/auth/forgot-password', async (req, res) => {
+router.post('/auth/forgot-password', forgotPasswordLimiter, async (req, res) => {
   const { email } = req.body || {};
   if (!email || !EMAIL_RE.test(email)) {
     return res.status(400).json({ error: 'A valid email is required' });
