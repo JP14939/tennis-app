@@ -361,7 +361,12 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
 
     output = []
     for rank, (score, dist, entry) in enumerate(top, 1):
-        tips_result, _ = get_coaching_tips(user_trajectory, entry['trajectory'], shot_type)
+        # use_verifier=False: this runs synchronously on every real user
+        # request (unlike the offline training scripts that call this same
+        # function to deliberately invoke the verifier) -- see
+        # select_coaching_tips.py's docstring for why this must stay off
+        # here until the teacher-student loop is intentionally wired live.
+        tips_result, _ = get_coaching_tips(user_trajectory, entry['trajectory'], shot_type, use_verifier=False)
         tips = [{'id': t.get('issue_id'), 'tip_text': t['tip_text'], 'drill': t.get('drill'),
                   'severity': t.get('severity')} for t in tips_result]
 

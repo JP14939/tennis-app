@@ -10,6 +10,20 @@ returned directly — saving API cost.
 
 This is the function ResultsScreen's backend endpoint should eventually call
 instead of using tip_selector.py directly.
+
+use_verifier defaults to True here because the *offline* training callers of
+this function (run_tip_training.py, train_tip_selector_on_amateur_footage.py)
+exist specifically to invoke the real Claude verifier and log agreement
+examples -- that's their whole purpose, so this default must stay on for
+them. The LIVE per-request callers (compare_swing.py, compare_videos.py) are
+a different story: they're invoked synchronously on every real /api/analyse
+and /api/compare-videos request, not run as a detached background job the
+way this codebase's other teacher-student loops are (shot_contact_training_
+log.py, shot_classifier_training_log.py -- both driven from batch/offline
+scripts gated behind an explicit RALLYMAX_SKIP_*_VERIFIER opt-out). Those two
+live call sites pass use_verifier=False explicitly instead of relying on
+this default, so a real user's request never makes a synchronous Claude API
+call for a feature HANDOVER.md documents as deferred pending real footage.
 """
 import sys
 

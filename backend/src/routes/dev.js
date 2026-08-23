@@ -8,6 +8,7 @@ const { requireAdmin } = require('../middleware/requireAdmin');
 const { SCRIPTS_DIR, PYTHON } = require('../config/paths');
 const { CLIPS_DIR: DRILL_CLIPS_DIR, toClipUrl } = require('../utils/drillClips');
 const { runPythonJson } = require('../utils/runPythonJson');
+const { SHOT_TYPES } = require('../config/shotTypes');
 
 // Every GET-list / POST-label route below follows the same shape: spawn a
 // script, get back JSON. Centralised here so the error-message mapping
@@ -270,6 +271,9 @@ router.post('/dev/drills', requireAuth, requireAdmin, uploadDrillVideo.single('v
   if (!shotType || !title || !explanation) {
     return res.status(400).json({ error: 'shot_type, title, and explanation are required' });
   }
+  if (!SHOT_TYPES.includes(shotType)) {
+    return res.status(400).json({ error: `shot_type must be one of ${SHOT_TYPES.join(', ')}` });
+  }
 
   let steps = [];
   if (req.body.steps) {
@@ -278,6 +282,10 @@ router.post('/dev/drills', requireAuth, requireAdmin, uploadDrillVideo.single('v
     } catch {
       return res.status(400).json({ error: 'steps must be valid JSON' });
     }
+  }
+  const badStep = steps.find((s) => s.shot_type != null && !SHOT_TYPES.includes(s.shot_type));
+  if (badStep) {
+    return res.status(400).json({ error: `step shot_type must be one of ${SHOT_TYPES.join(', ')}` });
   }
 
   const videoPath = req.file ? req.file.path : undefined;

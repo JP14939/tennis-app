@@ -311,7 +311,14 @@ router.post('/push-token', requireAuth, (req, res) => {
   const { token } = req.body || {};
   if (!token) return res.status(400).json({ error: 'token is required' });
 
-  db.prepare(`INSERT OR IGNORE INTO push_tokens (user_id, token) VALUES (?, ?)`).run(req.user.id, token);
+  // `token` is UNIQUE per device, not per user -- a device can be reused by a
+  // different account (shared device, logout/login without reinstalling), so
+  // re-registering an existing token must move it to the new owner rather
+  // than silently no-op and leave it pointing at the previous user forever.
+  db.prepare(`
+    INSERT INTO push_tokens (user_id, token) VALUES (?, ?)
+    ON CONFLICT(token) DO UPDATE SET user_id = excluded.user_id, created_at = datetime('now')
+  `).run(req.user.id, token);
   res.status(204).end();
 });
 

@@ -89,7 +89,10 @@ def compare_videos(reference_path, your_path, shot_type, contact_a=None, contact
     if angle_a is not None and angle_b is not None:
         angle_mismatch_deg = round(abs(angle_a - angle_b), 1)
 
-    tips_result, _ = get_coaching_tips(traj_b, traj_a, shot_type)
+    # use_verifier=False: this runs synchronously on every real premium
+    # 1-vs-1 comparison request -- see select_coaching_tips.py's docstring
+    # for why the live call sites must not use its verifier-on default.
+    tips_result, _ = get_coaching_tips(traj_b, traj_a, shot_type, use_verifier=False)
     tips = [{'tip_text': t['tip_text'], 'drill': t.get('drill')} for t in tips_result]
 
     # Hard camera-setup gate: a 1v1 comparison has no angle-filtered pro

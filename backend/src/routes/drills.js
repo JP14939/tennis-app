@@ -108,15 +108,19 @@ router.post('/drills/:stepId/practice', requireAuth, (req, res) => {
   const step = db.prepare('SELECT * FROM drill_routine_steps WHERE id = ?').get(req.params.stepId);
   if (!step) return res.status(404).json({ error: 'Step not found' });
 
-  // GET /drills/:id strips content and 403s for a locked premium lesson, but
-  // this endpoint looked up the step directly by id with no check against its
-  // parent drill_item's premium lock -- a free-tier user who knows/enumerates
-  // a stepId belonging to a locked lesson (sequential auto-increment ids)
-  // could record practice attempts against it, bypassing the paywall's usage
-  // gate even though they can never view the step's actual content.
-  const parentItem = db.prepare('SELECT is_premium FROM drill_items WHERE id = ?').get(step.drill_item_id);
-  if (parentItem && isLocked(parentItem, req)) {
-    return res.status(403).json({ error: 'This is a Premium lesson — upgrade to unlock it.', code: 'PREMIUM_REQUIRED' });
+  // A step's id is only ever handed out via GET /drills/:id, which already
+  // 403s a locked (premium, non-premium-user) item before returning its
+  // steps -- but nothing stopped a guessed/reused stepId from recording a
+  // practice attempt here without going through that gate. Re-check the
+  // parent item so this route can't be used to bypass the paywall. Also
+  // 403s on a missing parentItem (an orphaned step) rather than silently
+  // allowing it through.
+  const parentItem = db.prepare('SELECT * FROM drill_items WHERE id = ?').get(step.drill_item_id);
+  if (!parentItem || isLocked(parentItem, req)) {
+    return res.status(403).json({
+      error: 'This is a Premium lesson — upgrade to unlock it.',
+      code: 'PREMIUM_REQUIRED',
+    });
   }
 
   if (analysisId !== undefined && analysisId !== null) {

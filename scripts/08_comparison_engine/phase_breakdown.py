@@ -245,15 +245,25 @@ def score_body_rotation(user_trajectory, pro_trajectory, user_racket_body_distan
     else:
         combined = round((rotation_score + racket_score) / 2, 1)
 
+    # score_body_rotation() above scores both directions of deviation
+    # symmetrically (abs(deviation) in the exp() falloff) -- a user who
+    # over-rotates or over-extends relative to the pro scores just as low as
+    # one who under-rotates/under-extends by the same amount. These triggers
+    # used to only fire on a positive deviation (under-rotation / racket
+    # closer than the pro's), so an over-rotating swing with a low score
+    # produced an empty `issues` list and _body_rotation_tips() fell through
+    # to its "Good body rotation and racket extension" fallback text --
+    # a low score paired with a positive-sounding tip. Using abs() here
+    # matches the scoring direction so both cases surface an issue.
     issues = []
-    if rotation_deviation is not None and rotation_deviation > 0:
-        severity = _severity(rotation_deviation, ROTATION_SEVERITY_BANDS)
+    if rotation_deviation is not None:
+        severity = _severity(abs(rotation_deviation), ROTATION_SEVERITY_BANDS)
         if severity:
-            issues.append({'issue_id': '_rotation_range', 'severity': severity, 'magnitude': round(rotation_deviation, 1)})
-    if racket_deviation is not None and racket_deviation > 0:
-        severity = _severity(racket_deviation, RACKET_SEVERITY_BANDS)
+            issues.append({'issue_id': '_rotation_range', 'severity': severity, 'magnitude': round(abs(rotation_deviation), 1)})
+    if racket_deviation is not None:
+        severity = _severity(abs(racket_deviation), RACKET_SEVERITY_BANDS)
         if severity:
-            issues.append({'issue_id': '_racket_distance', 'severity': severity, 'magnitude': round(racket_deviation, 3)})
+            issues.append({'issue_id': '_racket_distance', 'severity': severity, 'magnitude': round(abs(racket_deviation), 3)})
     issues.sort(key=lambda i: -i['magnitude'])
 
     return {
