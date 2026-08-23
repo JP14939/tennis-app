@@ -50,3 +50,21 @@ describe('POST /history free-tier limit', () => {
     }
   });
 });
+
+describe('PATCH /history/:id mutually-exclusive verdict flags', () => {
+  test('rejects a request setting both flagged_not_shot and confirmed_real_shot to true', async () => {
+    const { token } = makeUser('history3@test.com');
+    const saved = await saveShot(token);
+    expect(saved.status).toBe(201);
+    const id = saved.body.id;
+
+    const res = await request(app)
+      .patch(`/api/history/${id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ flagged_not_shot: true, confirmed_real_shot: true });
+    expect(res.status).toBe(400);
+
+    const row = db.prepare('SELECT flagged_not_shot, confirmed_real_shot FROM analyses WHERE id = ?').get(id);
+    expect(!!row.flagged_not_shot && !!row.confirmed_real_shot).toBe(false);
+  });
+});

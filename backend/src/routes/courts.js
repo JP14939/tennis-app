@@ -67,7 +67,13 @@ router.get('/courts', requireAuth, async (req, res) => {
   const lat = parseFloat(req.query.lat);
   const lng = parseFloat(req.query.lng);
   const parsedRadiusKm = parseFloat(req.query.radiusKm);
-  const radiusKm = Number.isNaN(parsedRadiusKm) ? DEFAULT_RADIUS_KM : parsedRadiusKm;
+  // A radiusKm <= 0 (e.g. a negative value) makes latDelta/lngDelta negative,
+  // producing an inverted `BETWEEN low AND high` clause that always matches
+  // zero rows -- courts silently comes back empty regardless of what's
+  // actually in the DB, and since queryNearbyCourts().length === 0 is then
+  // always true, it re-triggers the Overpass self-heal seed call on EVERY
+  // request for that lat/lng instead of once.
+  const radiusKm = Number.isFinite(parsedRadiusKm) && parsedRadiusKm > 0 ? parsedRadiusKm : DEFAULT_RADIUS_KM;
 
   if (Number.isNaN(lat) || Number.isNaN(lng)) {
     return res.status(400).json({ error: 'lat and lng are required' });

@@ -650,16 +650,18 @@ module set until then.
 
 ---
 
-## Connect GitHub to enable the 5 scheduled daily routines (2026-08-22)
+## ~~Connect GitHub to enable the 5 scheduled daily routines~~ (2026-08-22) — resolved 2026-08-23
 
-Fully designed and ready to create, blocked on one manual step only you
-can do: **run `/web-setup` in the Claude Code terminal** (or install the
-GitHub App at https://claude.ai/code/onboarding?magic=github-app-setup)
-to connect your GitHub account. `RemoteTrigger` create calls against
-`JP14939/tennis-app` are currently failing with a 401 ("Connect your
-GitHub account before saving a routine that uses a GitHub repository")
-— this is an OAuth/consent flow that has to happen in your own browser
-session, not something that can be done on your behalf.
+GitHub got connected and all 5 routines ran for the first time overnight
+2026-08-23, exactly as designed below: logic review, bug sweep, and
+security review each opened a PR (`logic-review/2026-08-23`,
+`bug-sweep/2026-08-23`, `security-review/2026-08-23`); brainstorm/future-plans
+opened `future-ideas/2026-08-23` with `docs/future-ideas.md`; the docs
+round-up pushed straight to master as designed. All three code PRs were
+reviewed and manually merged into master the same day (see the new section
+below) — the routines still don't merge their own work, a human did it.
+Leaving the original design writeup below for reference on what each
+routine does and when it fires.
 
 Once connected, the five routines (all `claude-sonnet-5`, `environment_id:
 env_01DBvdQgWmCeNBRoUWiCz3Jz`, repo `https://github.com/JP14939/tennis-app`)
@@ -725,13 +727,9 @@ recovering old test data specifically.
 
 ## End-of-session handoff (2026-08-22) — see `HANDOVER.md` item #42 for the full story
 
-- **Uncommitted work needs a decision.** A large, tested (418 backend
-  tests, `verify:db` clean, web bundle builds) but entirely uncommitted
-  diff is sitting in the working tree: the database-verification
-  framework, two audit-round fixes, and the native-device bug fixes
-  (`PressableScale` rewrite, `HomeScreen`/`FloatingTabBar` layout fixes).
-  Nothing was committed or pushed this session — say the word next
-  session and it's a normal `git add`/`commit`/`push`.
+- ~~**Uncommitted work needs a decision.**~~ — resolved 2026-08-23. Committed
+  (418 backend tests, `verify:db` clean) and merged to master the same day
+  as the scheduled-routine PR merges below.
 - **The Playwright MCP server was added but needs a fresh session to
   actually use** — `claude mcp add playwright -- npx -y @playwright/mcp@latest`
   ran successfully and shows Connected, but MCP tools registered mid-session
@@ -794,4 +792,85 @@ rejected Supabase for the actual DB engine itself (not just backups) — its
 free tier auto-pauses a project after 7 days of no traffic and has zero
 backups on that tier; self-hosted Postgres on this same VPS or Neon were
 the stronger picks if a full engine migration is ever revisited, but that's
-a separate, bigger decision deliberately deferred here.
+a separate, bigger decision deliberately deferred here. **Still needs your
+three manual steps (Backblaze account, `rclone` on the VPS, the cron job)
+— not done as part of the 2026-08-23 PR-merge session below, which was
+code-only.**
+
+---
+
+## ~~New from the 2026-08-23 docs round-up~~ — resolved 2026-08-23, same day
+
+**~~Review and merge (or request changes on) PR #1, "Bug sweep."~~** All
+three code PRs from that morning's scheduled routines — bug sweep, security
+review, and logic review — were read through, reviewed, and manually merged
+into master later the same day (plus the older 2026-08-22 uncommitted work
+above, committed at the same time). See `HANDOVER.md`'s "Scheduled-routine
+PR round-up" section for the full list of what each fixed, and the new
+"Manual merge of 2026-08-23 PRs + prior uncommitted work" section below for
+how the merge itself went (two real conflicts, resolved by hand, both
+verified against the full test suite).
+
+**Deliberately left unfixed by the bug-sweep PR — still your call, still
+open:**
+- An invite-code redemption TOCTOU race (very low probability — ~10¹²
+  collision space) — decide if it's worth closing or fine to leave.
+- A non-transactional bulk Overpass court-upsert — same "is this worth
+  the risk of touching blind" call.
+- `runPythonJson`'s subprocess timeout not escalating to `SIGKILL` — a
+  hung Python process may currently outlive its timeout.
+- **Product-intent question**: what should an empty `rallyIds: []` mean
+  when building a highlight reel — is that a no-op, an error, or "use
+  every rally"? The route currently has ambiguous behavior here and the
+  PR didn't guess at an answer.
+
+**New from the logic-review PR, worth knowing about**: the coaching-tip
+Claude verifier (`scripts/09_coaching_ai/select_coaching_tips.py`) had been
+silently live on every real `/api/analyse`/`/api/compare-videos` request
+(up to 3 synchronous Anthropic calls per request, no kill switch) —
+contradicting `CLAUDE.md`'s description of that module as unused. Now
+disabled on both live call sites. Worth deciding on purpose whether this
+should ever go live again (with a real kill switch/cost budget) or stay
+offline-only as the docs currently describe it.
+
+**`docs/future-ideas.md`** (from the brainstorm routine's
+`future-ideas/2026-08-23` PR) has not been merged yet as of this note —
+docs-only, no urgency, still open on GitHub. A convenience copy of that
+pass's ideas also exists at the repo root, `AI's_ideas.md`.
+
+---
+
+## Manual merge of 2026-08-23 PRs + prior uncommitted work (2026-08-23)
+
+Merged `security-review/2026-08-23` → `bug-sweep/2026-08-23` →
+`logic-review/2026-08-23` into master one at a time (each pushed and
+verified separately), then merged the 2026-08-22 uncommitted local work on
+top. The first three merges were done in an isolated git worktree, never
+touching the working tree's uncommitted changes, specifically to avoid
+tangling them together before the local work was safely committed.
+
+Two real conflicts, both hand-resolved and re-verified against the full
+test suite afterward (not just trusted because git resolved the text):
+- **`backend/src/routes/analyse.js`**: bug-sweep and logic-review both
+  independently fixed the same free-tier usage-slot leak on invalid
+  `contactTime`, differently. Combined the better parts of both — validate
+  before reserving the slot (logic-review's structural fix, so the slot is
+  never taken for a request that was going to 400 anyway) plus rejecting
+  `Infinity`/`-Infinity`, not just `NaN` (bug-sweep's more complete check).
+- **`backend/src/routes/drills.js`**: same paywall-bypass fix from both
+  PRs, again differently. Took logic-review's version — it also 403s when
+  the parent drill item is missing entirely (an orphaned step), which
+  bug-sweep's version silently let through.
+
+Merging the older 2026-08-22 uncommitted work against the now-updated
+master produced 7 conflicts total (this doc, `HANDOVER.md`, and
+`auth.js`/`courts.js`/`dev.js`/`friends.js`/`highlights.js`) — all from the
+same root cause: that older work and the PRs both touched the same route
+files independently. Each was resolved by reading both sides and combining
+them (not by picking one side wholesale) and the full 418-test backend
+suite was green after.
+
+**Not yet done**: the actual redeploy to the hosted server (`ssh` + `git
+pull` + `docker compose up --build app`) — everything above is merged to
+master but not live yet. Explicitly deferred to a separate session per
+your own call.

@@ -61,11 +61,20 @@ def compare_videos(reference_path, your_path, shot_type, contact_a=None, contact
     """
     print('  Extracting poses from reference video...', file=sys.stderr)
     frames_a, fps_a = extract_user_poses(reference_path)
+    if not frames_a:
+        # Same guard compare_swing.py's compare() has for this exact case --
+        # a corrupt/undecodable upload where cv2 opens the file but every
+        # single cap.read() fails. Without it, build_user_trajectory's
+        # frames[0]/min() over an empty list raises an unhandled
+        # IndexError/ValueError instead of a clear error.
+        raise RuntimeError('No frames could be decoded from the reference video')
     traj_a, peak_a = build_user_trajectory(frames_a, fps_a, contact_a)
     angle_a, angle_a_conf, debug_a = infer_camera_angle(reference_path, peak_a)
 
     print('  Extracting poses from your video...', file=sys.stderr)
     frames_b, fps_b = extract_user_poses(your_path)
+    if not frames_b:
+        raise RuntimeError('No frames could be decoded from your video')
     traj_b, peak_b = build_user_trajectory(frames_b, fps_b, contact_b)
     angle_b, angle_b_conf, debug_b = infer_camera_angle(your_path, peak_b)
 
@@ -80,7 +89,10 @@ def compare_videos(reference_path, your_path, shot_type, contact_a=None, contact
     if angle_a is not None and angle_b is not None:
         angle_mismatch_deg = round(abs(angle_a - angle_b), 1)
 
-    tips_result, _ = get_coaching_tips(traj_b, traj_a, shot_type)
+    # use_verifier=False: this runs synchronously on every real premium
+    # 1-vs-1 comparison request -- see select_coaching_tips.py's docstring
+    # for why the live call sites must not use its verifier-on default.
+    tips_result, _ = get_coaching_tips(traj_b, traj_a, shot_type, use_verifier=False)
     tips = [{'tip_text': t['tip_text'], 'drill': t.get('drill')} for t in tips_result]
 
     # Hard camera-setup gate: a 1v1 comparison has no angle-filtered pro

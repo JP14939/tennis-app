@@ -57,6 +57,22 @@ router.post('/analyse', requireAuth, upload.single('video'), async (req, res) =>
     cleanup();
     return res.status(400).json({ error: `shotType must be one of ${SHOT_TYPES.join(', ')}` });
   }
+  // Validated before the usage-slot reservation below so a malformed
+  // contactTime 400s without burning one of the free tier's limited daily
+  // slots -- this used to be checked after reservation and had no release
+  // on this particular early-return path, silently costing a free user a
+  // slot for a request that never ran an analysis.
+  let parsedContactTime;
+  if (contactTime !== undefined && contactTime !== '') {
+    parsedContactTime = parseFloat(contactTime);
+    // isFinite (not isNaN) so Infinity/-Infinity 400 here too -- either one
+    // would otherwise reach the Python subprocess as a literal argv string
+    // and blow up pose extraction with an OverflowError.
+    if (!Number.isFinite(parsedContactTime)) {
+      cleanup();
+      return res.status(400).json({ error: 'contactTime must be a number (seconds)' });
+    }
+  }
 
   // Premium accounts are unlimited -- only free-tier accounts are capped.
   // /analyse requires auth (requireAuth above) specifically so this can't be
@@ -89,13 +105,8 @@ router.post('/analyse', requireAuth, upload.single('video'), async (req, res) =>
   }
 
   const args = [MATCHER, req.file.path, shotType, '--top', '3'];
-  if (contactTime !== undefined && contactTime !== '') {
-    const t = parseFloat(contactTime);
-    if (Number.isNaN(t)) {
-      cleanup();
-      return res.status(400).json({ error: 'contactTime must be a number (seconds)' });
-    }
-    args.push('--contact-time', String(t));
+  if (parsedContactTime !== undefined) {
+    args.push('--contact-time', String(parsedContactTime));
   }
   if (viewDirectionHint === 'front' || viewDirectionHint === 'back') {
     args.push('--view-direction-hint', viewDirectionHint);
@@ -160,6 +171,16 @@ router.post('/analyse', requireAuth, upload.single('video'), async (req, res) =>
     if (persistedOk && contactTime !== undefined && contactTime !== '') {
       const bgProc = spawn(PYTHON, [CONTACT_FRAME_LOGGER, originalPath, String(parseFloat(contactTime))], {
         detached: true, stdio: 'ignore',
+      });
+      // Without this, a spawn failure (e.g. ENOENT on the script path, or
+      // EMFILE under load) fires Node's 'error' event with no listener,
+      // which throws and crashes the ENTIRE server process for every
+      // concurrent user -- not just this request, since this spawn happens
+      // fire-and-forget after the response was already sent. Same shape of
+      // bug runPythonJson.js's header comment describes fixing for
+      // foreground calls; this detached call bypasses that helper entirely.
+      bgProc.on('error', (err) => {
+        console.error('[analyse] contact-frame logger failed to start:', err.message);
       });
       bgProc.unref();
     }

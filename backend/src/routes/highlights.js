@@ -127,6 +127,11 @@ function runJob(jobId, videoPath, userId) {
     fs.unlink(videoPath, () => {});
     console.error('[highlights] failed to spawn python:', err);
     db.prepare(`UPDATE highlight_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?`).run('Failed to start detection process', jobId);
+    // Every other failure path in this function (nonzero exit, invalid JSON
+    // output) notifies the user their job failed -- this one (spawn itself
+    // never starting, e.g. a bad interpreter path) marked the job failed in
+    // the DB but left the user with no proactive signal, unlike the rest.
+    sendPushNotification(userId, 'Rally detection failed', 'Failed to start detection process');
   });
 }
 
@@ -223,6 +228,13 @@ router.post('/highlights/jobs/:id/reel', requireAuth, requirePremium, (req, res)
   if (job.status !== 'done') return res.status(400).json({ error: 'Job is not ready yet' });
 
   const { top, rallyIds } = req.body || {};
+  // A non-integer element (e.g. an object/array a buggy client sent) bound
+  // straight into the '?' placeholders below throws a RangeError deep in
+  // better-sqlite3 ("Too few parameter values were provided"), crashing the
+  // route with a 500 instead of a clean 400.
+  if (Array.isArray(rallyIds) && !rallyIds.every(Number.isInteger)) {
+    return res.status(400).json({ error: 'rallyIds must be an array of integers' });
+  }
   let clips;
   if (Array.isArray(rallyIds) && rallyIds.length > 0) {
     const placeholders = rallyIds.map(() => '?').join(',');
@@ -314,7 +326,14 @@ router.post('/push-token', requireAuth, (req, res) => {
   ]);
   if (bad) return res.status(400).json(bad);
 
-  db.prepare(`INSERT OR IGNORE INTO push_tokens (user_id, token) VALUES (?, ?)`).run(req.user.id, token);
+  // `token` is UNIQUE per device, not per user -- a device can be reused by a
+  // different account (shared device, logout/login without reinstalling), so
+  // re-registering an existing token must move it to the new owner rather
+  // than silently no-op and leave it pointing at the previous user forever.
+  db.prepare(`
+    INSERT INTO push_tokens (user_id, token) VALUES (?, ?)
+    ON CONFLICT(token) DO UPDATE SET user_id = excluded.user_id, created_at = datetime('now')
+  `).run(req.user.id, token);
   res.status(204).end();
 });
 

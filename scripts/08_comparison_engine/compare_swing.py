@@ -108,6 +108,14 @@ def extract_user_poses(video_path):
 
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps   = cap.get(cv2.CAP_PROP_FPS)
+    if not fps or fps <= 0:
+        # Some malformed/corrupt containers report fps=0.0 from OpenCV. Left
+        # unguarded, the very next `round(idx / fps, 3)` below raises
+        # ZeroDivisionError on frame 0 -- caught by pro_matcher.py's/
+        # video_matcher.py's outer try/except, but surfaces to the user as an
+        # opaque "float division by zero" instead of an actionable message.
+        cap.release()
+        raise RuntimeError(f'Could not read a valid frame rate from the uploaded video ({os.path.basename(video_path)}) -- it may be corrupted.')
     print(f'  Video: {os.path.basename(video_path)} | {total} frames @ {fps:.1f}fps', file=sys.stderr)
 
     base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
@@ -353,7 +361,12 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
 
     output = []
     for rank, (score, dist, entry) in enumerate(top, 1):
-        tips_result, _ = get_coaching_tips(user_trajectory, entry['trajectory'], shot_type)
+        # use_verifier=False: this runs synchronously on every real user
+        # request (unlike the offline training scripts that call this same
+        # function to deliberately invoke the verifier) -- see
+        # select_coaching_tips.py's docstring for why this must stay off
+        # here until the teacher-student loop is intentionally wired live.
+        tips_result, _ = get_coaching_tips(user_trajectory, entry['trajectory'], shot_type, use_verifier=False)
         tips = [{'id': t.get('issue_id'), 'tip_text': t['tip_text'], 'drill': t.get('drill'),
                   'severity': t.get('severity')} for t in tips_result]
 

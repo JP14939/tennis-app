@@ -30,7 +30,7 @@ router.get('/leaderboard/friends', requireAuth, (req, res) => {
   const rows = db.prepare(`
     SELECT u.id AS user_id, u.name, u.username, MAX(a.similarity) AS score
     FROM users u
-    JOIN analyses a ON a.user_id = u.id AND a.shot_type = ?
+    JOIN analyses a ON a.user_id = u.id AND a.shot_type = ? AND a.flagged_not_shot = 0
     WHERE u.id IN (${ids.map(() => '?').join(',')})
     GROUP BY u.id
     ORDER BY score DESC
@@ -49,7 +49,7 @@ router.get('/leaderboard/worldwide', requireAuth, (req, res) => {
   const userRows = db.prepare(`
     SELECT u.id AS user_id, u.name, u.username, MAX(a.similarity) AS score
     FROM users u
-    JOIN analyses a ON a.user_id = u.id AND a.shot_type = ?
+    JOIN analyses a ON a.user_id = u.id AND a.shot_type = ? AND a.flagged_not_shot = 0
     GROUP BY u.id
   `).all(shotType).map((r) => ({ ...r, type: 'user', is_me: r.user_id === myId }));
 

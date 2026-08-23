@@ -43,4 +43,35 @@ describe('POST /highlights/jobs/:id/reel premium gate', () => {
       .send({});
     expect(res.status).toBe(404);
   });
+
+  test('rejects a non-integer rallyIds element with 400 instead of a 500 crash', async () => {
+    // Binding a non-integer element (e.g. an object) straight into the SQL
+    // '?' placeholders used to throw a RangeError deep in better-sqlite3.
+    const { id: userId, token } = makeUser('reel_badids@test.com', 'premium');
+    const jobId = db.prepare(`INSERT INTO highlight_jobs (user_id, video_path, status) VALUES (?, 'x', 'done')`)
+      .run(userId).lastInsertRowid;
+    const res = await request(app)
+      .post(`/api/highlights/jobs/${jobId}/reel`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ rallyIds: [1, {}, 3] });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('PATCH /highlights/rallies/:id field validation', () => {
+  test('rejects a non-string outcome_tag with 400 instead of a 500 crash', async () => {
+    const { id: userId, token } = makeUser('rally_badtag@test.com', 'free');
+    const jobId = db.prepare(`INSERT INTO highlight_jobs (user_id, video_path, status) VALUES (?, 'x', 'done')`)
+      .run(userId).lastInsertRowid;
+    const clipId = db.prepare(`
+      INSERT INTO rally_clips (job_id, user_id, clip_path, start_sec, end_sec, duration_sec, swing_count)
+      VALUES (?, ?, 'clip.mp4', 0, 1, 1, 1)
+    `).run(jobId, userId).lastInsertRowid;
+
+    const res = await request(app)
+      .patch(`/api/highlights/rallies/${clipId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ outcome_tag: { bogus: true } });
+    expect(res.status).toBe(400);
+  });
 });
