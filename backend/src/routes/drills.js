@@ -4,6 +4,7 @@ const optionalAuth = require('../middleware/optionalAuth');
 const requireAuth = require('../middleware/requireAuth');
 const { currentTier } = require('../utils/tier');
 const { toClipUrl } = require('../utils/drillClips');
+const { isPositiveIntegerId } = require('../domain/invariants');
 
 const router = express.Router();
 
@@ -95,7 +96,14 @@ router.get('/drills/:id', optionalAuth, (req, res) => {
 // /api/analyse flow) to a routine step -- not a second scoring system, just
 // a record of "this analysis was done as practice for this step".
 router.post('/drills/:stepId/practice', requireAuth, (req, res) => {
-  const { analysisId } = req.body;
+  const { analysisId } = req.body || {};
+  if (!isPositiveIntegerId(req.params.stepId)) {
+    return res.status(400).json({ error: 'Invalid step id' });
+  }
+  if (analysisId !== undefined && analysisId !== null && !isPositiveIntegerId(analysisId)) {
+    return res.status(400).json({ error: 'analysisId must be a valid analysis id', field: 'analysisId' });
+  }
+
   const step = db.prepare('SELECT * FROM drill_routine_steps WHERE id = ?').get(req.params.stepId);
   if (!step) return res.status(404).json({ error: 'Step not found' });
 

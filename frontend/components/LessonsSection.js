@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { colors, fonts, radius, spacing } from '../theme';
 import { FilmIcon, TennisBallIcon, LockIcon } from './icons';
@@ -60,16 +60,21 @@ export default function LessonsSection({ navigation }) {
   const { token, isPremium } = useAuth();
   const gatedNavigate = useGatedNavigate(navigation);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [lessons, setLessons] = useState([]);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     let cancelled = false;
+    setLoading(true);
+    setError(false);
     listDrills(token, { kind: 'lesson' })
       .then((data) => { if (!cancelled) setLessons(data.items ?? []); })
-      .catch(() => {})
+      .catch(() => { if (!cancelled) setError(true); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [token]);
+
+  useEffect(() => load(), [load]);
 
   const grouped = lessons.reduce((acc, item) => {
     (acc[item.shot_type] ??= []).push(item);
@@ -92,6 +97,21 @@ export default function LessonsSection({ navigation }) {
 
   if (loading) {
     return <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />;
+  }
+
+  if (error && lessons.length === 0) {
+    return (
+      <View style={s.empty}>
+        <View style={s.emptyIconWrap}>
+          <FilmIcon size={26} color={colors.primary} />
+        </View>
+        <Text style={s.emptyTitle}>Couldn't load lessons</Text>
+        <Text style={s.emptySub}>Check your connection and try again.</Text>
+        <TouchableOpacity style={s.emptyBtn} onPress={load}>
+          <Text style={s.emptyBtnText}>Tap to retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
   }
 
   if (lessons.length === 0) {

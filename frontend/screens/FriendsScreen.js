@@ -235,9 +235,18 @@ const d = StyleSheet.create({
 export default function FriendsScreen({ navigation, route }) {
   const { token } = useAuth();
   const [segment, setSegment] = useState(route?.params?.initialSegment === 'messages' ? 'messages' : 'friends');
-  useEffect(() => {
+  // useFocusEffect, not a useEffect keyed on the param value -- Friends is a
+  // bottom tab (stays mounted, never unmounts between visits), and
+  // ProfileScreen always navigates here with the same literal
+  // { initialSegment: 'messages' }. A value-keyed effect's dependency never
+  // changes between two such navigations, so it silently stopped re-firing
+  // on the second "Messages" tap after the user had manually switched
+  // segments in between. useFocusEffect re-runs on every re-focus regardless
+  // of whether the param's value changed, which is what "jump to Messages"
+  // actually needs.
+  useFocusEffect(useCallback(() => {
     if (route?.params?.initialSegment) setSegment(route.params.initialSegment);
-  }, [route?.params?.initialSegment]);
+  }, [route?.params?.initialSegment]));
   const [inviteCode, setInviteCode] = useState(null);
   const [generating, setGenerating] = useState(false);
 

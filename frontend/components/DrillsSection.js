@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { colors, fonts, radius, spacing } from '../theme';
 import { DrillsIcon, TennisBallIcon } from './icons';
@@ -43,16 +43,21 @@ const cc = StyleSheet.create({
 export default function DrillsSection({ navigation }) {
   const { token } = useAuth();
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [drills, setDrills] = useState([]);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     let cancelled = false;
+    setLoading(true);
+    setError(false);
     listDrills(token, { kind: 'drill' })
       .then((data) => { if (!cancelled) setDrills(data.items ?? []); })
-      .catch(() => {})
+      .catch(() => { if (!cancelled) setError(true); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [token]);
+
+  useEffect(() => load(), [load]);
 
   const grouped = drills.reduce((acc, item) => {
     (acc[item.shot_type] ??= []).push(item);
@@ -61,6 +66,21 @@ export default function DrillsSection({ navigation }) {
 
   if (loading) {
     return <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />;
+  }
+
+  if (error && drills.length === 0) {
+    return (
+      <View style={s.empty}>
+        <View style={s.emptyIconWrap}>
+          <DrillsIcon size={26} color={colors.primary} />
+        </View>
+        <Text style={s.emptyTitle}>Couldn't load drills</Text>
+        <Text style={s.emptySub}>Check your connection and try again.</Text>
+        <TouchableOpacity style={s.emptyBtn} onPress={load}>
+          <Text style={s.emptyBtnText}>Tap to retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
   }
 
   if (drills.length === 0) {
@@ -108,6 +128,8 @@ const s = StyleSheet.create({
   },
   emptyTitle: { color: colors.ink, fontSize: 17, fontFamily: fonts.extrabold, marginBottom: 8, textAlign: 'center' },
   emptySub:   { color: colors.muted, fontSize: 13.5, lineHeight: 20, textAlign: 'center', fontFamily: fonts.regular },
+  emptyBtn: { backgroundColor: colors.primary, borderRadius: radius.pill, paddingHorizontal: 18, paddingVertical: 10, marginTop: 16 },
+  emptyBtnText: { color: colors.white, fontSize: 13, fontFamily: fonts.bold },
 
   sectionTitle: { color: colors.ink, fontSize: 16, fontFamily: fonts.bold, marginBottom: 12, marginTop: 4 },
 });

@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Animated, Pressable } from 'react-native';
 import { springs } from '../theme';
 import { useReducedMotion } from '../utils/useReducedMotion';
@@ -18,6 +18,19 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 //
 // Under reduce-motion the scale is skipped entirely and it falls back to an
 // opacity dip, which still confirms the press without moving anything.
+//
+// `style` is passed to AnimatedPressable as a PLAIN ARRAY, not a function --
+// a `({pressed}) => [...]` style function on a component wrapped by
+// Animated.createAnimatedComponent doesn't reliably resolve on a real
+// device: backgroundColor/borderRadius/overflow clipping and percentage or
+// cross-axis child sizing (an Image at width:'100%', a Text needing its
+// width constrained) were all found broken on-device this session, while
+// the SAME properties render correctly literally everywhere else in the
+// app. `pressed` is now tracked as local state (set in the onPressIn/
+// onPressOut handlers this component already has for the scale spring)
+// instead of relying on Pressable's callback-style API, so `style` can go
+// back to being the plain array form Animated.createAnimatedComponent is
+// actually built for.
 export default function PressableScale({
   children,
   style,
@@ -27,18 +40,21 @@ export default function PressableScale({
 }) {
   const scale = useRef(new Animated.Value(1)).current;
   const reducedMotion = useReducedMotion();
+  const [pressed, setPressed] = useState(false);
 
   const springTo = useCallback((toValue) => {
     Animated.spring(scale, { toValue, ...springs.press }).start();
   }, [scale]);
 
   const onPressIn = useCallback((e) => {
+    setPressed(true);
     if (!reducedMotion) springTo(scaleTo);
     props.onPressIn?.(e);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reducedMotion, scaleTo, springTo, props.onPressIn]);
 
   const onPressOut = useCallback((e) => {
+    setPressed(false);
     if (!reducedMotion) springTo(1);
     props.onPressOut?.(e);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -50,11 +66,8 @@ export default function PressableScale({
       disabled={disabled}
       onPressIn={onPressIn}
       onPressOut={onPressOut}
-      style={({ pressed }) => [
-        // Flattening the caller's style here keeps the API drop-in compatible
-        // with the TouchableOpacity call sites this replaces, which all pass
-        // a plain style object or array rather than a function.
-        typeof style === 'function' ? style({ pressed }) : style,
+      style={[
+        style,
         {
           transform: [{ scale }],
           opacity: disabled ? 0.5 : (reducedMotion && pressed ? 0.8 : 1),

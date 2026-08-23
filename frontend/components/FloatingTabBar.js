@@ -28,7 +28,9 @@ export default function FloatingTabBar({ state, descriptors, navigation }) {
   const reducedMotion = useReducedMotion();
   const hasPositioned = useRef(false);
   const windowWidth = useWindowWidth();
-  const isSmallScreen = windowWidth < SMALL_SCREEN_BREAKPOINT;
+  // <= not < -- a device at EXACTLY the breakpoint (iPhone SE, 375) was
+  // being excluded from the small-screen sizing meant for it.
+  const isSmallScreen = windowWidth <= SMALL_SCREEN_BREAKPOINT;
   const sideMargin = isSmallScreen ? SIDE_MARGIN.small : SIDE_MARGIN.normal;
   const iconSize = isSmallScreen ? ICON_SIZE.small : ICON_SIZE.normal;
   const labelFontSize = isSmallScreen ? LABEL_FONT_SIZE.small : LABEL_FONT_SIZE.normal;
@@ -104,8 +106,37 @@ export default function FloatingTabBar({ state, descriptors, navigation }) {
 
         return (
           <PressableScale key={route.key} onPress={onPress} style={styles.item} scaleTo={0.9}>
-            {Icon && <Icon size={iconSize} color={focused ? colors.white : colors.muted} />}
-            <Text style={[styles.label, { fontSize: labelFontSize, color: focused ? colors.white : colors.muted }]}>{label}</Text>
+            {/* Explicit-width wrapper, same reasoning as the label below --
+                centering the icon directly via the PressableScale/item's own
+                alignItems:'center' was never reliable on a real device (it
+                was just never visible until the label's own overlap bug got
+                fixed and exposed it). A View with a real pixel width centers
+                reliably where alignItems:'center' on the animated ancestor
+                doesn't. */}
+            {Icon && (
+              <View style={itemWidth > 0 ? { width: itemWidth, alignItems: 'center' } : undefined}>
+                <Icon size={iconSize} color={focused ? colors.white : colors.muted} />
+              </View>
+            )}
+            <Text
+              style={[
+                styles.label,
+                { fontSize: labelFontSize, color: focused ? colors.white : colors.muted },
+                // An explicit pixel width, not '100%'/alignSelf:'stretch' --
+                // both failed to constrain this Text in testing on a real
+                // device. Same root cause as the avatar bug this session:
+                // percentage/stretch sizing on a child of PressableScale (an
+                // Animated-wrapped Pressable) doesn't reliably resolve.
+                // itemWidth is already computed as a real number a few lines
+                // up, so use that directly instead of asking Yoga to resolve
+                // a percentage against an animated ancestor.
+                itemWidth > 0 && { width: itemWidth },
+              ]}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+            >
+              {label}
+            </Text>
           </PressableScale>
         );
       })}
@@ -130,5 +161,18 @@ const styles = StyleSheet.create({
     borderRadius: 24, backgroundColor: colors.primary,
   },
   item: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 4, height: '100%' },
-  label: { fontSize: 10.5, fontFamily: fonts.bold },
+  // `item`'s alignItems:'center' sizes children to their own content width
+  // and just centers them -- fine for the fixed-size icon, but a label
+  // wider than its ~1/5-of-the-bar slot (a real phone, 5 tabs, one of them
+  // "Find Games") isn't clipped by that, so it bled sideways into
+  // neighboring tabs. Two earlier attempts (`width: '100%'`, then
+  // `alignSelf: 'stretch'`) both reached the device but neither actually
+  // constrained the Text at runtime -- percentage/stretch sizing on a Text
+  // child of PressableScale (an Animated-wrapped Pressable) doesn't
+  // reliably resolve, the same root cause as this session's avatar bug.
+  // The label's actual width now comes from the real computed `itemWidth`
+  // number passed inline at the call site, not from this base style.
+  // numberOfLines={1} + ellipsizeMode="tail" on the Text remain as the
+  // safety net for content that still doesn't fit even at that width.
+  label: { fontSize: 10.5, fontFamily: fonts.bold, textAlign: 'center' },
 });

@@ -3,6 +3,10 @@ const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
 const { sendPushNotification } = require('../utils/pushNotifications');
 const { seedCourtsNear } = require('../utils/overpassCourts');
+const {
+  MAX_LENGTHS, isLatitude, isLongitude, isText, isOptionalText, isIsoDateTime,
+} = require('../domain/invariants');
+const { validate, optional } = require('../validation/validateBody');
 
 const router = express.Router();
 
@@ -39,7 +43,13 @@ function queryNearbyCourts(lat, lng, radiusKm, userId) {
     FROM courts c
     LEFT JOIN club_courts clc ON clc.court_id = c.id
     LEFT JOIN clubs cl ON cl.id = clc.club_id
-    WHERE latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ?
+    -- Qualified with c. -- clubs also has its own latitude/longitude
+    -- columns, so once the LEFT JOIN brings clubs into scope, an
+    -- unqualified reference is genuinely ambiguous to SQLite (this was a
+    -- live SQLITE_ERROR: "ambiguous column name: latitude", not a network
+    -- issue, despite the frontend showing a generic connection error for
+    -- it). We want the court's own coordinates for this bounding box.
+    WHERE c.latitude BETWEEN ? AND ? AND c.longitude BETWEEN ? AND ?
   `).all(userId, userId, lat - latDelta, lat + latDelta, lng - lngDelta, lng + lngDelta);
 
   return candidates
@@ -83,12 +93,17 @@ router.get('/courts', requireAuth, async (req, res) => {
 
 router.post('/courts', requireAuth, (req, res) => {
   const { name, latitude, longitude } = req.body || {};
-  if (!name || !name.trim()) {
-    return res.status(400).json({ error: 'Court name is required' });
-  }
-  if (typeof latitude !== 'number' || typeof longitude !== 'number') {
-    return res.status(400).json({ error: 'latitude and longitude are required' });
-  }
+
+  // courts is a SHARED table (~33k rows) that every user's map reads, so a
+  // bad pin isn't just this user's problem. A number alone wasn't enough:
+  // a latitude of 5000 passed the old typeof check, then made haversineKm()
+  // return a meaningless distance for every nearby-court query it appeared in.
+  const bad = validate([
+    ['name', name, isText(MAX_LENGTHS.courtName), `must be a name of ${MAX_LENGTHS.courtName} characters or fewer`],
+    ['latitude', latitude, isLatitude, 'must be a number between -90 and 90'],
+    ['longitude', longitude, isLongitude, 'must be a number between -180 and 180'],
+  ]);
+  if (bad) return res.status(400).json(bad);
 
   // User-dropped pins start unverified -- they only show as a trusted court
   // once CONFIRMATION_THRESHOLD other users independently confirm it via
@@ -134,8 +149,6 @@ router.post('/courts/:id/confirm', requireAuth, (req, res) => {
   res.json({ court: { ...updated, confirmation_count: count, already_confirmed: true } });
 });
 
-const COST_INFO_MAX_LENGTH = 500;
-
 // Deliberately open to any authenticated user, not just the court's
 // submitter -- same crowd-sourced trust model as POST /courts/:id/confirm
 // above (anyone who's actually played there can correct stale pricing).
@@ -146,14 +159,11 @@ const COST_INFO_MAX_LENGTH = 500;
 // user who views this court.
 router.patch('/courts/:id/cost', requireAuth, (req, res) => {
   const { cost_info } = req.body || {};
-  if (cost_info !== null && cost_info !== undefined) {
-    if (typeof cost_info !== 'string') {
-      return res.status(400).json({ error: 'cost_info must be a string' });
-    }
-    if (cost_info.length > COST_INFO_MAX_LENGTH) {
-      return res.status(400).json({ error: `cost_info must be ${COST_INFO_MAX_LENGTH} characters or fewer` });
-    }
-  }
+  const bad = validate([
+    ['cost_info', cost_info, isOptionalText(MAX_LENGTHS.costInfo), `must be a string of ${MAX_LENGTHS.costInfo} characters or fewer`],
+  ]);
+  if (bad) return res.status(400).json(bad);
+
   const court = db.prepare('SELECT * FROM courts WHERE id = ?').get(req.params.id);
   if (!court) return res.status(404).json({ error: 'Court not found' });
 
@@ -229,8 +239,21 @@ router.get('/courts/:id/availability', requireAuth, (req, res) => {
 
 router.post('/courts/:id/availability', requireAuth, (req, res) => {
   const { start_time, end_time, note } = req.body || {};
-  if (!start_time) {
-    return res.status(400).json({ error: 'start_time is required' });
+
+  // start_time is both the ORDER BY key for GET /courts/:id/availability and
+  // a date the app renders -- an unparseable string sorted unpredictably and
+  // displayed as "Invalid Date" to everyone watching this court.
+  const bad = validate([
+    ['start_time', start_time, isIsoDateTime, 'must be a valid date/time'],
+    ['end_time', end_time, optional(isIsoDateTime), 'must be a valid date/time'],
+    ['note', note, isOptionalText(MAX_LENGTHS.availabilityNote), `must be ${MAX_LENGTHS.availabilityNote} characters or fewer`],
+  ]);
+  if (bad) return res.status(400).json(bad);
+
+  // A session that ends before it starts isn't a validation nicety -- the
+  // post is broadcast by push notification to every watcher of this court.
+  if (end_time && new Date(end_time) <= new Date(start_time)) {
+    return res.status(400).json({ error: 'end_time must be after start_time', field: 'end_time' });
   }
 
   const court = db.prepare('SELECT * FROM courts WHERE id = ?').get(req.params.id);

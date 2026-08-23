@@ -8,6 +8,10 @@ const requireAuth = require('../middleware/requireAuth');
 const requirePremium = require('../middleware/requirePremium');
 const { PYTHON, DATA_DIR } = require('../config/paths');
 const { sendPushNotification } = require('../utils/pushNotifications');
+const {
+  OUTCOME_TAGS, MAX_LENGTHS, isOutcomeTag, isBoundaryNote, isText,
+} = require('../domain/invariants');
+const { validate, optional, oneOfMessage } = require('../validation/validateBody');
 
 const router = express.Router();
 
@@ -266,6 +270,21 @@ router.get('/highlights/reel-jobs/:id', requireAuth, (req, res) => {
 
 router.patch('/highlights/rallies/:id', requireAuth, (req, res) => {
   const { outcome_tag, archived, boundary_note } = req.body || {};
+
+  // Both fields are human review verdicts that leave this app: outcome_tag
+  // drives profile.js's Player Type, and boundary_note is training data
+  // tune_rally_gap.py reads to tune the rally detector. Neither was checked
+  // at all before, so a typo'd tag silently became a category nothing counts,
+  // and a malformed boundary_note silently poisoned the training signal.
+  // isBoundaryNote also enforces the grammar, not just the vocabulary: it's a
+  // comma-joined list, and 'ok'/'should_split' are whole-clip verdicts that
+  // can't coexist with anything else.
+  const bad = validate([
+    ['outcome_tag', outcome_tag, optional(isOutcomeTag), oneOfMessage(OUTCOME_TAGS)],
+    ['boundary_note', boundary_note, isBoundaryNote, 'must be a comma-joined list of ok, started_too_late, cut_off_early, should_split (ok/should_split cannot be combined)'],
+  ]);
+  if (bad) return res.status(400).json(bad);
+
   const clip = db.prepare(`SELECT * FROM rally_clips WHERE id = ? AND user_id = ?`).get(req.params.id, req.user.id);
   if (!clip) return res.status(404).json({ error: 'Rally clip not found' });
 
@@ -288,7 +307,12 @@ router.get('/highlights/archive', requireAuth, (req, res) => {
 
 router.post('/push-token', requireAuth, (req, res) => {
   const { token } = req.body || {};
-  if (!token) return res.status(400).json({ error: 'token is required' });
+  // An Expo push token is a short opaque string. Capping it stops a client
+  // filling push_tokens (UNIQUE, so one row per distinct value) with junk.
+  const bad = validate([
+    ['token', token, isText(MAX_LENGTHS.pushToken), `must be a string of ${MAX_LENGTHS.pushToken} characters or fewer`],
+  ]);
+  if (bad) return res.status(400).json(bad);
 
   db.prepare(`INSERT OR IGNORE INTO push_tokens (user_id, token) VALUES (?, ?)`).run(req.user.id, token);
   res.status(204).end();

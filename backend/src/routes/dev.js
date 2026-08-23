@@ -8,6 +8,10 @@ const { requireAdmin } = require('../middleware/requireAdmin');
 const { SCRIPTS_DIR, PYTHON } = require('../config/paths');
 const { CLIPS_DIR: DRILL_CLIPS_DIR, toClipUrl } = require('../utils/drillClips');
 const { runPythonJson } = require('../utils/runPythonJson');
+const {
+  DRILL_KINDS, DRILL_SHOT_TYPES, MAX_LENGTHS, isDrillKind, isDrillShotType, isText, isOptionalText,
+} = require('../domain/invariants');
+const { validate, oneOfMessage } = require('../validation/validateBody');
 
 // Every GET-list / POST-label route below follows the same shape: spawn a
 // script, get back JSON. Centralised here so the error-message mapping
@@ -264,20 +268,38 @@ router.post('/dev/drills', requireAuth, requireAdmin, uploadDrillVideo.single('v
   const isPremium = req.body.is_premium === '1' || req.body.is_premium === 'true' ? 1 : 0;
   const sortOrder = Number.parseInt(req.body.sort_order, 10) || 0;
 
-  if (!kind || !['drill', 'lesson'].includes(kind)) {
-    return res.status(400).json({ error: "kind must be 'drill' or 'lesson'" });
-  }
-  if (!shotType || !title || !explanation) {
-    return res.status(400).json({ error: 'shot_type, title, and explanation are required' });
-  }
+  // Drill/lesson items cover one shot type the ML pipeline doesn't --
+  // 'footwork' has no swing to analyse, so it's valid here and nowhere else.
+  const bad = validate([
+    ['kind', kind, isDrillKind, oneOfMessage(DRILL_KINDS)],
+    ['shot_type', shotType, isDrillShotType, oneOfMessage(DRILL_SHOT_TYPES)],
+    ['title', title, isText(MAX_LENGTHS.drillTitle), `must be a title of ${MAX_LENGTHS.drillTitle} characters or fewer`],
+    ['explanation', explanation, isText(MAX_LENGTHS.drillExplanation), `must be text of ${MAX_LENGTHS.drillExplanation} characters or fewer`],
+    ['emphasis', emphasis, isOptionalText(MAX_LENGTHS.drillExplanation), `must be ${MAX_LENGTHS.drillExplanation} characters or fewer`],
+  ]);
+  if (bad) return res.status(400).json(bad);
 
   let steps = [];
   if (req.body.steps) {
     try {
       steps = JSON.parse(req.body.steps);
     } catch {
-      return res.status(400).json({ error: 'steps must be valid JSON' });
+      return res.status(400).json({ error: 'steps must be valid JSON', field: 'steps' });
     }
+  }
+  if (!Array.isArray(steps)) {
+    return res.status(400).json({ error: 'steps must be a JSON array', field: 'steps' });
+  }
+  // drill_routine_steps.label is NOT NULL, and a step's shot_type feeds the
+  // practice-analysis flow -- an unlabelled or mistyped step used to reach
+  // the INSERT and surface as a 500 mid-transaction.
+  for (const [i, step] of steps.entries()) {
+    const badStep = validate([
+      [`steps[${i}].label`, step?.label, isText(MAX_LENGTHS.drillStepLabel), `must be a label of ${MAX_LENGTHS.drillStepLabel} characters or fewer`],
+      [`steps[${i}].shot_type`, step?.shot_type, (v) => v === undefined || v === null || isDrillShotType(v), oneOfMessage(DRILL_SHOT_TYPES)],
+      [`steps[${i}].target_reps`, step?.target_reps, (v) => v === undefined || v === null || (Number.isInteger(Number(v)) && Number(v) > 0), 'must be a positive whole number'],
+    ]);
+    if (badStep) return res.status(400).json(badStep);
   }
 
   const videoPath = req.file ? req.file.path : undefined;
@@ -330,9 +352,10 @@ router.post('/dev/drills', requireAuth, requireAdmin, uploadDrillVideo.single('v
     // this deletion is a real edit, not the old delete-everything-then-
     // reinsert artifact that used to orphan every step's practice history.
     // A genuinely removed step still needs its own practice_attempts rows
-    // cleaned up first, though (SQLite foreign keys aren't enforced here) --
-    // otherwise those attempts survive pointing at a dead step_id forever,
-    // same failure shape the id-reconciliation above was built to avoid.
+    // cleaned up first: better-sqlite3 opens connections with
+    // `PRAGMA foreign_keys = ON`, so deleting a step that still has attempts
+    // pointing at it throws SQLITE_CONSTRAINT_FOREIGNKEY and rolls the whole
+    // save back -- same failure shape the id-reconciliation above avoids.
     const removedStepIds = [...existingStepIds].filter((sid) => !keptStepIds.has(sid));
     if (removedStepIds.length) {
       const placeholders = removedStepIds.map(() => '?').join(',');

@@ -37,11 +37,23 @@ function formatTime(sec) {
 function ClipRow({ clip, value, onTag }) {
   const videoRef = useRef(null);
   const [playing, setPlaying] = useState(false);
+  // Mounting a PlatformVideo starts it buffering immediately even without
+  // playing -- this row used to mount one unconditionally for every pending
+  // rally the moment the screen rendered, so a long match with many detected
+  // rallies tried to buffer all of them at once. DevRallyBoundaryReviewScreen
+  // already fixed the identical issue on its own (dev-only) rally list by
+  // deferring the mount until the row is tapped; mirrored here on the
+  // user-facing path real uploads actually hit.
+  const [loaded, setLoaded] = useState(false);
   const windowWidth = useWindowWidth();
   const videoWidth = Math.min(windowWidth - 48, 500);
   const videoHeight = Math.round(videoWidth * 0.56);
 
   const toggle = () => {
+    if (!loaded) {
+      setLoaded(true);
+      return;
+    }
     if (playing) {
       videoRef.current?.pauseAsync();
       setPlaying(false);
@@ -54,13 +66,15 @@ function ClipRow({ clip, value, onTag }) {
   return (
     <View style={r.card}>
       <TouchableOpacity activeOpacity={1} style={r.videoWrap} onPress={toggle}>
-        <PlatformVideo
-          ref={videoRef}
-          uri={`${API_BASE}${clip.clip_url}`}
-          width={videoWidth}
-          height={videoHeight}
-          onStatusUpdate={(status) => setPlaying(!!status.isPlaying)}
-        />
+        {loaded && (
+          <PlatformVideo
+            ref={videoRef}
+            uri={`${API_BASE}${clip.clip_url}`}
+            width={videoWidth}
+            height={videoHeight}
+            onStatusUpdate={(status) => setPlaying(!!status.isPlaying)}
+          />
+        )}
         {!playing && (
           <View pointerEvents="none" style={StyleSheet.absoluteFill}>
             <View style={r.playHint}>

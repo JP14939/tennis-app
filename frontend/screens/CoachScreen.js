@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, memo } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet,
-  SafeAreaView, ScrollView, ActivityIndicator,
+  SafeAreaView, ScrollView, FlatList, ActivityIndicator,
 } from 'react-native';
 import Alert from '../utils/alert';
 import { useFocusEffect } from '@react-navigation/native';
@@ -40,6 +40,28 @@ const sec = StyleSheet.create({
 });
 
 // ── Student's history (viewed by their coach) ────────────────────────────────
+// A coach can watch several students, and each student's own history is the
+// SAME analyses table HistoryScreen.js already hit real stalls against for a
+// single power user (~2.9MB/105 rows) -- reused that fix's shape here:
+// memoized row, stable callback (raw handler + item passed explicitly, not a
+// per-item closure), and a virtualized FlatList instead of ScrollView + .map().
+const AnalysisCard = memo(function AnalysisCard({ item, onPress }) {
+  const score = Math.round(item.similarity ?? 0);
+  return (
+    <TouchableOpacity style={h.card} activeOpacity={0.8} onPress={() => onPress(item)}>
+      <View style={h.cardHeader}>
+        <View style={h.shotBadge}>
+          <TennisBallIcon size={16} color={colors.primary} />
+          <Text style={h.shotLabel}>{item.shot_type.charAt(0).toUpperCase() + item.shot_type.slice(1)}</Text>
+        </View>
+        <Text style={h.date}>{formatDate(item.created_at)}</Text>
+      </View>
+      <Text style={[h.score, { color: scoreColor(score) }]}>{score}/100</Text>
+      <Text style={h.proId}>{formatProId(item.pro_id, item.result?.matches?.[0]?.player_name)}</Text>
+    </TouchableOpacity>
+  );
+});
+
 function StudentHistory({ student, navigation, onBack }) {
   const { token } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -55,47 +77,38 @@ function StudentHistory({ student, navigation, onBack }) {
     return () => { cancelled = true; };
   }, [token, student.id]));
 
-  return (
-    <View>
+  const openAnalysis = useCallback((item) => navigation.navigate('Results', {
+    savedResult: item.result,
+    analysisId: item.id,
+    shotType: item.shot_type,
+    canAddNotes: true,
+  }), [navigation]);
+
+  const renderAnalysis = useCallback(({ item }) => (
+    <AnalysisCard item={item} onPress={openAnalysis} />
+  ), [openAnalysis]);
+
+  const header = (
+    <>
       <TouchableOpacity style={h.backLink} onPress={onBack}>
         <BackChevronIcon size={13} color={colors.muted} />
         <Text style={h.backLinkText}>Students</Text>
       </TouchableOpacity>
       <Text style={h.studentName}>{student.name}</Text>
-
       {loading && <ActivityIndicator color={colors.primary} style={{ marginTop: 20 }} />}
+    </>
+  );
 
-      {!loading && analyses.length === 0 && (
-        <Text style={h.emptyText}>No analyses saved yet.</Text>
-      )}
-
-      {!loading && analyses.map((item) => {
-        const score = Math.round(item.similarity ?? 0);
-        return (
-          <TouchableOpacity
-            key={item.id}
-            style={h.card}
-            activeOpacity={0.8}
-            onPress={() => navigation.navigate('Results', {
-              savedResult: item.result,
-              analysisId: item.id,
-              shotType: item.shot_type,
-              canAddNotes: true,
-            })}
-          >
-            <View style={h.cardHeader}>
-              <View style={h.shotBadge}>
-                <TennisBallIcon size={16} color={colors.primary} />
-                <Text style={h.shotLabel}>{item.shot_type.charAt(0).toUpperCase() + item.shot_type.slice(1)}</Text>
-              </View>
-              <Text style={h.date}>{formatDate(item.created_at)}</Text>
-            </View>
-            <Text style={[h.score, { color: scoreColor(score) }]}>{score}/100</Text>
-            <Text style={h.proId}>{formatProId(item.pro_id, item.result?.matches?.[0]?.player_name)}</Text>
-          </TouchableOpacity>
-        );
-      })}
-    </View>
+  return (
+    <FlatList
+      data={loading ? [] : analyses}
+      keyExtractor={(item) => String(item.id)}
+      renderItem={renderAnalysis}
+      contentContainerStyle={s.scroll}
+      showsVerticalScrollIndicator={false}
+      ListHeaderComponent={header}
+      ListEmptyComponent={!loading ? <Text style={h.emptyText}>No analyses saved yet.</Text> : null}
+    />
   );
 }
 const h = StyleSheet.create({
@@ -166,15 +179,17 @@ export default function CoachScreen({ navigation }) {
   };
 
   if (selectedStudent) {
+    // StudentHistory renders its own FlatList (it is the scroll container),
+    // so it isn't wrapped in a ScrollView here -- nesting a virtualized list
+    // inside a ScrollView of the same orientation defeats virtualization and
+    // React Native warns about it.
     return (
       <SafeAreaView style={s.safe}>
-        <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
-          <StudentHistory
-            student={selectedStudent}
-            navigation={navigation}
-            onBack={() => setSelectedStudent(null)}
-          />
-        </ScrollView>
+        <StudentHistory
+          student={selectedStudent}
+          navigation={navigation}
+          onBack={() => setSelectedStudent(null)}
+        />
       </SafeAreaView>
     );
   }

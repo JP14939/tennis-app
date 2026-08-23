@@ -107,7 +107,13 @@ export default function HomeScreen({ navigation }) {
   return (
     <SafeAreaView style={s.safe}>
       <CourtBackground />
-      <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
+      {/* Missing `style={{flex:1}}` used to let this ScrollView collapse to
+          its own content height instead of filling the screen -- invisible
+          on web (react-native-web's block layout doesn't need it), but on a
+          real phone it left everything squeezed into a thin strip while
+          CourtBackground's absolute-positioned overlay still filled the
+          whole screen underneath it. */}
+      <ScrollView style={s.scrollFlex} contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
 
         <View style={s.topRow}>
           <View style={{ flex: 1 }}>
@@ -234,6 +240,7 @@ export default function HomeScreen({ navigation }) {
 
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.bg },
+  scrollFlex: { flex: 1 },
   scroll: { padding: spacing.xl, paddingTop: 20, paddingBottom: 130 },
 
   topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: spacing.xxl },
@@ -244,7 +251,12 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', marginTop: 4, overflow: 'hidden',
     shadowColor: colors.primary, shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 4 },
   },
-  avatarImage: { width: '100%', height: '100%' },
+  // Explicit pixels, not '100%' -- percentage sizing on an Image nested
+  // inside PressableScale (an Animated-wrapped Pressable) couldn't reliably
+  // resolve against the animated style computation, which cascaded into
+  // topRow (this avatar's flex-row parent) measuring itself as nearly full
+  // screen height. Matches `avatar`'s own fixed 44x44 exactly.
+  avatarImage: { width: 44, height: 44 },
 
   ctaCard: {
     backgroundColor: colors.primary, borderRadius: radius.xl, padding: 18, marginBottom: spacing.xl,

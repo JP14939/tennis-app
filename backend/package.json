@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test": "jest"
+    "test": "jest",
+    "verify:db": "node scripts/verifyIntegrity.js",
+    "backup:db": "node scripts/backupDatabase.js"
   },
   "keywords": [],
   "author": "",

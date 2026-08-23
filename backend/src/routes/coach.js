@@ -1,23 +1,13 @@
 const express = require('express');
-const crypto = require('crypto');
 const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
-const { redeemInviteCode } = require('../utils/inviteCodes');
+const { redeemInviteCode, generateInviteCode } = require('../utils/inviteCodes');
+const {
+  PHASE_KEYS, MAX_LENGTHS, isPhaseKey, isText, isTimestampSec, isPositiveIntegerId,
+} = require('../domain/invariants');
+const { validate, optional, oneOfMessage } = require('../validation/validateBody');
 
 const router = express.Router();
-
-const VALID_PHASE_KEYS = ['backswing', 'contact', 'follow_through', 'body_rotation'];
-
-function generateCode() {
-  // 8 uppercase base32-ish chars, easy to read/type aloud -- excludes
-  // ambiguous 0/O/1/I.
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let i = 0; i < 8; i++) {
-    code += alphabet[crypto.randomInt(alphabet.length)];
-  }
-  return code;
-}
 
 function isLinked(coachId, studentId) {
   return !!db.prepare('SELECT 1 FROM coach_links WHERE coach_id = ? AND student_id = ?').get(coachId, studentId);
@@ -30,7 +20,7 @@ function isLinked(coachId, studentId) {
 router.post('/coach/invite-code', requireAuth, (req, res) => {
   let code;
   do {
-    code = generateCode();
+    code = generateInviteCode();
   } while (db.prepare('SELECT 1 FROM coach_invite_codes WHERE code = ?').get(code));
 
   db.prepare('INSERT INTO coach_invite_codes (student_id, code) VALUES (?, ?)').run(req.user.id, code);
@@ -106,12 +96,19 @@ router.get('/coach/students/:studentId/history', requireAuth, (req, res) => {
 // (both null = a general note).
 router.post('/coach/notes', requireAuth, (req, res) => {
   const { analysisId, noteText, phaseKey, timestampSec } = req.body || {};
-  if (!analysisId || !noteText) {
-    return res.status(400).json({ error: 'analysisId and noteText are required' });
-  }
-  if (phaseKey && !VALID_PHASE_KEYS.includes(phaseKey)) {
-    return res.status(400).json({ error: `phaseKey must be one of ${VALID_PHASE_KEYS.join(', ')}` });
-  }
+
+  // noteText and timestampSec were previously bound straight into the INSERT
+  // with only a truthy check between them and better-sqlite3 -- a non-string
+  // noteText or a non-numeric timestampSec threw inside the driver and came
+  // back as a 500, the same class of bug already fixed for cost_info in
+  // courts.js. A timestamp is a video offset, so it can't be negative.
+  const bad = validate([
+    ['analysisId', analysisId, isPositiveIntegerId, 'must be a valid analysis id'],
+    ['noteText', noteText, isText(MAX_LENGTHS.noteText), `must be text of ${MAX_LENGTHS.noteText} characters or fewer`],
+    ['phaseKey', phaseKey, optional(isPhaseKey), oneOfMessage(PHASE_KEYS)],
+    ['timestampSec', timestampSec, optional(isTimestampSec), 'must be a non-negative number of seconds'],
+  ]);
+  if (bad) return res.status(400).json(bad);
 
   const analysis = db.prepare('SELECT user_id FROM analyses WHERE id = ?').get(analysisId);
   if (!analysis) {
@@ -136,10 +133,12 @@ router.post('/coach/notes', requireAuth, (req, res) => {
 // Accessible to both the coach who wrote a note and the student who owns
 // the analysis -- either side of the relationship should see the notes.
 router.get('/coach/notes', requireAuth, (req, res) => {
-  const analysisId = Number(req.query.analysisId);
-  if (!analysisId) {
-    return res.status(400).json({ error: 'analysisId query param is required' });
+  // Checked as an id rather than just coerced with Number(): '1.5' and '1e3'
+  // both survive Number() and then silently match nothing.
+  if (!isPositiveIntegerId(req.query.analysisId)) {
+    return res.status(400).json({ error: 'analysisId must be a valid analysis id', field: 'analysisId' });
   }
+  const analysisId = Number(req.query.analysisId);
 
   const analysis = db.prepare('SELECT user_id FROM analyses WHERE id = ?').get(analysisId);
   if (!analysis) {

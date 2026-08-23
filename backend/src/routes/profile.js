@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
+const { AGGRESSIVE_OUTCOME_TAGS } = require('../domain/invariants');
 
 const router = express.Router();
 
@@ -87,14 +88,26 @@ const PLAYER_TYPES = {
 // that, shot-type mix), not a real tactical-style classifier. Revisit once
 // there's real positional/rally data to work from.
 function computePlayerType(userId) {
+  // This used to filter on 'winner' and 'error' -- neither of which the app
+  // has ever written. HighlightReviewScreen's four buttons produce 'ace',
+  // 'winner_this_side', 'winner_other_side' and 'skip', so the old filter
+  // matched nothing at all and this whole rally-based branch was dead: every
+  // user silently fell through to the shot-type heuristic below no matter how
+  // many rallies they'd reviewed.
+  //
+  // 'skip' is excluded on purpose -- it means "this isn't a rally", so it's
+  // not a data point about how points end. 'winner_other_side' IS counted as
+  // a tagged rally (it's a real, reviewed point) but not as aggression: the
+  // opponent hit that winner, not this user.
+  const RALLY_OUTCOME_TAGS = ['ace', 'winner_this_side', 'winner_other_side'];
   const taggedRallies = db.prepare(
     `SELECT outcome_tag, swing_count, duration_sec FROM rally_clips
-     WHERE user_id = ? AND outcome_tag IN ('winner', 'ace', 'error')`
-  ).all(userId);
+     WHERE user_id = ? AND outcome_tag IN (${RALLY_OUTCOME_TAGS.map(() => '?').join(', ')})`
+  ).all(userId, ...RALLY_OUTCOME_TAGS);
 
   if (taggedRallies.length >= MIN_TAGGED_RALLIES) {
     const total = taggedRallies.length;
-    const aggressive = taggedRallies.filter((r) => r.outcome_tag === 'winner' || r.outcome_tag === 'ace').length;
+    const aggressive = taggedRallies.filter((r) => AGGRESSIVE_OUTCOME_TAGS.includes(r.outcome_tag)).length;
     const aggressionRate = aggressive / total;
     const avgSwingCount = taggedRallies.reduce((sum, r) => sum + (r.swing_count ?? 0), 0) / total;
     const avgDuration = taggedRallies.reduce((sum, r) => sum + (r.duration_sec ?? 0), 0) / total;

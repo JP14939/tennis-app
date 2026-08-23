@@ -2,14 +2,15 @@ const express = require('express');
 const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
 const { requireAdmin } = require('../middleware/requireAdmin');
-const { SHOT_TYPES } = require('../config/shotTypes');
+const { SHOT_TYPES, MAX_LENGTHS, isShotType, isScore, isText } = require('../domain/invariants');
+const { validate, oneOfMessage } = require('../validation/validateBody');
 
 const router = express.Router();
 
 function validateShotType(req, res) {
   const shotType = req.query.shotType || req.body?.shotType;
-  if (!SHOT_TYPES.includes(shotType)) {
-    res.status(400).json({ error: `shotType must be one of ${SHOT_TYPES.join(', ')}` });
+  if (!isShotType(shotType)) {
+    res.status(400).json({ error: `shotType ${oneOfMessage(SHOT_TYPES)}`, field: 'shotType' });
     return null;
   }
   return shotType;
@@ -69,9 +70,14 @@ router.post('/leaderboard/celebrities', requireAuth, requireAdmin, (req, res) =>
   const { name, score, note } = req.body || {};
   const shotType = validateShotType(req, res);
   if (!shotType) return;
-  if (!name || !name.trim() || typeof score !== 'number') {
-    return res.status(400).json({ error: 'name and score are required' });
-  }
+  // A curated score is merged into the SAME sorted list as real user scores
+  // in GET /leaderboard/worldwide, so it obeys the same 0-100 rule -- a
+  // number alone let an admin typo pin an entry to the top permanently.
+  const bad = validate([
+    ['name', name, isText(MAX_LENGTHS.celebrityName), `must be a name of ${MAX_LENGTHS.celebrityName} characters or fewer`],
+    ['score', score, isScore, 'must be a number between 0 and 100'],
+  ]);
+  if (bad) return res.status(400).json(bad);
 
   const info = db.prepare(
     'INSERT INTO celebrity_scores (name, shot_type, score, note, added_by) VALUES (?, ?, ?, ?, ?)'

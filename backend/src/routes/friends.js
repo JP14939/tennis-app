@@ -1,22 +1,14 @@
 const express = require('express');
-const crypto = require('crypto');
 const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
 const { sendPushNotification } = require('../utils/pushNotifications');
-const { redeemInviteCode } = require('../utils/inviteCodes');
+const { redeemInviteCode, generateInviteCode } = require('../utils/inviteCodes');
+const {
+  MAX_LENGTHS, MAX_SETS_IN_A_MATCH, isSetCount, isIsoDateTime, isOptionalText, isPositiveIntegerId,
+} = require('../domain/invariants');
+const { validate } = require('../validation/validateBody');
 
 const router = express.Router();
-
-// Same alphabet/shape as coach.js's generateCode() -- 8 uppercase
-// base32-ish chars, excludes ambiguous 0/O/1/I.
-function generateCode() {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let i = 0; i < 8; i++) {
-    code += alphabet[crypto.randomInt(alphabet.length)];
-  }
-  return code;
-}
 
 // Friendship is symmetric -- always store/query the pair sorted ascending
 // so there's exactly one row per pair regardless of who initiated it.
@@ -67,7 +59,7 @@ function computeRecord(matches) {
 router.post('/friends/code', requireAuth, (req, res) => {
   let code;
   do {
-    code = generateCode();
+    code = generateInviteCode();
   } while (db.prepare('SELECT 1 FROM friend_codes WHERE code = ?').get(code));
 
   db.prepare('INSERT INTO friend_codes (user_id, code) VALUES (?, ?)').run(req.user.id, code);
@@ -110,9 +102,41 @@ router.get('/friends', requireAuth, (req, res) => {
     ORDER BY u.name
   `).all(myId, myId, myId);
 
+  // One query for every friend's matches, not one query PER friend --
+  // getMatchesBetween() ran a separate friend_matches SELECT inside this
+  // .map() before, so a user with N friends made N+1 synchronous SQLite
+  // calls on every load of this screen. Every match involving myId (either
+  // as logged_by or opponent_id) is fetched in one query, then grouped by
+  // whichever side isn't myId -- that's always the friend the row is about.
+  const friendIds = rows.map((f) => f.id);
+  const matchesByFriendId = new Map(friendIds.map((id) => [id, []]));
+  if (friendIds.length > 0) {
+    const placeholders = friendIds.map(() => '?').join(',');
+    const allMatches = db.prepare(
+      `SELECT * FROM friend_matches
+       WHERE (logged_by = ? AND opponent_id IN (${placeholders}))
+          OR (opponent_id = ? AND logged_by IN (${placeholders}))
+       ORDER BY played_at DESC, id DESC`
+    ).all(myId, ...friendIds, myId, ...friendIds);
+
+    for (const row of allMatches) {
+      const friendId = row.logged_by === myId ? row.opponent_id : row.logged_by;
+      const loggedByViewer = row.logged_by === myId;
+      matchesByFriendId.get(friendId).push({
+        id: row.id,
+        played_at: row.played_at,
+        score_detail: row.score_detail,
+        created_at: row.created_at,
+        logged_by_me: loggedByViewer,
+        my_sets: loggedByViewer ? row.sets_won : row.sets_lost,
+        their_sets: loggedByViewer ? row.sets_lost : row.sets_won,
+      });
+    }
+  }
+
   const friends = rows.map((friend) => ({
     ...friend,
-    record: computeRecord(getMatchesBetween(myId, friend.id)),
+    record: computeRecord(matchesByFriendId.get(friend.id)),
   }));
 
   res.json({ friends });
@@ -159,9 +183,19 @@ router.post('/friends/:userId/matches', requireAuth, (req, res) => {
   if (!isFriends(req.user.id, friendId)) {
     return res.status(403).json({ error: 'Not friends with this user' });
   }
-  if (!playedAt || !Number.isInteger(setsWon) || !Number.isInteger(setsLost)) {
-    return res.status(400).json({ error: 'playedAt, setsWon, and setsLost are required' });
-  }
+
+  // A match record is shown to BOTH players and feeds computeRecord()'s
+  // win/loss tally, so nonsense here corrupts your friend's view of their own
+  // record too. Integer alone wasn't enough: -5 sets and 10^9 sets both
+  // passed the old check. playedAt is the ORDER BY key for the match list
+  // and gets rendered as a date, so it has to actually be one.
+  const bad = validate([
+    ['playedAt', playedAt, isIsoDateTime, 'must be a valid date'],
+    ['setsWon', setsWon, isSetCount, `must be a whole number between 0 and ${MAX_SETS_IN_A_MATCH}`],
+    ['setsLost', setsLost, isSetCount, `must be a whole number between 0 and ${MAX_SETS_IN_A_MATCH}`],
+    ['scoreDetail', scoreDetail, isOptionalText(MAX_LENGTHS.scoreDetail), `must be ${MAX_LENGTHS.scoreDetail} characters or fewer`],
+  ]);
+  if (bad) return res.status(400).json(bad);
 
   const info = db.prepare(
     `INSERT INTO friend_matches (logged_by, opponent_id, played_at, sets_won, sets_lost, score_detail)
@@ -187,6 +221,14 @@ router.post('/friends/:userId/share', requireAuth, (req, res) => {
   const friendId = parseInt(req.params.userId, 10);
   const { analysisId } = req.body || {};
 
+  // Same guard the other :userId routes in this file already have -- without
+  // it a non-numeric id became NaN and degraded to a misleading 403.
+  if (!Number.isInteger(friendId)) {
+    return res.status(400).json({ error: 'Invalid user id' });
+  }
+  if (!isPositiveIntegerId(analysisId)) {
+    return res.status(400).json({ error: 'analysisId must be a valid analysis id', field: 'analysisId' });
+  }
   if (!isFriends(req.user.id, friendId)) {
     return res.status(403).json({ error: 'Not friends with this user' });
   }
@@ -208,6 +250,14 @@ router.post('/friends/:userId/share', requireAuth, (req, res) => {
 router.get('/friends/:userId/shared', requireAuth, (req, res) => {
   const myId = req.user.id;
   const friendId = parseInt(req.params.userId, 10);
+  // Matches the guard every other :userId route in this file already has --
+  // was missing here, inconsistent with the pattern the rest of the file
+  // establishes. Harmless today (a NaN bind just matches nothing, so this
+  // fails safe to an empty list rather than a 500), but a landmine for any
+  // future change to this query that does arithmetic on the id first.
+  if (!Number.isInteger(friendId)) {
+    return res.status(400).json({ error: 'Invalid user id' });
+  }
 
   const rows = db.prepare(`
     SELECT sa.*, a.shot_type, a.similarity, a.created_at AS analysis_created_at
@@ -231,6 +281,9 @@ router.get('/friends/:userId/shared', requireAuth, (req, res) => {
 });
 
 router.get('/friends/shared/:analysisId', requireAuth, (req, res) => {
+  if (!isPositiveIntegerId(req.params.analysisId)) {
+    return res.status(400).json({ error: 'Invalid analysis id' });
+  }
   const analysisId = parseInt(req.params.analysisId, 10);
   const analysis = db.prepare('SELECT * FROM analyses WHERE id = ?').get(analysisId);
   if (!analysis) return res.status(404).json({ error: 'Analysis not found' });

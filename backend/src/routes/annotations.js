@@ -1,6 +1,8 @@
 const express = require('express');
 const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
+const { MAX_LENGTHS, isPositiveIntegerId, isBoundedJsonArray } = require('../domain/invariants');
+const { validate } = require('../validation/validateBody');
 
 const router = express.Router();
 
@@ -25,6 +27,9 @@ function canAccessAnalysis(userId, analysisId) {
 }
 
 router.get('/analyses/:analysisId/annotations', requireAuth, (req, res) => {
+  if (!isPositiveIntegerId(req.params.analysisId)) {
+    return res.status(400).json({ error: 'Invalid analysis id' });
+  }
   const analysisId = parseInt(req.params.analysisId, 10);
   if (!canAccessAnalysis(req.user.id, analysisId)) {
     return res.status(403).json({ error: 'Not authorized to view annotations on this analysis' });
@@ -50,15 +55,26 @@ router.get('/analyses/:analysisId/annotations', requireAuth, (req, res) => {
 });
 
 router.put('/analyses/:analysisId/annotations', requireAuth, (req, res) => {
-  const analysisId = parseInt(req.params.analysisId, 10);
   const { paneAStrokes, paneBStrokes } = req.body || {};
+  if (!isPositiveIntegerId(req.params.analysisId)) {
+    return res.status(400).json({ error: 'Invalid analysis id' });
+  }
+  const analysisId = parseInt(req.params.analysisId, 10);
 
   if (!canAccessAnalysis(req.user.id, analysisId)) {
     return res.status(403).json({ error: 'Not authorized to annotate this analysis' });
   }
-  if (!Array.isArray(paneAStrokes) || !Array.isArray(paneBStrokes)) {
-    return res.status(400).json({ error: 'paneAStrokes and paneBStrokes must be arrays' });
-  }
+
+  // Was array-shape-only before, with no ceiling -- a pen stroke's points
+  // array grows with every pixel of drag, so an unbounded save (or an
+  // abusive client) could write an arbitrarily large blob into this
+  // upserted-per-(analysis,author) row. Every other free-form write path
+  // in this pass got a MAX_LENGTHS cap; this one was missed.
+  const bad = validate([
+    ['paneAStrokes', paneAStrokes, isBoundedJsonArray(MAX_LENGTHS.annotationStrokesJson), `must be an array, serialized under ${MAX_LENGTHS.annotationStrokesJson} characters`],
+    ['paneBStrokes', paneBStrokes, isBoundedJsonArray(MAX_LENGTHS.annotationStrokesJson), `must be an array, serialized under ${MAX_LENGTHS.annotationStrokesJson} characters`],
+  ]);
+  if (bad) return res.status(400).json(bad);
 
   db.prepare(`
     INSERT INTO swing_annotations (analysis_id, author_id, pane_a_strokes, pane_b_strokes, updated_at)

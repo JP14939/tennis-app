@@ -5,7 +5,8 @@ const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
 const { currentTier } = require('../utils/tier');
 const { DATA_DIR } = require('../config/paths');
-const { SHOT_TYPES } = require('../config/shotTypes');
+const { SHOT_TYPES, isShotType, isScore } = require('../domain/invariants');
+const { validate, oneOfMessage } = require('../validation/validateBody');
 
 const router = express.Router();
 
@@ -116,9 +117,6 @@ router.get('/history/:id', requireAuth, (req, res) => {
 router.post('/history', requireAuth, (req, res) => {
   const result = req.body || {};
   const { shotType } = result;
-  if (!shotType) {
-    return res.status(400).json({ error: 'shotType is required' });
-  }
 
   const tier = currentTier(req.user.id);
   const limit = limitForTier(tier);
@@ -127,21 +125,24 @@ router.post('/history', requireAuth, (req, res) => {
   // This endpoint trusts req.body as a whole (it's meant to be called with
   // whatever /analyse just returned) with no signature or correlation check
   // tying it back to a real analysis -- so any authenticated user can POST
-  // an arbitrary body here directly. shotType was already checked above;
-  // the score wasn't, and it goes straight into a REAL column. An
-  // unvalidated non-numeric value (e.g. a string) gets stored as-is under
-  // SQLite's type affinity, and TEXT sorts above REAL/INTEGER in SQLite's
-  // ordering rules -- so a bad value here would permanently look like a
-  // top score to profile.js's `similarity >= 75` rank check and
-  // leaderboard.js's `ORDER BY score DESC`.
+  // an arbitrary body here directly. Both values below therefore need
+  // checking against what they're SUPPOSED to be, not against what the
+  // happy path happens to send:
+  //   - shotType used to be truthy-checked only, so 'banana' saved fine and
+  //     became its own silent bucket in every leaderboard/shot-type query.
+  //   - the score goes straight into a REAL column. SQLite's type affinity
+  //     stores a non-numeric value as text, and TEXT sorts ABOVE every
+  //     number in ORDER BY -- so one bad row permanently looks like a top
+  //     score to leaderboard.js. A finite number isn't sufficient either:
+  //     a similarity is a percentage, so 999999 is just as wrong as 'zzz'.
   const rawScore = top.overall_score ?? top.similarity;
-  let similarity = 0;
-  if (rawScore !== undefined && rawScore !== null) {
-    similarity = Number(rawScore);
-    if (!Number.isFinite(similarity)) {
-      return res.status(400).json({ error: 'matches[0] score must be a finite number' });
-    }
-  }
+  const similarity = rawScore === undefined || rawScore === null ? 0 : Number(rawScore);
+
+  const bad = validate([
+    ['shotType', shotType, isShotType, oneOfMessage(SHOT_TYPES)],
+    ['matches[0] score', similarity, isScore, 'must be a number between 0 and 100'],
+  ]);
+  if (bad) return res.status(400).json(bad);
 
   // Check-then-insert wrapped as one synchronous transaction (better-sqlite3
   // transactions are synchronous) so the count check and the insert can't be
@@ -185,8 +186,8 @@ router.patch('/history/:id', requireAuth, (req, res) => {
   if (typeof flagged_not_shot !== 'boolean' && typeof confirmed_real_shot !== 'boolean' && !hasShotType) {
     return res.status(400).json({ error: 'flagged_not_shot, confirmed_real_shot (boolean), or shot_type (string) is required' });
   }
-  if (hasShotType && !SHOT_TYPES.includes(shot_type)) {
-    return res.status(400).json({ error: `shot_type must be one of: ${SHOT_TYPES.join(', ')}` });
+  if (hasShotType && !isShotType(shot_type)) {
+    return res.status(400).json({ error: `shot_type ${oneOfMessage(SHOT_TYPES)}`, field: 'shot_type' });
   }
 
   const row = db.prepare('SELECT * FROM analyses WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
@@ -228,12 +229,13 @@ router.patch('/history/:id', requireAuth, (req, res) => {
   res.json(serializeRow(updated));
 });
 
-// SQLite foreign keys aren't enforced in this app (see db.js), so a bare
-// DELETE FROM analyses leaves coach_notes/shared_analyses/swing_annotations/
-// drill_practice_attempts rows pointing at a now-dead analysis_id forever.
-// The account-deletion path in auth.js already cleans these same four
-// tables for the "delete everything" case -- this mirrors it for the
-// "delete one swing" case.
+// better-sqlite3 opens every connection with `PRAGMA foreign_keys = ON`, so
+// a bare DELETE FROM analyses does NOT silently orphan its children -- it
+// throws SQLITE_CONSTRAINT_FOREIGNKEY and the delete fails outright while
+// coach_notes/shared_analyses/swing_annotations/drill_practice_attempts rows
+// still reference the analysis. Clearing them first is what makes the delete
+// possible at all. The account-deletion path in auth.js does the same thing
+// for the "delete everything" case; this mirrors it for one swing.
 const deleteAnalysisAndChildren = db.transaction((analysisId, userId) => {
   const owned = db.prepare('SELECT id FROM analyses WHERE id = ? AND user_id = ?').get(analysisId, userId);
   if (!owned) return 0;

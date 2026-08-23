@@ -2,6 +2,8 @@ const express = require('express');
 const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
 const { sendPushNotification } = require('../utils/pushNotifications');
+const { MAX_LENGTHS, isText, isOptionalText } = require('../domain/invariants');
+const { validate } = require('../validation/validateBody');
 
 const router = express.Router();
 
@@ -104,9 +106,13 @@ router.post('/messages/thread/:otherUserId', requireAuth, (req, res) => {
   if (!Number.isInteger(otherId)) {
     return res.status(400).json({ error: 'Invalid user id' });
   }
-  if (!body || !body.trim()) {
-    return res.status(400).json({ error: 'Message body is required' });
-  }
+  // The old truthy-and-trim check accepted a non-string body (which then threw
+  // inside better-sqlite3 as a 500) and had no length cap -- and the body is
+  // pushed verbatim as a notification, not just stored.
+  const bad = validate([
+    ['body', body, isText(MAX_LENGTHS.messageBody), `must be a message of ${MAX_LENGTHS.messageBody} characters or fewer`],
+  ]);
+  if (bad) return res.status(400).json(bad);
 
   const recipient = db.prepare('SELECT id, name FROM users WHERE id = ?').get(otherId);
   if (!recipient) return res.status(404).json({ error: 'User not found' });
@@ -136,6 +142,10 @@ router.post('/messages/report/:messageId', requireAuth, (req, res) => {
   if (!Number.isInteger(messageId)) {
     return res.status(400).json({ error: 'Invalid message id' });
   }
+  const bad = validate([
+    ['reason', reason, isOptionalText(MAX_LENGTHS.reportReason), `must be ${MAX_LENGTHS.reportReason} characters or fewer`],
+  ]);
+  if (bad) return res.status(400).json(bad);
 
   const message = db.prepare(
     'SELECT * FROM messages WHERE id = ? AND (user_a_id = ? OR user_b_id = ?)'

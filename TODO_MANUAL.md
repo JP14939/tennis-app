@@ -5,11 +5,17 @@ account, or physically testing with a device — none of it is something I
 can do myself. Grouped chronologically by session below; skim for `~~struck
 through~~` (resolved) vs. plain (still open) headings if you're catching up.
 
-**Quick status as of 2026-08-21, for a fresh chat starting cold:**
-everything's committed, pushed, and actually deployed/working on the
-hosted server (`https://rallymax.167-233-107-31.sslip.io` — see `HANDOVER.md`
-item #41 for how deploys work now, they're **not automatic**). Real
-open items, cheapest first:
+**Quick status as of 2026-08-22, for a fresh chat starting cold:**
+**a large amount of local work is uncommitted** — a database-verification
+framework, two audit-round fixes, and native-device bug fixes (see
+`HANDOVER.md` item #42 for the full picture) are all sitting in the working
+tree, tested and green (418 backend tests, `npm run verify:db` clean, web
+bundle builds), but never committed or pushed. One exception: a one-line
+SQL fix to `courts.js` was deployed directly to the hosted server today
+(isolated from the rest of this uncommitted work) and is live. Real open
+items, cheapest first:
+- **Commit and push today's work** — nothing lost, just never asked for.
+  See the new section below for what's in scope.
 - **Resend account** needed for password reset emails to actually send
   (`RESEND_API_KEY` unset) — see "self-serve password reset" section below.
 - **IMG_5823.MOV**: dry-run only (6 candidates), never Claude-verified.
@@ -641,3 +647,151 @@ Native-build note: because the app uses `expo-dev-client`, dependency
 changes like this only reach the native side on the next
 `eas build`/prebuild — the existing dev client still contains the old
 module set until then.
+
+---
+
+## Connect GitHub to enable the 5 scheduled daily routines (2026-08-22)
+
+Fully designed and ready to create, blocked on one manual step only you
+can do: **run `/web-setup` in the Claude Code terminal** (or install the
+GitHub App at https://claude.ai/code/onboarding?magic=github-app-setup)
+to connect your GitHub account. `RemoteTrigger` create calls against
+`JP14939/tennis-app` are currently failing with a 401 ("Connect your
+GitHub account before saving a routine that uses a GitHub repository")
+— this is an OAuth/consent flow that has to happen in your own browser
+session, not something that can be done on your behalf.
+
+Once connected, the five routines (all `claude-sonnet-5`, `environment_id:
+env_01DBvdQgWmCeNBRoUWiCz3Jz`, repo `https://github.com/JP14939/tennis-app`)
+are ready to create as-designed:
+
+| # | Time (London / UTC, currently BST) | Routine | Output |
+| --- | --- | --- | --- |
+| 1 | 04:00 / 03:00 | Logic review (correctness vs. intent, boundary errors, invariant violations, drifted duplicate logic) | branch `logic-review/YYYY-MM-DD` + PR |
+| 2 | 04:15 / 03:15 | Bug / critical-error / edge-case sweep | branch `bug-sweep/YYYY-MM-DD` + PR |
+| 3 | 04:30 / 03:30 | Security review (`/security-review` skill if available in that environment, else a direct checklist) | branch `security-review/YYYY-MM-DD` + PR. **Critical findings (client-data loss, large financial loss) open a `🚨 CRITICAL:`-titled PR immediately on discovery, not batched at end-of-run**, so GitHub's own email notification is the fastest available signal — no WhatsApp/Slack channel is wired up yet (none currently connected; user said they'll connect WhatsApp themselves later) |
+| 4 | 04:45 / 03:45 | Brainstorm / future-plans ideation, reading `HANDOVER.md`/`TODO_MANUAL.md` first | `docs/future-ideas.md` (new/dated section) + PR |
+| 5 | 05:00 / 04:00 | Round up that day's PRs/branches (`gh pr list`, falling back to `git branch -r` filtered by today's date) and update `HANDOVER.md`/`TODO_MANUAL.md` | commits + **pushes straight to master** — docs only, never application code; the other four routines' PRs still wait for a human merge |
+
+Explicitly decided against: the routines merging each other's PRs
+automatically (kept human-in-the-loop on all application-code changes),
+and the security routine autonomously shutting down the production
+server on a critical finding (no SSH/infra credentials available to the
+cloud sandbox anyway, and an AI's own severity judgment triggering an
+unsupervised outage was judged worse than the risk it'd be guarding
+against).
+
+**Caveat:** the cron expressions above are fixed UTC, so the actual
+London local time will drift by an hour whenever BST/GMT changes
+(next: late October 2026) unless the cron expressions are updated then.
+
+Also worth knowing before flipping this on: these are real
+`claude-sonnet-5` cloud sessions billed against the same usage limits as
+interactive Claude Code sessions — five real agentic runs every day,
+three of which may also run tests and open PRs. Moving them to 4am only
+avoids competing with daytime interactive usage; it doesn't reduce total
+consumption. User confirmed proceeding with all 5 daily despite this.
+
+---
+
+## 85 old History rows have no watchable video on the hosted server (2026-08-22)
+
+Not a bug to fix in code — a scoped data gap, found while investigating a
+"video unavailable" report and confirmed directly via SSH.
+
+Pro clips are fine: `data/04_clips` has all 1282 real files on the host and
+serve correctly (verified: a real pro-clip URL returns 200). The problem is
+narrower — 85 of this account's 86 saved analyses all date to
+**2026-08-14**, matching the "batch-analyzed 2 full match videos into 85
+History rows" work documented in `HANDOVER.md`. That batch was run
+**locally** against the dev backend, not through the live server, so the
+resulting `user_clip_url`s (e.g. `/user-clips/8_147_3/original.mp4`) point
+at files that were never copied to the host — confirmed: that exact URL
+404s, and `backend/data/runtime/user_clips` is empty on the host.
+
+**A brand-new upload made through the live app today would work fine** —
+it's created directly on the host, so its video exists where the app looks
+for it. This only affects the 85 old rows from that specific local batch
+run.
+
+**If those old entries need to be watchable too**, the fix is a one-time
+`scp`/`tar` copy of the relevant local `data/runtime/user_clips/8_*` dirs
+to `/opt/tennis_app/data/runtime/user_clips/` on the host (same mechanism
+as the "data/ needs manual copy" note in the deployment gotcha section) —
+not done here since no explicit decision was made to spend that effort on
+recovering old test data specifically.
+
+---
+
+## End-of-session handoff (2026-08-22) — see `HANDOVER.md` item #42 for the full story
+
+- **Uncommitted work needs a decision.** A large, tested (418 backend
+  tests, `verify:db` clean, web bundle builds) but entirely uncommitted
+  diff is sitting in the working tree: the database-verification
+  framework, two audit-round fixes, and the native-device bug fixes
+  (`PressableScale` rewrite, `HomeScreen`/`FloatingTabBar` layout fixes).
+  Nothing was committed or pushed this session — say the word next
+  session and it's a normal `git add`/`commit`/`push`.
+- **The Playwright MCP server was added but needs a fresh session to
+  actually use** — `claude mcp add playwright -- npx -y @playwright/mcp@latest`
+  ran successfully and shows Connected, but MCP tools registered mid-session
+  don't surface until reconnect. It verifies `react-native-web` (the web
+  build) only, not native iOS/Android — the bugs found this session were
+  all native-only and invisible on web, so it's a complement to real-device
+  testing, not a replacement for it.
+- **Confirm the three fixes on your actual phone if you haven't already**:
+  avatar should be circular (was square), the Home CTA card should have
+  its green background back, and Find Games should show real courts
+  (a live SQL bug — deployed and confirmed working from this side, but
+  worth your own eyes on it too).
+- **85 old History rows' videos** — see the section directly above. No
+  action needed unless you want those specific old entries watchable.
+
+---
+
+## Set up off-box database backups (2026-08-23)
+
+Found while reviewing hosting status: `backend/data/app.db` — every user
+account, analysis, friend link, message, everything — has **no backup at
+all**. It's a single SQLite file on the Hetzner VPS with no redundancy; if
+that disk/VM were lost, it's gone with no recovery path. (The backup
+snapshots already documented elsewhere in this doc/`HANDOVER.md` are all for
+the separate ML pro-database, `pro_database.json` — not this file.)
+
+Chose the smallest fix over a full Postgres/Supabase/Neon migration for now:
+keep SQLite, make it durable. `backend/scripts/backupDatabase.js` is written
+and tested (uses SQLite's Online Backup API via `better-sqlite3`'s
+`.backup()` — safe against the live WAL-mode DB, no need to stop the
+server; run it directly with `npm run backup:db`). It snapshots to
+`backend/data/backups/app-<timestamp>.db` and prunes anything beyond the
+last 14. That alone only protects against *this file* getting corrupted —
+it still lives on the same disk, so it doesn't protect against losing the
+VPS itself. Getting a copy off that box needs three things only you can do:
+
+1. **Create a free Backblaze B2 account** (backblaze.com/b2) and a bucket
+   (e.g. `rallymax-db-backups` — 10GB free tier comfortably covers this,
+   the DB is currently ~9MB and backups are incremental in size only in
+   the sense that old ones get pruned, not that each one is small forever).
+   Generate an application key (Account → App Keys → Add a New Application
+   Key), scoped to just that bucket if you want to be tight about it.
+2. **Install and configure `rclone` on the VPS**:
+   ```
+   ssh -i ~/.ssh/rallymax_key root@167.233.107.31
+   curl https://rclone.org/install.sh | sudo bash
+   rclone config    # create a remote named b2remote, type "b2", paste the
+                     # key id / application key from step 1
+   ```
+3. **Add the cron job** (`crontab -e` on the VPS):
+   ```
+   0 3 * * * cd /opt/tennis_app && docker compose exec -T app node backend/scripts/backupDatabase.js && rclone copy backend/data/backups b2remote:rallymax-db-backups --min-age 1m
+   ```
+   (3am matches the same "avoid daytime usage" reasoning as the scheduled
+   routines' cron times elsewhere in this doc.)
+
+Once set up, the real verification is checking the B2 bucket the morning
+after the first 3am run and confirming a new file landed. Considered and
+rejected Supabase for the actual DB engine itself (not just backups) — its
+free tier auto-pauses a project after 7 days of no traffic and has zero
+backups on that tier; self-hosted Postgres on this same VPS or Neon were
+the stronger picks if a full engine migration is ever revisited, but that's
+a separate, bigger decision deliberately deferred here.

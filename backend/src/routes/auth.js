@@ -8,6 +8,7 @@ const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
 const { DATA_DIR } = require('../config/paths');
 const { sendPasswordResetEmail } = require('../utils/email');
+const { MAX_LENGTHS, isText } = require('../domain/invariants');
 
 const router = express.Router();
 
@@ -46,8 +47,8 @@ router.post('/auth/signup', async (req, res) => {
   if (!password || password.length < 8) {
     return res.status(400).json({ error: 'Password must be at least 8 characters' });
   }
-  if (!name || !name.trim()) {
-    return res.status(400).json({ error: 'Name is required' });
+  if (!isText(MAX_LENGTHS.name)(name)) {
+    return res.status(400).json({ error: `Name is required and must be ${MAX_LENGTHS.name} characters or fewer`, field: 'name' });
   }
 
   const normalisedEmail = email.trim().toLowerCase();
@@ -217,8 +218,8 @@ router.patch('/auth/me', requireAuth, (req, res) => {
   if (name !== undefined && typeof name !== 'string') {
     return res.status(400).json({ error: 'Name must be a string' });
   }
-  if (name !== undefined && !name.trim()) {
-    return res.status(400).json({ error: 'Name is required' });
+  if (name !== undefined && !isText(MAX_LENGTHS.name)(name)) {
+    return res.status(400).json({ error: `Name is required and must be ${MAX_LENGTHS.name} characters or fewer`, field: 'name' });
   }
   if (username !== undefined && typeof username !== 'string') {
     return res.status(400).json({ error: 'Username must be a string' });
@@ -336,10 +337,10 @@ router.delete('/auth/me', requireAuth, async (req, res) => {
     db.prepare('DELETE FROM friend_codes WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM drill_practice_attempts WHERE user_id = ?').run(userId);
     // Any reset token issued before the deletion request must die with the
-    // account -- SQLite foreign keys aren't enforced here, so an emailed,
-    // still-unexpired token would otherwise go on satisfying
-    // /auth/reset-password's lookup and set a new password on the
-    // now-anonymized row below.
+    // account. The users row is anonymized rather than deleted below, so
+    // foreign keys alone wouldn't clear these -- an emailed, still-unexpired
+    // token would go on satisfying /auth/reset-password's lookup and set a
+    // new password on the anonymized row.
     db.prepare('DELETE FROM password_resets WHERE user_id = ?').run(userId);
     // Pure relationship-state records (no independent content the other
     // party would lose) -- safe to delete outright, unlike messages.

@@ -13,12 +13,15 @@ RallyMax: an AI-powered tennis swing analysis app (Expo — iOS/Android/web). Co
 ### Backend (`backend/`)
 ```
 cd backend
-npm run dev     # nodemon, hot-reload, port 5000
-npm start       # node src/server.js, no reload
-npm test        # jest + supertest
+npm run dev       # nodemon, hot-reload, port 5000
+npm start         # node src/server.js, no reload
+npm test          # jest + supertest
+npm run verify:db # read-only check of backend/data/app.db against src/domain/invariants.js; exits 1 on violation, safe against production
 npx jest src/routes/drills.test.js   # run a single test file
 ```
-Tests are colocated with routes (e.g. `src/routes/drills.test.js`, `history.test.js`, `highlights.test.js`, `dev.drills.test.js`). Most route files have **zero** test coverage — this is a known, tracked gap, not an oversight to silently "fix" at scale.
+Tests are colocated with routes (e.g. `src/routes/drills.test.js`, `history.test.js`, `highlights.test.js`, `dev.drills.test.js`, and the newer `*.validation.test.js` files). Most route files still have **zero** behavioral test coverage beyond input validation — a known, tracked gap, not an oversight to silently "fix" at scale.
+
+**Shared validation/invariant layer** (`src/domain/invariants.js`, `src/validation/validateBody.js`, `src/domain/integrityChecks.js`): domain rules (vocabularies, cross-field constraints) are defined once in `invariants.js` and consumed two ways — `validateBody.js` rejects bad input at write time (400s), `integrityChecks.js` re-checks the same rules against data already at rest (`npm run verify:db` / `backend/scripts/verifyIntegrity.js`). When adding a new field constraint, add it to `invariants.js` rather than inlining an `if` check in a route, so both consumers stay in sync.
 
 ### Frontend (`frontend/`)
 ```

@@ -1,4 +1,20 @@
 const db = require('../db');
+const crypto = require('crypto');
+
+// Same alphabet/shape coach.js's and friends.js's invite/friend codes both
+// need: 8 uppercase base32-ish characters, excluding ambiguous 0/O/1/I so a
+// code is easy to read aloud or type from memory. Was defined identically in
+// both route files (each one noting in a comment that the other had the same
+// code); extracted alongside redeemInviteCode() below, which already
+// consolidates the other half of this exact duplication.
+function generateInviteCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 8; i++) {
+    code += alphabet[crypto.randomInt(alphabet.length)];
+  }
+  return code;
+}
 
 // Shared shape behind /coach/link and /friends/link: look up a still-valid
 // invite code, reject self-redemption, insert the resulting link, and mark
@@ -30,4 +46,4 @@ function redeemInviteCode({ inviteTable, ownerIdColumn, code, requesterId, inser
   return { outcome: redeem(), CODE_NOT_FOUND, SELF_LINK };
 }
 
-module.exports = { redeemInviteCode };
+module.exports = { redeemInviteCode, generateInviteCode };

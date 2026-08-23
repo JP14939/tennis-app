@@ -4,4 +4,4 @@
 // browser on this machine can reach a locally-running backend unchanged —
 // update this fallback if your laptop's IP changes (check with `ipconfig` /
 // `ifconfig`), Wi-Fi networks often reassign it.
-export const API_BASE = process.env.EXPO_PUBLIC_API_BASE || 'http://192.168.1.162:5000';
+export const API_BASE = process.env.EXPO_PUBLIC_API_BASE || 'http://192.168.1.236:5000';
