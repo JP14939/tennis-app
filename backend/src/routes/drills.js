@@ -99,6 +99,19 @@ router.post('/drills/:stepId/practice', requireAuth, (req, res) => {
   const step = db.prepare('SELECT * FROM drill_routine_steps WHERE id = ?').get(req.params.stepId);
   if (!step) return res.status(404).json({ error: 'Step not found' });
 
+  // A step's id is only ever handed out via GET /drills/:id, which already
+  // 403s a locked (premium, non-premium-user) item before returning its
+  // steps -- but nothing stopped a guessed/reused stepId from recording a
+  // practice attempt here without going through that gate. Re-check the
+  // parent item so this route can't be used to bypass the paywall.
+  const parentItem = db.prepare('SELECT * FROM drill_items WHERE id = ?').get(step.drill_item_id);
+  if (!parentItem || isLocked(parentItem, req)) {
+    return res.status(403).json({
+      error: 'This is a Premium lesson — upgrade to unlock it.',
+      code: 'PREMIUM_REQUIRED',
+    });
+  }
+
   if (analysisId !== undefined && analysisId !== null) {
     const analysis = db.prepare('SELECT id FROM analyses WHERE id = ? AND user_id = ?').get(analysisId, req.user.id);
     if (!analysis) return res.status(403).json({ error: 'That analysis does not belong to you' });

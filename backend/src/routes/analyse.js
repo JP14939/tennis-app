@@ -57,6 +57,19 @@ router.post('/analyse', requireAuth, upload.single('video'), async (req, res) =>
     cleanup();
     return res.status(400).json({ error: `shotType must be one of ${SHOT_TYPES.join(', ')}` });
   }
+  // Validated before the usage-slot reservation below so a malformed
+  // contactTime 400s without burning one of the free tier's limited daily
+  // slots -- this used to be checked after reservation and had no release
+  // on this particular early-return path, silently costing a free user a
+  // slot for a request that never ran an analysis.
+  let parsedContactTime;
+  if (contactTime !== undefined && contactTime !== '') {
+    parsedContactTime = parseFloat(contactTime);
+    if (Number.isNaN(parsedContactTime)) {
+      cleanup();
+      return res.status(400).json({ error: 'contactTime must be a number (seconds)' });
+    }
+  }
 
   // Premium accounts are unlimited -- only free-tier accounts are capped.
   // /analyse requires auth (requireAuth above) specifically so this can't be
@@ -89,13 +102,8 @@ router.post('/analyse', requireAuth, upload.single('video'), async (req, res) =>
   }
 
   const args = [MATCHER, req.file.path, shotType, '--top', '3'];
-  if (contactTime !== undefined && contactTime !== '') {
-    const t = parseFloat(contactTime);
-    if (Number.isNaN(t)) {
-      cleanup();
-      return res.status(400).json({ error: 'contactTime must be a number (seconds)' });
-    }
-    args.push('--contact-time', String(t));
+  if (parsedContactTime !== undefined) {
+    args.push('--contact-time', String(parsedContactTime));
   }
   if (viewDirectionHint === 'front' || viewDirectionHint === 'back') {
     args.push('--view-direction-hint', viewDirectionHint);
