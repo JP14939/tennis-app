@@ -641,3 +641,23 @@ Native-build note: because the app uses `expo-dev-client`, dependency
 changes like this only reach the native side on the next
 `eas build`/prebuild — the existing dev client still contains the old
 module set until then.
+
+---
+
+## New from the 2026-08-23 docs round-up
+
+**Review and merge (or request changes on) PR #1, "Bug sweep."** Still
+open, not merged by anyone — see `HANDOVER.md`'s new "Scheduled-routine
+PR round-up" section for the full list of what it fixes. It deliberately
+left a few things unfixed that need your call rather than an automatic
+patch:
+- An invite-code redemption TOCTOU race (very low probability — ~10¹²
+  collision space) — decide if it's worth closing or fine to leave.
+- A non-transactional bulk Overpass court-upsert — same "is this worth
+  the risk of touching blind" call.
+- `runPythonJson`'s subprocess timeout not escalating to `SIGKILL` — a
+  hung Python process may currently outlive its timeout.
+- **Product-intent question**: what should an empty `rallyIds: []` mean
+  when building a highlight reel — is that a no-op, an error, or "use
+  every rally"? The route currently has ambiguous behavior here and the
+  PR didn't guess at an answer.
