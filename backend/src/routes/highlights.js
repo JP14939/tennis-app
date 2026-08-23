@@ -123,6 +123,11 @@ function runJob(jobId, videoPath, userId) {
     fs.unlink(videoPath, () => {});
     console.error('[highlights] failed to spawn python:', err);
     db.prepare(`UPDATE highlight_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?`).run('Failed to start detection process', jobId);
+    // Every other failure path in this function (nonzero exit, invalid JSON
+    // output) notifies the user their job failed -- this one (spawn itself
+    // never starting, e.g. a bad interpreter path) marked the job failed in
+    // the DB but left the user with no proactive signal, unlike the rest.
+    sendPushNotification(userId, 'Rally detection failed', 'Failed to start detection process');
   });
 }
 
@@ -219,6 +224,13 @@ router.post('/highlights/jobs/:id/reel', requireAuth, requirePremium, (req, res)
   if (job.status !== 'done') return res.status(400).json({ error: 'Job is not ready yet' });
 
   const { top, rallyIds } = req.body || {};
+  // A non-integer element (e.g. an object/array a buggy client sent) bound
+  // straight into the '?' placeholders below throws a RangeError deep in
+  // better-sqlite3 ("Too few parameter values were provided"), crashing the
+  // route with a 500 instead of a clean 400.
+  if (Array.isArray(rallyIds) && !rallyIds.every(Number.isInteger)) {
+    return res.status(400).json({ error: 'rallyIds must be an array of integers' });
+  }
   let clips;
   if (Array.isArray(rallyIds) && rallyIds.length > 0) {
     const placeholders = rallyIds.map(() => '?').join(',');
@@ -266,6 +278,15 @@ router.get('/highlights/reel-jobs/:id', requireAuth, (req, res) => {
 
 router.patch('/highlights/rallies/:id', requireAuth, (req, res) => {
   const { outcome_tag, archived, boundary_note } = req.body || {};
+  // Bound directly into the UPDATE below with no type check -- a non-primitive
+  // value (e.g. an object) throws the same class of RangeError as rallyIds
+  // above instead of a clean 400.
+  if (outcome_tag !== undefined && outcome_tag !== null && typeof outcome_tag !== 'string') {
+    return res.status(400).json({ error: 'outcome_tag must be a string' });
+  }
+  if (boundary_note !== undefined && boundary_note !== null && typeof boundary_note !== 'string') {
+    return res.status(400).json({ error: 'boundary_note must be a string' });
+  }
   const clip = db.prepare(`SELECT * FROM rally_clips WHERE id = ? AND user_id = ?`).get(req.params.id, req.user.id);
   if (!clip) return res.status(404).json({ error: 'Rally clip not found' });
 

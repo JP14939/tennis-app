@@ -43,10 +43,10 @@ router.post('/auth/signup', async (req, res) => {
   if (!email || !EMAIL_RE.test(email)) {
     return res.status(400).json({ error: 'A valid email is required' });
   }
-  if (!password || password.length < 8) {
+  if (typeof password !== 'string' || password.length < 8) {
     return res.status(400).json({ error: 'Password must be at least 8 characters' });
   }
-  if (!name || !name.trim()) {
+  if (typeof name !== 'string' || !name.trim()) {
     return res.status(400).json({ error: 'Name is required' });
   }
 
@@ -152,10 +152,10 @@ router.post('/auth/forgot-password', async (req, res) => {
 
 router.post('/auth/reset-password', async (req, res) => {
   const { token, newPassword } = req.body || {};
-  if (!token || !newPassword) {
+  if (!token || typeof token !== 'string' || !newPassword) {
     return res.status(400).json({ error: 'Token and new password are required' });
   }
-  if (newPassword.length < 8) {
+  if (typeof newPassword !== 'string' || newPassword.length < 8) {
     return res.status(400).json({ error: 'New password must be at least 8 characters' });
   }
 
@@ -232,16 +232,31 @@ router.patch('/auth/me', requireAuth, (req, res) => {
     }
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(req.user.id);
   if (!user) {
     return res.status(404).json({ error: 'User no longer exists' });
   }
 
+  // COALESCE-against-NULL rather than reading the current row and writing
+  // its snapshot back for any field this request omitted -- with the old
+  // read-then-write-stale-snapshot shape, two concurrent PATCH /auth/me
+  // requests touching different fields (e.g. two devices, one changing
+  // `name` and the other `notifications_enabled`) could race: whichever
+  // UPDATE committed last would overwrite the other's change back to its
+  // own stale snapshot of the untouched field. Binding NULL for an omitted
+  // field and letting SQLite fall back to the column's current value inside
+  // the same statement removes that read-write gap entirely.
   try {
-    db.prepare('UPDATE users SET name = ?, notifications_enabled = ?, username = ? WHERE id = ?').run(
-      name !== undefined ? name.trim() : user.name,
-      notifications_enabled !== undefined ? (notifications_enabled ? 1 : 0) : user.notifications_enabled,
-      normalisedUsername !== undefined ? normalisedUsername : user.username,
+    db.prepare(`
+      UPDATE users
+      SET name = COALESCE(?, name),
+          notifications_enabled = COALESCE(?, notifications_enabled),
+          username = COALESCE(?, username)
+      WHERE id = ?
+    `).run(
+      name !== undefined ? name.trim() : null,
+      notifications_enabled !== undefined ? (notifications_enabled ? 1 : 0) : null,
+      normalisedUsername !== undefined ? normalisedUsername : null,
       user.id
     );
   } catch (err) {
@@ -257,10 +272,10 @@ router.patch('/auth/me', requireAuth, (req, res) => {
 
 router.patch('/auth/password', requireAuth, async (req, res) => {
   const { currentPassword, newPassword } = req.body || {};
-  if (!currentPassword || !newPassword) {
+  if (!currentPassword || typeof currentPassword !== 'string' || !newPassword) {
     return res.status(400).json({ error: 'Current and new password are required' });
   }
-  if (newPassword.length < 8) {
+  if (typeof newPassword !== 'string' || newPassword.length < 8) {
     return res.status(400).json({ error: 'New password must be at least 8 characters' });
   }
 
@@ -281,7 +296,7 @@ router.patch('/auth/password', requireAuth, async (req, res) => {
 
 router.delete('/auth/me', requireAuth, async (req, res) => {
   const { password } = req.body || {};
-  if (!password) {
+  if (!password || typeof password !== 'string') {
     return res.status(400).json({ error: 'Password is required to delete your account' });
   }
 

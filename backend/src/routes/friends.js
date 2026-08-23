@@ -159,8 +159,14 @@ router.post('/friends/:userId/matches', requireAuth, (req, res) => {
   if (!isFriends(req.user.id, friendId)) {
     return res.status(403).json({ error: 'Not friends with this user' });
   }
-  if (!playedAt || !Number.isInteger(setsWon) || !Number.isInteger(setsLost)) {
+  if (!playedAt || (typeof playedAt !== 'string' && typeof playedAt !== 'number') || !Number.isInteger(setsWon) || !Number.isInteger(setsLost)) {
     return res.status(400).json({ error: 'playedAt, setsWon, and setsLost are required' });
+  }
+  // scoreDetail is bound directly into the INSERT below -- a non-primitive
+  // value (e.g. an object) throws a RangeError deep in better-sqlite3
+  // instead of a clean 400, same class of bug as playedAt above.
+  if (scoreDetail !== undefined && scoreDetail !== null && typeof scoreDetail !== 'string') {
+    return res.status(400).json({ error: 'scoreDetail must be a string' });
   }
 
   const info = db.prepare(
@@ -189,6 +195,12 @@ router.post('/friends/:userId/share', requireAuth, (req, res) => {
 
   if (!isFriends(req.user.id, friendId)) {
     return res.status(403).json({ error: 'Not friends with this user' });
+  }
+  // Bound directly into the SELECT below -- a non-primitive analysisId (e.g.
+  // an object) throws a RangeError deep in better-sqlite3 instead of a clean
+  // 400, same class of bug fixed elsewhere in this file for friendId.
+  if (!Number.isInteger(analysisId)) {
+    return res.status(400).json({ error: 'Invalid analysisId' });
   }
   const analysis = db.prepare('SELECT * FROM analyses WHERE id = ? AND user_id = ?')
     .get(analysisId, req.user.id);

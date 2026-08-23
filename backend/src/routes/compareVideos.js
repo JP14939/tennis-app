@@ -60,7 +60,7 @@ router.post('/compare-videos', requireAuth, requirePremium, upload.fields([
   for (const [field, flag] of [[contactTimeA, '--contact-a'], [contactTimeB, '--contact-b']]) {
     if (field !== undefined && field !== '') {
       const t = parseFloat(field);
-      if (Number.isNaN(t)) {
+      if (!Number.isFinite(t)) {
         cleanup();
         return res.status(400).json({ error: `${flag} value must be a number (seconds)` });
       }

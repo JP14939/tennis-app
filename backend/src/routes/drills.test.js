@@ -70,6 +70,15 @@ describe('GET /drills', () => {
     expect(res.status).toBe(400);
   });
 
+  test('rejects a repeated shot_type query param instead of crashing', async () => {
+    // qs parses ?shot_type=a&shot_type=b into an array -- binding that
+    // straight into the '?' placeholder used to throw a RangeError deep in
+    // better-sqlite3 ("Too many parameter values were provided"), surfacing
+    // as a bare 500 instead of a validation error.
+    const res = await request(app).get('/api/drills?shot_type=forehand&shot_type=backhand');
+    expect(res.status).toBe(400);
+  });
+
   test('archived items never appear', async () => {
     // The in-memory DB is shared across every test in this file (no reset
     // between tests), so assert this specific item is absent rather than
@@ -173,6 +182,35 @@ describe('POST /drills/:stepId/practice', () => {
   test('works with no analysisId at all', async () => {
     const { token } = makeUser('practice3@test.com');
     const drillId = makeDrillItem({ kind: 'lesson' });
+    const stepId = makeStep(drillId);
+    const res = await request(app)
+      .post(`/api/drills/${stepId}/practice`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({});
+    expect(res.status).toBe(200);
+    expect(res.body.attempt_count).toBe(1);
+  });
+
+  test('403s a free user recording an attempt against a step from a locked premium lesson', async () => {
+    // GET /drills/:id 403s for a locked lesson and strips its steps, but this
+    // endpoint used to look up the step directly by id with no check against
+    // its parent drill_item's premium lock -- a free user who knows/enumerates
+    // a stepId (sequential auto-increment) could bypass the paywall's usage
+    // gate even though they can never view the step's real content.
+    const { token } = makeUser('practice-locked@test.com', 'free');
+    const drillId = makeDrillItem({ kind: 'lesson', isPremium: 1 });
+    const stepId = makeStep(drillId);
+    const res = await request(app)
+      .post(`/api/drills/${stepId}/practice`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({});
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('PREMIUM_REQUIRED');
+  });
+
+  test('allows a premium user to record an attempt against a locked-for-others lesson', async () => {
+    const { token } = makeUser('practice-premium@test.com', 'premium');
+    const drillId = makeDrillItem({ kind: 'lesson', isPremium: 1 });
     const stepId = makeStep(drillId);
     const res = await request(app)
       .post(`/api/drills/${stepId}/practice`)

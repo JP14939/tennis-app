@@ -188,6 +188,14 @@ router.patch('/history/:id', requireAuth, (req, res) => {
   if (hasShotType && !SHOT_TYPES.includes(shot_type)) {
     return res.status(400).json({ error: `shot_type must be one of: ${SHOT_TYPES.join(', ')}` });
   }
+  // The two verdicts are meant to be mutually exclusive (see the comment
+  // below), but the "one implies the other's false" logic only kicks in when
+  // exactly one of the two is provided -- a request sending both as `true` in
+  // the same call slipped past it and got stored with both flags set, a state
+  // the UI is never supposed to be able to show.
+  if (flagged_not_shot === true && confirmed_real_shot === true) {
+    return res.status(400).json({ error: 'flagged_not_shot and confirmed_real_shot are mutually exclusive' });
+  }
 
   const row = db.prepare('SELECT * FROM analyses WHERE id = ? AND user_id = ?').get(req.params.id, req.user.id);
   if (!row) {

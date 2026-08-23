@@ -108,6 +108,14 @@ def extract_user_poses(video_path):
 
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps   = cap.get(cv2.CAP_PROP_FPS)
+    if not fps or fps <= 0:
+        # Some malformed/corrupt containers report fps=0.0 from OpenCV. Left
+        # unguarded, the very next `round(idx / fps, 3)` below raises
+        # ZeroDivisionError on frame 0 -- caught by pro_matcher.py's/
+        # video_matcher.py's outer try/except, but surfaces to the user as an
+        # opaque "float division by zero" instead of an actionable message.
+        cap.release()
+        raise RuntimeError(f'Could not read a valid frame rate from the uploaded video ({os.path.basename(video_path)}) -- it may be corrupted.')
     print(f'  Video: {os.path.basename(video_path)} | {total} frames @ {fps:.1f}fps', file=sys.stderr)
 
     base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
