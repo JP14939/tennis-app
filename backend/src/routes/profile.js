@@ -1,7 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
-const { AGGRESSIVE_OUTCOME_TAGS } = require('../domain/invariants');
+const { OUTCOME_TAGS, AGGRESSIVE_OUTCOME_TAGS } = require('../domain/invariants');
 
 const router = express.Router();
 
@@ -98,8 +98,10 @@ function computePlayerType(userId) {
   // 'skip' is excluded on purpose -- it means "this isn't a rally", so it's
   // not a data point about how points end. 'winner_other_side' IS counted as
   // a tagged rally (it's a real, reviewed point) but not as aggression: the
-  // opponent hit that winner, not this user.
-  const RALLY_OUTCOME_TAGS = ['ace', 'winner_this_side', 'winner_other_side'];
+  // opponent hit that winner, not this user. Derived from the shared
+  // OUTCOME_TAGS vocabulary rather than re-listed, so a new outcome tag added
+  // in invariants.js can't silently fall out of this player-type sample.
+  const RALLY_OUTCOME_TAGS = OUTCOME_TAGS.filter((tag) => tag !== 'skip');
   const taggedRallies = db.prepare(
     `SELECT outcome_tag, swing_count, duration_sec FROM rally_clips
      WHERE user_id = ? AND outcome_tag IN (${RALLY_OUTCOME_TAGS.map(() => '?').join(', ')})`

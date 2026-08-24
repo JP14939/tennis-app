@@ -4,7 +4,8 @@ const optionalAuth = require('../middleware/optionalAuth');
 const requireAuth = require('../middleware/requireAuth');
 const { currentTier } = require('../utils/tier');
 const { toClipUrl } = require('../utils/drillClips');
-const { isPositiveIntegerId } = require('../domain/invariants');
+const { DRILL_KINDS, isPositiveIntegerId, isDrillKind } = require('../domain/invariants');
+const { oneOfMessage } = require('../validation/validateBody');
 
 const router = express.Router();
 
@@ -36,8 +37,8 @@ function serializeListItem(item, req) {
 
 router.get('/drills', optionalAuth, (req, res) => {
   const { kind, shot_type } = req.query;
-  if (kind && !['drill', 'lesson'].includes(kind)) {
-    return res.status(400).json({ error: "kind must be 'drill' or 'lesson'" });
+  if (kind && !isDrillKind(kind)) {
+    return res.status(400).json({ error: `kind ${oneOfMessage(DRILL_KINDS)}`, field: 'kind' });
   }
   // A repeated query key (e.g. ?shot_type=forehand&shot_type=backhand) parses
   // to an array via Express/qs -- binding that straight into better-sqlite3's
