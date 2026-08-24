@@ -66,7 +66,9 @@ describe('POST /analyse rejects non-video upload extensions', () => {
 
     // Not a real video, so this will fail later (bad shotType/pipeline) --
     // the point here is only that it gets PAST the file-type filter rather
-    // than being rejected as an unsupported type.
+    // than being rejected as an unsupported type. Reaching that failure
+    // means a real Python subprocess spawn (venv startup + MediaPipe import)
+    // runs to completion first, which comfortably exceeds Jest's 5s default.
     const res = await request(app)
       .post('/api/analyse')
       .set('Authorization', `Bearer ${token}`)
@@ -74,5 +76,5 @@ describe('POST /analyse rejects non-video upload extensions', () => {
       .attach('video', Buffer.from('not a real video'), 'swing.mp4');
 
     expect(res.body.error).not.toMatch(/Unsupported file type/);
-  });
+  }, 30000);
 });
