@@ -8,6 +8,7 @@ const requireAuth = require('../middleware/requireAuth');
 const requirePremium = require('../middleware/requirePremium');
 const { PYTHON, DATA_DIR } = require('../config/paths');
 const { sendPushNotification } = require('../utils/pushNotifications');
+const { safeVideoExt, videoFileFilter } = require('../utils/videoUpload');
 const {
   OUTCOME_TAGS, MAX_LENGTHS, isOutcomeTag, isBoundaryNote, isText,
 } = require('../domain/invariants');
@@ -45,10 +46,10 @@ const upload = multer({
   storage: multer.diskStorage({
     destination: UPLOADS_DIR,
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname) || '.mp4';
-      cb(null, `match_${Date.now()}_${Math.round(Math.random() * 1e6)}${ext}`);
+      cb(null, `match_${Date.now()}_${Math.round(Math.random() * 1e6)}${safeVideoExt(file.originalname)}`);
     },
   }),
+  fileFilter: videoFileFilter,
   limits: { fileSize: 2 * 1024 * 1024 * 1024 }, // 2GB -- full match videos, not short swing clips
 });
 

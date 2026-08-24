@@ -8,6 +8,7 @@ const { requireAdmin } = require('../middleware/requireAdmin');
 const { SCRIPTS_DIR, PYTHON } = require('../config/paths');
 const { CLIPS_DIR: DRILL_CLIPS_DIR, toClipUrl } = require('../utils/drillClips');
 const { runPythonJson } = require('../utils/runPythonJson');
+const { safeVideoExt, videoFileFilter } = require('../utils/videoUpload');
 const {
   DRILL_KINDS, DRILL_SHOT_TYPES, MAX_LENGTHS, isDrillKind, isDrillShotType, isText, isOptionalText,
 } = require('../domain/invariants');
@@ -37,10 +38,10 @@ const uploadDrillVideo = multer({
   storage: multer.diskStorage({
     destination: DRILL_CLIPS_DIR,
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname) || '.mp4';
-      cb(null, `drill_${Date.now()}_${Math.round(Math.random() * 1e6)}${ext}`);
+      cb(null, `drill_${Date.now()}_${Math.round(Math.random() * 1e6)}${safeVideoExt(file.originalname)}`);
     },
   }),
+  fileFilter: videoFileFilter,
   limits: { fileSize: 500 * 1024 * 1024 }, // 500MB -- short instructional clips, not full matches
 });
 

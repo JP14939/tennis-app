@@ -8,6 +8,7 @@ const { PYTHON, DATA_DIR } = require('../config/paths');
 const { SHOT_TYPES } = require('../config/shotTypes');
 const { persistAndCrop, toUrl } = require('../utils/videoCrop');
 const { runPythonJson } = require('../utils/runPythonJson');
+const { safeVideoExt, videoFileFilter } = require('../utils/videoUpload');
 
 const router = express.Router();
 
@@ -25,10 +26,10 @@ const upload = multer({
   storage: multer.diskStorage({
     destination: UPLOADS_DIR,
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname) || '.mp4';
-      cb(null, `upload_${Date.now()}_${Math.round(Math.random() * 1e6)}${ext}`);
+      cb(null, `upload_${Date.now()}_${Math.round(Math.random() * 1e6)}${safeVideoExt(file.originalname)}`);
     },
   }),
+  fileFilter: videoFileFilter,
   limits: { fileSize: 200 * 1024 * 1024 }, // 200MB per file
 });
 

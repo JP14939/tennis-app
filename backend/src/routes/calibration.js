@@ -5,6 +5,7 @@ const fs = require('fs');
 const requireAuth = require('../middleware/requireAuth');
 const { SCRIPTS_DIR, PYTHON } = require('../config/paths');
 const { runPythonJson } = require('../utils/runPythonJson');
+const { safeVideoExt, videoFileFilter } = require('../utils/videoUpload');
 
 const router = express.Router();
 
@@ -19,10 +20,10 @@ const upload = multer({
   storage: multer.diskStorage({
     destination: UPLOADS_DIR,
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname) || '.mp4';
-      cb(null, `calib_${Date.now()}_${Math.round(Math.random() * 1e6)}${ext}`);
+      cb(null, `calib_${Date.now()}_${Math.round(Math.random() * 1e6)}${safeVideoExt(file.originalname)}`);
     },
   }),
+  fileFilter: videoFileFilter,
   limits: { fileSize: 200 * 1024 * 1024 }, // 200MB
 });
 
