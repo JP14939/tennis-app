@@ -1,6 +1,6 @@
 # RallyMax — Full Project Handover
 
-**Last updated:** 2026-08-03, corrected 2026-08-10, extended 2026-08-10 (same-day follow-up session), extended again 2026-08-11, extended again 2026-08-13 (social/gamification roadmap + Phase 1), extended again 2026-08-13 (same-day follow-up: Find Games), extended again 2026-08-13 (same-day follow-up: Friends + match tracking), extended again 2026-08-13 (same-day follow-up: send-to-friend + persisted annotations), extended again 2026-08-13 (same-day follow-up: leaderboards), extended again 2026-08-13 (same-day follow-up: navigation restructure + Find Games data fix), extended again 2026-08-13 (same-day follow-up: community court submission + confirmation), extended again 2026-08-13 (same-day follow-up: app icon + mascot), extended again 2026-08-13 (same-day follow-up: skeleton offset fix, video-error visibility, racket swing-path overlay), extended again 2026-08-13 (same-day follow-up: sound effects), extended again 2026-08-13 (same-day follow-up: sound effects expanded app-wide), extended again 2026-08-13 (same-day follow-up: analysis-complete/achievement/notification sounds), extended again 2026-08-13 (same-day follow-up: History payload-bloat fix, found via real in-app testing), extended again 2026-08-13 (same-day follow-up: Sync Compare video-unavailable fix, England court seed + 20km render radius), extended again 2026-08-14 (batch-analyzed 2 full match videos into 85 History rows; fixed a live angle-wraparound bug in body-rotation scoring; z-depth rotation signal retried with real measurements and shipped live), extended again 2026-08-15 (legal review prep docs; fixed a live account-deletion bug; added message block/report), extended again 2026-08-18 (Wimbledon/Pine & Lime theme rollout completed across all screens; new mascot-based Android icon/splash; 4th teacher-student training loop for exact contact-frame detection, incl. a live production hook; Drills & Lessons feature shipped — free Drills live now, paid Lessons deferred; Swing Review rough-pick contact marking + clip prefetch; Rally Boundary Review lazy video loading; a full DB audit added missing indexes, fixed a real practice-history data-loss bug, and added 21 regression tests) — **social/gamification roadmap fully complete, bottom nav consolidated to 5 tabs, sound effects fully rolled out, theme rollout complete, first real Drills content live**, extended again 2026-08-19 (RevenueCat live + backend hosted on Hetzner; shot-classifier ML model trained; Tip Review + Pro Clip Review Dev Page tools; camera-angle sideline fallback; skeleton-overlay real fix; tip severity shown to users — see items #34-36), extended again 2026-08-20/21 (ball detector project Phase 1/2; Premium folded into Home + Lessons with a responsive tab bar; app-wide fix for `Alert.alert` being a silent no-op on web across 20 files; self-serve password reset via Resend; a full Hetzner redeploy fixing a server that was never actually a git repo, broken SSH access, and missing data — see items #37-41) — **hosting is real and working end-to-end now, but has no CI/CD: every push needs a manual redeploy, see item #41**, extended again 2026-08-22 (a database-verification framework with 48 live integrity checks; two rounds of bug/optimization audits; a clean security review; and — the big one — the first real device-native testing this app has had, which surfaced and fixed a cluster of native-only bugs invisible to every prior web-only testing session, plus a live production SQL bug in Find Games, now fixed and deployed — see item #42), extended again 2026-08-23 (docs round-up of same-day scheduled-routine PR activity, and — later the same day — a manual review/merge of all four resulting PRs: security rate-limiting, a bug sweep, a logic review, plus the 2026-08-22 uncommitted work above finally committed — see "Scheduled-routine PR round-up" below)
+**Last updated:** 2026-08-03, corrected 2026-08-10, extended 2026-08-10 (same-day follow-up session), extended again 2026-08-11, extended again 2026-08-13 (social/gamification roadmap + Phase 1), extended again 2026-08-13 (same-day follow-up: Find Games), extended again 2026-08-13 (same-day follow-up: Friends + match tracking), extended again 2026-08-13 (same-day follow-up: send-to-friend + persisted annotations), extended again 2026-08-13 (same-day follow-up: leaderboards), extended again 2026-08-13 (same-day follow-up: navigation restructure + Find Games data fix), extended again 2026-08-13 (same-day follow-up: community court submission + confirmation), extended again 2026-08-13 (same-day follow-up: app icon + mascot), extended again 2026-08-13 (same-day follow-up: skeleton offset fix, video-error visibility, racket swing-path overlay), extended again 2026-08-13 (same-day follow-up: sound effects), extended again 2026-08-13 (same-day follow-up: sound effects expanded app-wide), extended again 2026-08-13 (same-day follow-up: analysis-complete/achievement/notification sounds), extended again 2026-08-13 (same-day follow-up: History payload-bloat fix, found via real in-app testing), extended again 2026-08-13 (same-day follow-up: Sync Compare video-unavailable fix, England court seed + 20km render radius), extended again 2026-08-14 (batch-analyzed 2 full match videos into 85 History rows; fixed a live angle-wraparound bug in body-rotation scoring; z-depth rotation signal retried with real measurements and shipped live), extended again 2026-08-15 (legal review prep docs; fixed a live account-deletion bug; added message block/report), extended again 2026-08-18 (Wimbledon/Pine & Lime theme rollout completed across all screens; new mascot-based Android icon/splash; 4th teacher-student training loop for exact contact-frame detection, incl. a live production hook; Drills & Lessons feature shipped — free Drills live now, paid Lessons deferred; Swing Review rough-pick contact marking + clip prefetch; Rally Boundary Review lazy video loading; a full DB audit added missing indexes, fixed a real practice-history data-loss bug, and added 21 regression tests) — **social/gamification roadmap fully complete, bottom nav consolidated to 5 tabs, sound effects fully rolled out, theme rollout complete, first real Drills content live**, extended again 2026-08-19 (RevenueCat live + backend hosted on Hetzner; shot-classifier ML model trained; Tip Review + Pro Clip Review Dev Page tools; camera-angle sideline fallback; skeleton-overlay real fix; tip severity shown to users — see items #34-36), extended again 2026-08-20/21 (ball detector project Phase 1/2; Premium folded into Home + Lessons with a responsive tab bar; app-wide fix for `Alert.alert` being a silent no-op on web across 20 files; self-serve password reset via Resend; a full Hetzner redeploy fixing a server that was never actually a git repo, broken SSH access, and missing data — see items #37-41) — **hosting is real and working end-to-end now, but has no CI/CD: every push needs a manual redeploy, see item #41**, extended again 2026-08-22 (a database-verification framework with 48 live integrity checks; two rounds of bug/optimization audits; a clean security review; and — the big one — the first real device-native testing this app has had, which surfaced and fixed a cluster of native-only bugs invisible to every prior web-only testing session, plus a live production SQL bug in Find Games, now fixed and deployed — see item #42), extended again 2026-08-23 (docs round-up of same-day scheduled-routine PR activity, and — later the same day — a manual review/merge of all four resulting PRs: security rate-limiting, a bug sweep, a logic review, plus the 2026-08-22 uncommitted work above finally committed — see "Scheduled-routine PR round-up" below), extended again 2026-08-24 (docs round-up: 4 more scheduled-routine PRs opened — logic review, bug sweep, security review, brainstorm — all still open awaiting human review, none titled 🚨 CRITICAL — see "Scheduled-routine PR round-up (2026-08-24)" below)
 **User:** Jack Price (jack.p14370@gmail.com)
 **Project root:** `C:\Users\jackp\tennis_app\`
 
@@ -1078,6 +1078,75 @@ listing, and a branch listing (only two branches exist on the remote:
   no PRs and no branches from any of them in the last 24h. Either they
   haven't fired yet on today's schedule or found nothing worth opening a
   PR for — nothing to report either way.
+
+This routine (docs) does not touch application code — this is a docs-only
+commit straight to `master`, no PR, per its own standing instructions.
+
+---
+
+## Scheduled-routine PR round-up (2026-08-24)
+
+Checked via GitHub PR search/listing (no `gh` CLI in this environment,
+used the GitHub MCP tools instead). Unlike yesterday, all four other
+routines opened a PR overnight — **PRs #5–#8, all still open**, none
+merged (these routines never merge their own work). **No `🚨 CRITICAL:`
+PR today.**
+
+- **PR #5 — "Logic review 2026-08-24: consolidate two drifted vocabulary
+  duplicates"** (branch `logic-review/2026-08-24`, opened 03:07 UTC).
+  Found two closed vocabularies defined once in `domain/invariants.js`
+  but re-listed inline elsewhere — `profile.js`'s `computePlayerType()`
+  hardcoded the rally-outcome tags instead of deriving them from
+  `OUTCOME_TAGS`, and `drills.js`'s `GET /drills` `kind` filter used a
+  literal `['drill', 'lesson']` instead of the shared `DRILL_KINDS`.
+  Neither changes behavior today — both fixes just remove a future
+  silent-drift risk if the canonical lists ever change. 441 tests still
+  passing. Also re-flagged (not touched, already tracked): the
+  `billing.js`/`webhooks.js` RevenueCat entitlement-id matching loose
+  end, the empty-`rallyIds` product-intent question, and a couple of
+  stale comments (`compare_swing.py` docstring, `rateLimit.js` header).
+- **PR #6 — "Bug sweep 2026-08-24: 9 bugs across routes, domain layer,
+  and the 1v1 comparison engine"** (branch `bug-sweep/2026-08-24`, opened
+  03:29 UTC). Headline find: a real data-loss bug in the drill editor —
+  a malformed routine-step `id` (e.g. a stringified `"undefined"`) made
+  `Number.parseInt` return `NaN`, which is falsy, so the id-reconciliation
+  save path treated an existing step as brand-new **and** hard-deleted
+  the real step (plus all `drill_practice_attempts` history pointing at
+  it) it was supposed to match — silently, inside the save transaction.
+  Also fixed: orphaned upload files on every rejected drill-video
+  submission; a highlights-ingest DB failure being mislabeled as "invalid
+  detector output" with the real error never logged; two uncaught 500s
+  that should've been 400s (a non-string leaderboard `note`, a
+  non-string RevenueCat webhook `event.type`); an unenforced
+  phase-vs-timestamp mutual-exclusivity rule on coach notes; an unlogged
+  live-calibration failure; three write/at-rest integrity-check parity
+  gaps; and a dead `angle_mismatch_warning` field in the 1v1 comparison
+  engine (its threshold matched the hard-reject gate, so it could never
+  actually fire). 465 passing tests (was 443, +22 regression tests).
+  Left unfixed: the same previously-documented deliberate items (invite-code
+  TOCTOU, non-transactional Overpass upsert, `runPythonJson` SIGKILL,
+  RevenueCat field-name loose end) — no new product-call item this pass.
+- **PR #7 — "Security review 2026-08-24: restrict video-upload extensions
+  to a video allowlist"** (branch `security-review/2026-08-24`, opened
+  03:40 UTC). Re-verified everything from the 2026-08-19/2026-08-23 passes
+  (parameterized SQL, argv-array `spawn` calls, auth/JWT/rate-limiting, no
+  secret ever committed) with nothing new there. New finding: every
+  upload route (`analyse.js`, `compareVideos.js`, `highlights.js`,
+  `calibration.js`, `dev.js`'s drill-video editor) built the stored
+  filename's extension straight from the client-supplied original
+  filename with no allowlist — a crafted upload that made it far enough
+  through the pipeline to save as an analysis could get served back from
+  `/user-clips` with an attacker-chosen extension (e.g. `.html`), a
+  stored-HTML/XSS vector; the admin-only drill-video uploader had no
+  processing gate at all. Judged a real gap, not a critical one (getting
+  actual malicious bytes through MediaPipe/OpenCV as a "successful
+  analysis" is unlikely in practice) — fixed anyway with a shared
+  `videoFileFilter`/`safeVideoExt` allowlist (`.mp4`/`.mov`/`.m4v`/`.avi`/
+  `.webm`/`.mkv`/`.3gp`) wired into all five upload sites. 443 passing
+  tests (was 441, +2 new).
+- **PR #8 — "Add future-ideas brainstorm doc (2026-08-24)"** (branch
+  `future-ideas/2026-08-24`, opened 03:48 UTC). New dated section in
+  `docs/future-ideas.md` — docs only, no application-code changes.
 
 This routine (docs) does not touch application code — this is a docs-only
 commit straight to `master`, no PR, per its own standing instructions.
