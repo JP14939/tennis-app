@@ -840,6 +840,22 @@ pass's ideas also exists at the repo root, `AI's_ideas.md`.
 
 ---
 
+## New from the 2026-08-24 docs round-up
+
+**Review and merge (or request changes on) PRs #5–#8 from today's
+scheduled routines** — logic review (`logic-review/2026-08-24`,
+consolidates two drifted-vocabulary duplicates), bug sweep
+(`bug-sweep/2026-08-24`, 9 fixes including a real drill-editor data-loss
+bug), security review (`security-review/2026-08-24`, closes a
+video-upload-extension gap that could let a crafted upload get served
+back with an attacker-chosen extension), and brainstorm
+(`future-ideas/2026-08-24`, docs only). None titled `🚨 CRITICAL:`. See
+`HANDOVER.md`'s "Scheduled-routine PR round-up (2026-08-24)" for the full
+per-PR summary — nothing here is new territory beyond what the
+2026-08-23 round of PRs already needed (same review-then-merge shape).
+
+---
+
 ## Manual merge of 2026-08-23 PRs + prior uncommitted work (2026-08-23)
 
 Merged `security-review/2026-08-23` → `bug-sweep/2026-08-23` →
