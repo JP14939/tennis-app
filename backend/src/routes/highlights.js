@@ -89,8 +89,17 @@ function runJob(jobId, videoPath, userId) {
       return;
     }
 
+    let result;
     try {
-      const result = JSON.parse(stdout);
+      result = JSON.parse(stdout);
+    } catch (e) {
+      console.error('[highlights] failed to parse rally_detector.py output:', e.message, stdout.slice(-2000));
+      db.prepare(`UPDATE highlight_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?`).run('Detection produced invalid output', jobId);
+      sendPushNotification(userId, 'Rally detection failed', 'Something went wrong processing your video.');
+      return;
+    }
+
+    try {
       const insert = db.prepare(`
         INSERT INTO rally_clips (job_id, user_id, clip_path, start_sec, end_sec, duration_sec, swing_count)
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -116,8 +125,12 @@ function runJob(jobId, videoPath, userId) {
         { jobId }
       );
     } catch (e) {
-      console.error('[highlights] failed to parse rally_detector.py output:', stdout.slice(-2000));
-      db.prepare(`UPDATE highlight_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?`).run('Detection produced invalid output', jobId);
+      // Was folded into the JSON-parse catch above, which logged only stdout
+      // and never the error itself -- so a DB constraint failure during
+      // ingest() left no trace of what actually broke and reported itself to
+      // the user as bad detector output.
+      console.error('[highlights] failed to ingest rally_detector.py results:', e);
+      db.prepare(`UPDATE highlight_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?`).run('Failed to save detected rallies', jobId);
       sendPushNotification(userId, 'Rally detection failed', 'Something went wrong processing your video.');
     }
   });
