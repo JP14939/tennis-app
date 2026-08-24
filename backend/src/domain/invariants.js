@@ -76,6 +76,7 @@ const MAX_LENGTHS = {
   reportReason: 500,
   pushToken: 200,
   celebrityName: 80,
+  celebrityNote: 500,
   drillTitle: 200,
   drillExplanation: 5000,
   drillStepLabel: 200,

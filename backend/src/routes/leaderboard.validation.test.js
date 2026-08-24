@@ -67,6 +67,25 @@ describe('POST /leaderboard/celebrities', () => {
     await expectRejected(() => addCelebrity(admin.token, { ...validCelebrity, shotType }), 'celebrity_scores');
   });
 
+  // `note ?? null` only substitutes null/undefined -- every other non-string
+  // reached better-sqlite3's bind and threw there, surfacing as an opaque 500
+  // rather than a 400. The cap matters too: this note is served to every user
+  // in GET /leaderboard/worldwide.
+  test.each([
+    [true, 'a boolean — this used to throw inside better-sqlite3 as a 500'],
+    [{ text: 'nested' }, 'an object'],
+    [['array'], 'an array'],
+    ['x'.repeat(501), 'over the length cap'],
+  ])('rejects the note %p (%s) and adds no entry', async (note) => {
+    const admin = makeAdmin();
+    await expectRejected(() => addCelebrity(admin.token, { ...validCelebrity, note }), 'celebrity_scores');
+  });
+
+  test.each([undefined, null, '', 'Won 20 majors'])('accepts the note %p', async (note) => {
+    const admin = makeAdmin();
+    expect((await addCelebrity(admin.token, { ...validCelebrity, note })).status).toBe(201);
+  });
+
   test('still refuses a non-admin', async () => {
     const { token } = makeUser();
     await expectRejected(() => addCelebrity(token, validCelebrity), 'celebrity_scores', { status: 403 });

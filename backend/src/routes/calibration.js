@@ -83,6 +83,11 @@ router.post('/check-setup-live', requireAuth, uploadSnapshot.single('snapshot'),
     const result = await response.json();
     res.status(response.status).json(result);
   } catch (err) {
+    // Was swallowed entirely -- the caller got a generic 503 and the server
+    // kept no record of which failure it was (process down, malformed JSON,
+    // network fault), leaving the live-calibration loop undiagnosable. Every
+    // sibling catch in this file logs before responding; this one didn't.
+    console.error('[check-setup-live] calibration server request failed:', err.message);
     res.status(503).json({ error: 'Live calibration server unavailable' });
   }
 });

@@ -41,7 +41,11 @@ router.post('/webhooks/revenuecat', (req, res) => {
   }
 
   const event = req.body?.event;
-  if (!event || !event.app_user_id || !event.type) {
+  // event.type needs a type check, not just a truthy one: a non-string
+  // truthy value (true, {}, []) passed the old guard and then threw inside
+  // better-sqlite3's bind on the payment_events INSERT below, turning a
+  // malformed delivery into an uncaught 500 instead of this clean 400.
+  if (!event || !event.app_user_id || typeof event.type !== 'string' || !event.type) {
     return res.status(400).json({ error: 'Malformed webhook payload' });
   }
 
