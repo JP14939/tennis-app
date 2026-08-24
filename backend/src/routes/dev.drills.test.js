@@ -127,6 +127,62 @@ describe('POST /dev/drills create/update', () => {
     expect(survivingAttempt).toBeDefined();
   });
 
+  // Regression: an unparseable step id used to Number.parseInt to NaN, which
+  // is falsy, so the step was treated as brand new AND the existing step it
+  // referenced was swept into removedStepIds -- hard-deleting that step along
+  // with every drill_practice_attempts row pointing at it. The exact data loss
+  // reconciling by id exists to prevent, reachable by a client sending a
+  // stringified undefined/null id.
+  test('a malformed step id is rejected instead of destroying the referenced step', async () => {
+    const { token } = admin();
+    const create = await request(app)
+      .post('/api/dev/drills')
+      .set('Authorization', `Bearer ${token}`)
+      .field('kind', 'lesson').field('shot_type', 'forehand')
+      .field('title', 'Malformed id lesson').field('explanation', 'E')
+      .field('steps', JSON.stringify([{ label: 'Precious step', shot_type: 'forehand', target_reps: 10 }]));
+    const itemId = create.body.id;
+
+    const before = await request(app).get('/api/dev/drills').set('Authorization', `Bearer ${token}`);
+    const stepId = before.body.items.find((i) => i.id === itemId).steps[0].id;
+
+    const practicingUserId = db.prepare('INSERT INTO users (email, password_hash, name) VALUES (?, ?, ?)')
+      .run('malformed-id-practicer@test.com', 'x', 'Practicer').lastInsertRowid;
+    db.prepare('INSERT INTO drill_practice_attempts (user_id, step_id) VALUES (?, ?)').run(practicingUserId, stepId);
+
+    const edit = await request(app)
+      .post('/api/dev/drills')
+      .set('Authorization', `Bearer ${token}`)
+      .field('id', String(itemId))
+      .field('kind', 'lesson').field('shot_type', 'forehand')
+      .field('title', 'Malformed id lesson').field('explanation', 'E')
+      .field('steps', JSON.stringify([{ id: 'undefined', label: 'Precious step', shot_type: 'forehand', target_reps: 10 }]));
+    expect(edit.status).toBe(400);
+
+    // The step and its practice history must both be untouched by the reject.
+    const afterSteps = db.prepare('SELECT * FROM drill_routine_steps WHERE drill_item_id = ?').all(itemId);
+    expect(afterSteps).toHaveLength(1);
+    expect(afterSteps[0].id).toBe(stepId);
+    expect(
+      db.prepare('SELECT * FROM drill_practice_attempts WHERE step_id = ?').get(stepId)
+    ).toBeDefined();
+  });
+
+  test('a malformed drill id is rejected instead of silently creating a duplicate item', async () => {
+    const { token } = admin();
+    const countBefore = db.prepare('SELECT COUNT(*) AS c FROM drill_items').get().c;
+
+    const res = await request(app)
+      .post('/api/dev/drills')
+      .set('Authorization', `Bearer ${token}`)
+      .field('id', 'not-a-number')
+      .field('kind', 'drill').field('shot_type', 'forehand')
+      .field('title', 'T').field('explanation', 'E').field('steps', '[]');
+    expect(res.status).toBe(400);
+
+    expect(db.prepare('SELECT COUNT(*) AS c FROM drill_items').get().c).toBe(countBefore);
+  });
+
   test('a step omitted from an edit is actually removed', async () => {
     const { token } = admin();
     const create = await request(app)

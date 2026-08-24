@@ -225,6 +225,30 @@ describe('value-domain violations', () => {
     expect(violationNames()).toEqual(['availability_posts.window']);
   });
 
+  // coach.js validates both of these at write time; neither had an at-rest
+  // counterpart until now, so a row that predates the rule (or arrived via a
+  // direct sqlite3 session) went unreported forever.
+  test.each([
+    ['a phase-pinned note naming a phase that does not exist', { phase_key: 'finish' }, 'coach_notes.phase_key'],
+    ['a note pinned past the end of any real video', { timestamp_sec: 999999 }, 'coach_notes.timestamp_sec'],
+    ['a note pinned to a negative video offset', { timestamp_sec: -1 }, 'coach_notes.timestamp_sec'],
+  ])('catches %s', (_label, overrides, expected) => {
+    const student = makeUser('s@test.com');
+    const coach = makeUser('c@test.com');
+    const analysisId = makeAnalysis(student);
+    withoutConstraints(() => db.prepare(
+      'INSERT INTO coach_notes (coach_id, analysis_id, note_text, phase_key, timestamp_sec) VALUES (?, ?, ?, ?, ?)'
+    ).run(coach, analysisId, 'Note', overrides.phase_key ?? null, overrides.timestamp_sec ?? null));
+    expect(violationNames()).toEqual([expected]);
+  });
+
+  test('catches an availability post whose end time is not a real date', () => {
+    const user = makeUser('a@test.com');
+    db.prepare('INSERT INTO availability_posts (user_id, court_id, start_time, end_time) VALUES (?, ?, ?, ?)')
+      .run(user, makeCourt(), '2026-08-22T10:00:00Z', 'whenever');
+    expect(violationNames()).toEqual(['availability_posts.end_time']);
+  });
+
   test('catches a curated leaderboard score outside 0-100', () => {
     const admin = makeUser('admin@test.com');
     db.prepare('INSERT INTO celebrity_scores (name, shot_type, score, added_by) VALUES (?, ?, ?, ?)')

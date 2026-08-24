@@ -2,7 +2,7 @@ const express = require('express');
 const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
 const { requireAdmin } = require('../middleware/requireAdmin');
-const { SHOT_TYPES, MAX_LENGTHS, isShotType, isScore, isText } = require('../domain/invariants');
+const { SHOT_TYPES, MAX_LENGTHS, isShotType, isScore, isText, isOptionalText } = require('../domain/invariants');
 const { validate, oneOfMessage } = require('../validation/validateBody');
 
 const router = express.Router();
@@ -76,6 +76,12 @@ router.post('/leaderboard/celebrities', requireAuth, requireAdmin, (req, res) =>
   const bad = validate([
     ['name', name, isText(MAX_LENGTHS.celebrityName), `must be a name of ${MAX_LENGTHS.celebrityName} characters or fewer`],
     ['score', score, isScore, 'must be a number between 0 and 100'],
+    // `note ?? null` only substitutes null/undefined, so any other non-string
+    // (a boolean, object, or array) reached better-sqlite3's bind and threw
+    // there -- surfacing as an opaque 500 instead of a 400. It was also the
+    // one free-text field on this route with no length cap, despite being
+    // served to every user in GET /leaderboard/worldwide.
+    ['note', note, isOptionalText(MAX_LENGTHS.celebrityNote), `must be a string of ${MAX_LENGTHS.celebrityNote} characters or fewer`],
   ]);
   if (bad) return res.status(400).json(bad);
 

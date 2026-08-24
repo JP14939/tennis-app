@@ -5,6 +5,7 @@ const fs = require('fs');
 const requireAuth = require('../middleware/requireAuth');
 const { SCRIPTS_DIR, PYTHON } = require('../config/paths');
 const { runPythonJson } = require('../utils/runPythonJson');
+const { safeVideoExt, videoFileFilter } = require('../utils/videoUpload');
 
 const router = express.Router();
 
@@ -19,10 +20,10 @@ const upload = multer({
   storage: multer.diskStorage({
     destination: UPLOADS_DIR,
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname) || '.mp4';
-      cb(null, `calib_${Date.now()}_${Math.round(Math.random() * 1e6)}${ext}`);
+      cb(null, `calib_${Date.now()}_${Math.round(Math.random() * 1e6)}${safeVideoExt(file.originalname)}`);
     },
   }),
+  fileFilter: videoFileFilter,
   limits: { fileSize: 200 * 1024 * 1024 }, // 200MB
 });
 
@@ -83,6 +84,11 @@ router.post('/check-setup-live', requireAuth, uploadSnapshot.single('snapshot'),
     const result = await response.json();
     res.status(response.status).json(result);
   } catch (err) {
+    // Was swallowed entirely -- the caller got a generic 503 and the server
+    // kept no record of which failure it was (process down, malformed JSON,
+    // network fault), leaving the live-calibration loop undiagnosable. Every
+    // sibling catch in this file logs before responding; this one didn't.
+    console.error('[check-setup-live] calibration server request failed:', err.message);
     res.status(503).json({ error: 'Live calibration server unavailable' });
   }
 });

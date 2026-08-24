@@ -25,6 +25,7 @@ const annotationsRouter = require('./routes/annotations');
 const leaderboardRouter = require('./routes/leaderboard');
 const devRouter = require('./routes/dev');
 const drillsRouter = require('./routes/drills');
+const { UnsupportedFileTypeError } = require('./utils/videoUpload');
 
 const app = express();
 // Hosted behind Caddy (docker-compose.yml) -- without this, req.ip is always
@@ -191,6 +192,9 @@ app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
     const message = err.code === 'LIMIT_FILE_SIZE' ? 'Uploaded file is too large' : err.message;
     return res.status(400).json({ error: message });
+  }
+  if (err instanceof UnsupportedFileTypeError) {
+    return res.status(400).json({ error: err.message });
   }
   if (err.type === 'entity.parse.failed' || err instanceof SyntaxError) {
     return res.status(400).json({ error: 'Malformed JSON in request body' });

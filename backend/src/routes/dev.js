@@ -8,8 +8,10 @@ const { requireAdmin } = require('../middleware/requireAdmin');
 const { SCRIPTS_DIR, PYTHON } = require('../config/paths');
 const { CLIPS_DIR: DRILL_CLIPS_DIR, toClipUrl } = require('../utils/drillClips');
 const { runPythonJson } = require('../utils/runPythonJson');
+const { safeVideoExt, videoFileFilter } = require('../utils/videoUpload');
 const {
   DRILL_KINDS, DRILL_SHOT_TYPES, MAX_LENGTHS, isDrillKind, isDrillShotType, isText, isOptionalText,
+  isPositiveIntegerId,
 } = require('../domain/invariants');
 const { validate, oneOfMessage } = require('../validation/validateBody');
 
@@ -37,10 +39,10 @@ const uploadDrillVideo = multer({
   storage: multer.diskStorage({
     destination: DRILL_CLIPS_DIR,
     filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname) || '.mp4';
-      cb(null, `drill_${Date.now()}_${Math.round(Math.random() * 1e6)}${ext}`);
+      cb(null, `drill_${Date.now()}_${Math.round(Math.random() * 1e6)}${safeVideoExt(file.originalname)}`);
     },
   }),
+  fileFilter: videoFileFilter,
   limits: { fileSize: 500 * 1024 * 1024 }, // 500MB -- short instructional clips, not full matches
 });
 
@@ -268,6 +270,18 @@ router.post('/dev/drills', requireAuth, requireAdmin, uploadDrillVideo.single('v
   const isPremium = req.body.is_premium === '1' || req.body.is_premium === 'true' ? 1 : 0;
   const sortOrder = Number.parseInt(req.body.sort_order, 10) || 0;
 
+  // multer has already written the upload to DRILL_CLIPS_DIR by the time this
+  // handler runs, so every rejection path below has to remove it -- otherwise
+  // each rejected submission leaves a permanent unreferenced file behind
+  // (video_path is only ever set on the success path).
+  const discardUpload = () => {
+    if (req.file) fs.unlink(req.file.path, () => {});
+  };
+  const reject = (status, body) => {
+    discardUpload();
+    return res.status(status).json(body);
+  };
+
   // Drill/lesson items cover one shot type the ML pipeline doesn't --
   // 'footwork' has no swing to analyse, so it's valid here and nowhere else.
   const bad = validate([
@@ -277,18 +291,25 @@ router.post('/dev/drills', requireAuth, requireAdmin, uploadDrillVideo.single('v
     ['explanation', explanation, isText(MAX_LENGTHS.drillExplanation), `must be text of ${MAX_LENGTHS.drillExplanation} characters or fewer`],
     ['emphasis', emphasis, isOptionalText(MAX_LENGTHS.drillExplanation), `must be ${MAX_LENGTHS.drillExplanation} characters or fewer`],
   ]);
-  if (bad) return res.status(400).json(bad);
+  if (bad) return reject(400, bad);
+
+  // A supplied id that doesn't parse as a real row id must 400 rather than
+  // fall through Number.parseInt's NaN to the create branch below, which
+  // would silently insert a duplicate drill_items row instead of updating.
+  if (id !== undefined && id !== null && id !== '' && !isPositiveIntegerId(id)) {
+    return reject(400, { error: 'id must be a positive whole number', field: 'id' });
+  }
 
   let steps = [];
   if (req.body.steps) {
     try {
       steps = JSON.parse(req.body.steps);
     } catch {
-      return res.status(400).json({ error: 'steps must be valid JSON', field: 'steps' });
+      return reject(400, { error: 'steps must be valid JSON', field: 'steps' });
     }
   }
   if (!Array.isArray(steps)) {
-    return res.status(400).json({ error: 'steps must be a JSON array', field: 'steps' });
+    return reject(400, { error: 'steps must be a JSON array', field: 'steps' });
   }
   // drill_routine_steps.label is NOT NULL, and a step's shot_type feeds the
   // practice-analysis flow -- an unlabelled or mistyped step used to reach
@@ -298,8 +319,14 @@ router.post('/dev/drills', requireAuth, requireAdmin, uploadDrillVideo.single('v
       [`steps[${i}].label`, step?.label, isText(MAX_LENGTHS.drillStepLabel), `must be a label of ${MAX_LENGTHS.drillStepLabel} characters or fewer`],
       [`steps[${i}].shot_type`, step?.shot_type, (v) => v === undefined || v === null || isDrillShotType(v), oneOfMessage(DRILL_SHOT_TYPES)],
       [`steps[${i}].target_reps`, step?.target_reps, (v) => v === undefined || v === null || (Number.isInteger(Number(v)) && Number(v) > 0), 'must be a positive whole number'],
+      // An unparseable step id is data loss, not a nicety: Number.parseInt
+      // yields NaN, NaN is falsy, so the reconciliation below treats the step
+      // as brand new AND sweeps the existing step it meant to reference into
+      // removedStepIds -- hard-deleting that step and every practice attempt
+      // pointing at it, which is exactly what reconciling by id exists to avoid.
+      [`steps[${i}].id`, step?.id, (v) => v === undefined || v === null || v === '' || isPositiveIntegerId(v), 'must be a positive whole number'],
     ]);
-    if (badStep) return res.status(400).json(badStep);
+    if (badStep) return reject(400, badStep);
   }
 
   const videoPath = req.file ? req.file.path : undefined;
@@ -370,9 +397,9 @@ router.post('/dev/drills', requireAuth, requireAdmin, uploadDrillVideo.single('v
     const itemId = save();
     res.json({ id: itemId });
   } catch (err) {
-    if (err.message === 'NOT_FOUND') return res.status(404).json({ error: 'Drill/lesson not found' });
+    if (err.message === 'NOT_FOUND') return reject(404, { error: 'Drill/lesson not found' });
     console.error('[dev] failed to save drill/lesson:', err);
-    res.status(500).json({ error: 'Failed to save' });
+    reject(500, { error: 'Failed to save' });
   }
 });
 

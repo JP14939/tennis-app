@@ -110,6 +110,17 @@ router.post('/coach/notes', requireAuth, (req, res) => {
   ]);
   if (bad) return res.status(400).json(bad);
 
+  // "Mutually exclusive" was documented here and in db.js's schema comment but
+  // enforced by neither -- each field was only validated independently, so a
+  // request setting both stored a note claiming to be pinned to a phase AND to
+  // a timestamp at once, a shape ResultsScreen and SyncCompareScreen both
+  // filter on and neither can render coherently.
+  if (phaseKey != null && timestampSec != null) {
+    return res.status(400).json({
+      error: 'phaseKey and timestampSec are mutually exclusive', field: 'phaseKey',
+    });
+  }
+
   const analysis = db.prepare('SELECT user_id FROM analyses WHERE id = ?').get(analysisId);
   if (!analysis) {
     return res.status(404).json({ error: 'Analysis not found' });

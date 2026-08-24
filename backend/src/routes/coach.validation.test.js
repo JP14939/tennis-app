@@ -104,6 +104,25 @@ describe('POST /coach/notes — phaseKey and analysisId', () => {
     await expectRejected(() => addNote(coach.token, { analysisId, noteText: 'Note' }), 'coach_notes');
   });
 
+  // The route's own comment and db.js's schema comment both call these two
+  // mutually exclusive, but each was only validated independently -- a request
+  // setting both stored a note pinned to a phase AND a timestamp at once,
+  // which ResultsScreen and SyncCompareScreen each filter on and neither can
+  // render coherently.
+  test('rejects a note pinned to both a phase and a timestamp', async () => {
+    const { coach, analysisId } = coachAndStudent();
+    await expectRejected(
+      () => addNote(coach.token, { analysisId, noteText: 'Note', phaseKey: 'contact', timestampSec: 5 }),
+      'coach_notes',
+    );
+  });
+
+  test('still accepts each of the two pinnings on its own', async () => {
+    const { coach, analysisId } = coachAndStudent();
+    expect((await addNote(coach.token, { analysisId, noteText: 'A', phaseKey: 'contact' })).status).toBe(201);
+    expect((await addNote(coach.token, { analysisId, noteText: 'B', timestampSec: 5 })).status).toBe(201);
+  });
+
   test('still refuses to annotate an analysis you are not the coach for', async () => {
     const { coach } = coachAndStudent();
     const stranger = makeUser();

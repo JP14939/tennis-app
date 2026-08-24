@@ -26,6 +26,8 @@ const {
   COURT_SOURCES,
   AVAILABILITY_STATUSES,
   MAX_SETS_IN_A_MATCH,
+  MAX_VIDEO_SECONDS,
+  PHASE_KEYS,
   isBoundaryNote,
   isIsoDateTime,
 } = require('./invariants');
@@ -118,6 +120,23 @@ const VALUE_DOMAIN_CHECKS = [
     name: 'availability_posts.status',
     description: `every post is ${AVAILABILITY_STATUSES.join(' or ')}`,
     sql: `SELECT id, status FROM availability_posts WHERE status NOT IN (${sqlIn(AVAILABILITY_STATUSES)})`,
+  },
+  // coach.js validates both of these at write time via optional(isPhaseKey) /
+  // optional(isTimestampSec), but neither had an at-rest counterpart -- the
+  // one pairing this module exists to keep symmetrical.
+  {
+    name: 'coach_notes.phase_key',
+    description: `a phase-pinned note names a real phase (${PHASE_KEYS.join(', ')})`,
+    sql: `SELECT id, analysis_id, phase_key FROM coach_notes
+          WHERE phase_key IS NOT NULL AND phase_key NOT IN (${sqlIn(PHASE_KEYS)})`,
+  },
+  {
+    name: 'coach_notes.timestamp_sec',
+    description: `a timestamp-pinned note sits between 0 and ${MAX_VIDEO_SECONDS} seconds into the video`,
+    sql: `SELECT id, analysis_id, timestamp_sec FROM coach_notes
+          WHERE timestamp_sec IS NOT NULL
+            AND (${numericTypeGuard('timestamp_sec')}
+                 OR timestamp_sec < 0 OR timestamp_sec > ${MAX_VIDEO_SECONDS})`,
   },
   {
     name: 'celebrity_scores.score',
@@ -278,6 +297,17 @@ const JS_CHECKS = [
     description: 'every availability post has a parseable start time in a plausible year',
     run: (db) => db.prepare('SELECT id, user_id, start_time FROM availability_posts').all()
       .filter((row) => !isIsoDateTime(row.start_time)),
+  },
+  {
+    // courts.js validates end_time with the same isIsoDateTime predicate as
+    // start_time, but only start_time was re-checked here. The relational
+    // `end_time <= start_time` check above can't catch an end_time that isn't
+    // a real date at all -- that one renders as "Invalid Date" to every
+    // watcher of the court and never surfaced in a report.
+    name: 'availability_posts.end_time',
+    description: 'an availability post that names an end time has it parseable and in a plausible year',
+    run: (db) => db.prepare('SELECT id, user_id, end_time FROM availability_posts WHERE end_time IS NOT NULL').all()
+      .filter((row) => !isIsoDateTime(row.end_time)),
   },
 ];
 

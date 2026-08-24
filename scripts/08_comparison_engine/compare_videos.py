@@ -35,8 +35,15 @@ import phase_breakdown
 # angles, the two clips aren't comparable — unlike the pro-database flow
 # (which only ever matches against angle-filtered, pre-vetted clips), a 1v1
 # comparison has no such filtering, so a framing mismatch this large is
-# treated as a hard rejection rather than a soft warning.
-ANGLE_MISMATCH_WARNING_DEG = 25
+# treated as a hard rejection.
+ANGLE_MISMATCH_REJECT_DEG = 25
+# Below the hard gate but still a noticeable framing difference: the comparison
+# proceeds, but the response flags angle_mismatch_warning so the results screen
+# can caution that the score is less reliable. Without a threshold strictly
+# below the reject gate, angle_mismatch_warning could never be true -- any
+# mismatch large enough to matter was already rejected -- so the warning card
+# was dead code.
+ANGLE_MISMATCH_WARNING_DEG = 15
 
 # Vertical elevation compatibility: reject unless both videos' elevation
 # bands are equal or adjacent on this scale. 'unknown' (no readable height
@@ -98,7 +105,7 @@ def compare_videos(reference_path, your_path, shot_type, contact_a=None, contact
     # Hard camera-setup gate: a 1v1 comparison has no angle-filtered pro
     # database to fall back on, so a framing mismatch this large corrupts
     # the DTW score more than the pro-database flow's soft warning allows for.
-    if angle_mismatch_deg is None or angle_mismatch_deg > ANGLE_MISMATCH_WARNING_DEG:
+    if angle_mismatch_deg is None or angle_mismatch_deg > ANGLE_MISMATCH_REJECT_DEG:
         raise RuntimeError(
             "Couldn't confirm both videos were filmed from a similar angle — "
             'film both from a similar side/face-on position and try again.'
