@@ -1,6 +1,6 @@
 # RallyMax — Full Project Handover
 
-**Last updated:** 2026-08-03, corrected 2026-08-10, extended 2026-08-10 (same-day follow-up session), extended again 2026-08-11, extended again 2026-08-13 (social/gamification roadmap + Phase 1), extended again 2026-08-13 (same-day follow-up: Find Games), extended again 2026-08-13 (same-day follow-up: Friends + match tracking), extended again 2026-08-13 (same-day follow-up: send-to-friend + persisted annotations), extended again 2026-08-13 (same-day follow-up: leaderboards), extended again 2026-08-13 (same-day follow-up: navigation restructure + Find Games data fix), extended again 2026-08-13 (same-day follow-up: community court submission + confirmation), extended again 2026-08-13 (same-day follow-up: app icon + mascot), extended again 2026-08-13 (same-day follow-up: skeleton offset fix, video-error visibility, racket swing-path overlay), extended again 2026-08-13 (same-day follow-up: sound effects), extended again 2026-08-13 (same-day follow-up: sound effects expanded app-wide), extended again 2026-08-13 (same-day follow-up: analysis-complete/achievement/notification sounds), extended again 2026-08-13 (same-day follow-up: History payload-bloat fix, found via real in-app testing), extended again 2026-08-13 (same-day follow-up: Sync Compare video-unavailable fix, England court seed + 20km render radius), extended again 2026-08-14 (batch-analyzed 2 full match videos into 85 History rows; fixed a live angle-wraparound bug in body-rotation scoring; z-depth rotation signal retried with real measurements and shipped live), extended again 2026-08-15 (legal review prep docs; fixed a live account-deletion bug; added message block/report), extended again 2026-08-18 (Wimbledon/Pine & Lime theme rollout completed across all screens; new mascot-based Android icon/splash; 4th teacher-student training loop for exact contact-frame detection, incl. a live production hook; Drills & Lessons feature shipped — free Drills live now, paid Lessons deferred; Swing Review rough-pick contact marking + clip prefetch; Rally Boundary Review lazy video loading; a full DB audit added missing indexes, fixed a real practice-history data-loss bug, and added 21 regression tests) — **social/gamification roadmap fully complete, bottom nav consolidated to 5 tabs, sound effects fully rolled out, theme rollout complete, first real Drills content live**, extended again 2026-08-19 (RevenueCat live + backend hosted on Hetzner; shot-classifier ML model trained; Tip Review + Pro Clip Review Dev Page tools; camera-angle sideline fallback; skeleton-overlay real fix; tip severity shown to users — see items #34-36), extended again 2026-08-20/21 (ball detector project Phase 1/2; Premium folded into Home + Lessons with a responsive tab bar; app-wide fix for `Alert.alert` being a silent no-op on web across 20 files; self-serve password reset via Resend; a full Hetzner redeploy fixing a server that was never actually a git repo, broken SSH access, and missing data — see items #37-41) — **hosting is real and working end-to-end now, but has no CI/CD: every push needs a manual redeploy, see item #41**, extended again 2026-08-22 (a database-verification framework with 48 live integrity checks; two rounds of bug/optimization audits; a clean security review; and — the big one — the first real device-native testing this app has had, which surfaced and fixed a cluster of native-only bugs invisible to every prior web-only testing session, plus a live production SQL bug in Find Games, now fixed and deployed — see item #42), extended again 2026-08-23 (docs round-up of same-day scheduled-routine PR activity, and — later the same day — a manual review/merge of all four resulting PRs: security rate-limiting, a bug sweep, a logic review, plus the 2026-08-22 uncommitted work above finally committed — see "Scheduled-routine PR round-up" below), extended again 2026-08-24 (docs round-up: 4 more scheduled-routine PRs opened — logic review, bug sweep, security review, brainstorm — all still open awaiting human review, none titled 🚨 CRITICAL — see "Scheduled-routine PR round-up (2026-08-24)" below)
+**Last updated:** 2026-08-03, corrected 2026-08-10, extended 2026-08-10 (same-day follow-up session), extended again 2026-08-11, extended again 2026-08-13 (social/gamification roadmap + Phase 1), extended again 2026-08-13 (same-day follow-up: Find Games), extended again 2026-08-13 (same-day follow-up: Friends + match tracking), extended again 2026-08-13 (same-day follow-up: send-to-friend + persisted annotations), extended again 2026-08-13 (same-day follow-up: leaderboards), extended again 2026-08-13 (same-day follow-up: navigation restructure + Find Games data fix), extended again 2026-08-13 (same-day follow-up: community court submission + confirmation), extended again 2026-08-13 (same-day follow-up: app icon + mascot), extended again 2026-08-13 (same-day follow-up: skeleton offset fix, video-error visibility, racket swing-path overlay), extended again 2026-08-13 (same-day follow-up: sound effects), extended again 2026-08-13 (same-day follow-up: sound effects expanded app-wide), extended again 2026-08-13 (same-day follow-up: analysis-complete/achievement/notification sounds), extended again 2026-08-13 (same-day follow-up: History payload-bloat fix, found via real in-app testing), extended again 2026-08-13 (same-day follow-up: Sync Compare video-unavailable fix, England court seed + 20km render radius), extended again 2026-08-14 (batch-analyzed 2 full match videos into 85 History rows; fixed a live angle-wraparound bug in body-rotation scoring; z-depth rotation signal retried with real measurements and shipped live), extended again 2026-08-15 (legal review prep docs; fixed a live account-deletion bug; added message block/report), extended again 2026-08-18 (Wimbledon/Pine & Lime theme rollout completed across all screens; new mascot-based Android icon/splash; 4th teacher-student training loop for exact contact-frame detection, incl. a live production hook; Drills & Lessons feature shipped — free Drills live now, paid Lessons deferred; Swing Review rough-pick contact marking + clip prefetch; Rally Boundary Review lazy video loading; a full DB audit added missing indexes, fixed a real practice-history data-loss bug, and added 21 regression tests) — **social/gamification roadmap fully complete, bottom nav consolidated to 5 tabs, sound effects fully rolled out, theme rollout complete, first real Drills content live**, extended again 2026-08-19 (RevenueCat live + backend hosted on Hetzner; shot-classifier ML model trained; Tip Review + Pro Clip Review Dev Page tools; camera-angle sideline fallback; skeleton-overlay real fix; tip severity shown to users — see items #34-36), extended again 2026-08-20/21 (ball detector project Phase 1/2; Premium folded into Home + Lessons with a responsive tab bar; app-wide fix for `Alert.alert` being a silent no-op on web across 20 files; self-serve password reset via Resend; a full Hetzner redeploy fixing a server that was never actually a git repo, broken SSH access, and missing data — see items #37-41) — **hosting is real and working end-to-end now, but has no CI/CD: every push needs a manual redeploy, see item #41**, extended again 2026-08-22 (a database-verification framework with 48 live integrity checks; two rounds of bug/optimization audits; a clean security review; and — the big one — the first real device-native testing this app has had, which surfaced and fixed a cluster of native-only bugs invisible to every prior web-only testing session, plus a live production SQL bug in Find Games, now fixed and deployed — see item #42), extended again 2026-08-23 (docs round-up of same-day scheduled-routine PR activity, and — later the same day — a manual review/merge of all four resulting PRs: security rate-limiting, a bug sweep, a logic review, plus the 2026-08-22 uncommitted work above finally committed — see "Scheduled-routine PR round-up" below), extended again 2026-08-24 (docs round-up: 4 more scheduled-routine PRs opened — logic review, bug sweep, security review, brainstorm — all still open awaiting human review, none titled 🚨 CRITICAL — see "Scheduled-routine PR round-up (2026-08-24)" below), extended again 2026-08-25 (docs round-up: 4 more scheduled-routine PRs opened — logic review, bug sweep, security review, brainstorm — all still open awaiting human review, none titled 🚨 CRITICAL, and yesterday's `future-ideas/2026-08-24` PR is also still unmerged — see "Scheduled-routine PR round-up (2026-08-25)" below)
 **User:** Jack Price (jack.p14370@gmail.com)
 **Project root:** `C:\Users\jackp\tennis_app\`
 
@@ -1147,6 +1147,80 @@ PR today.**
 - **PR #8 — "Add future-ideas brainstorm doc (2026-08-24)"** (branch
   `future-ideas/2026-08-24`, opened 03:48 UTC). New dated section in
   `docs/future-ideas.md` — docs only, no application-code changes.
+
+This routine (docs) does not touch application code — this is a docs-only
+commit straight to `master`, no PR, per its own standing instructions.
+
+---
+
+## Scheduled-routine PR round-up (2026-08-25)
+
+Checked via GitHub PR search/listing (no `gh` CLI in this environment,
+used the GitHub MCP tools instead). All four other routines opened a PR
+again overnight — **PRs #9–#12, all still open**, none merged (these
+routines never merge their own work). **No `🚨 CRITICAL:` PR today.**
+Also still open from yesterday and not yet merged: **PR #8**
+(`future-ideas/2026-08-24`) — carried forward, not part of today's batch.
+
+- **PR #9 — "Logic review 2026-08-25: video-timestamp validation,
+  flagged-swing leakage, courts radius rounding, target_reps type gap"**
+  (branch `logic-review/2026-08-25`, opened 03:11 UTC). Four
+  correctness-vs-intent fixes: `/analyse` and `/compare-videos` now
+  validate `contactTime`/`contactTimeA`/`contactTimeB` with the shared
+  `isTimestampSec` invariant instead of a hand-rolled finite-number check
+  (a negative or absurd-but-finite contact time used to pass straight
+  through to the Python subprocess, burning a free-tier slot on a
+  corrupted result instead of a clean 400); `profile.js`'s rank/player-type
+  aggregates now exclude `flagged_not_shot` rows the same way
+  `leaderboard.js` already does; `courts.js`'s radius filter/sort now uses
+  the exact haversine distance instead of the already-rounded display
+  value (fixing a boundary case where e.g. a true 20.03km court rounded to
+  20.0 and wrongly passed a 20km radius filter); and `dev.js`'s
+  `target_reps` step validation now type-checks like its sibling fields
+  instead of coercing (`true`/`[5]` used to slip through as "a positive
+  whole number" and 500 inside the save transaction). 469/469 tests
+  passing. Noticed-but-not-touched: a stale `compare_swing.py` docstring
+  ("every 2nd frame" vs. the real every-3rd-frame rate — no actual
+  mismatch, just a wrong comment) and an unvalidated `drills.js` read-side
+  `shot_type` filter (fails safe to zero rows, not a correctness bug).
+- **PR #10 — "Bug sweep: fix 5 real bugs across the ML engine and backend
+  routes"** (branch `bug-sweep/2026-08-25`, opened 03:28 UTC). Headline
+  find: `compare_swing.py`'s `build_user_trajectory()` had no minimum-length
+  guard (unlike the pro-database side's `MIN_TRAJECTORY_POINTS = 5`), so a
+  swing with only 1-4 usable pose frames near contact (plausible from
+  backlighting/occlusion/motion blur) produced a fake, meaningless
+  similarity score instead of a clean error — now guarded with the same
+  constant, routed through the existing empty-trajectory `RuntimeError`
+  path. **This specific fix could not be executed in the routine's
+  sandbox (no `cv2`/`mediapipe`/venv available)** — verified by inspection
+  against the identical, already-tested pattern it mirrors; worth a real
+  `pytest`/spot-check before merging. Also fixed: a highlights
+  `boundary_note` that could never actually be cleared once set (omitted
+  vs. explicit-empty key conflation between `highlights.js` and
+  `DevRallyBoundaryReviewScreen.js`); untyped `pro_id`/`angle_label`/
+  `tip_text` in `history.js` that could 500 instead of 400 on a malformed
+  match payload; silently-swallowed file-cleanup failures on account
+  deletion (`auth.js`, now logged); and a missing `Number.isInteger` guard
+  on the block-user unblock route (`messages.js`, fails safe today, fixed
+  for consistency). 472/472 tests passing (2 new regression tests).
+- **PR #11 — "Security review 2026-08-25: pin JWT verification to
+  HS256"** (branch `security-review/2026-08-25`, opened 03:39 UTC).
+  Re-verified everything from the 2026-08-19/08-23/08-24 passes (parameterized
+  SQL, argv-array `spawn` calls, auth/JWT/rate-limiting, video-upload
+  extension allowlist, no secret ever committed) — still clean. **No
+  critical finding.** New hardening (not an active exploit): `jwt.verify()`
+  in `requireAuth.js`/`optionalAuth.js` didn't pin an `algorithms` option,
+  so verification would accept whatever algorithm a token's own header
+  claimed rather than only the HS256 this app actually signs with — not
+  exploitable today (this app only ever holds one opaque HMAC secret, no
+  dual-purpose public key to leak, and `jsonwebtoken` already refuses
+  `alg: "none"`), but pinned anyway per OWASP's standard JWT-hardening
+  recommendation, as a structural guarantee rather than one resting on
+  library defaults. 467/467 tests passing, no regressions.
+- **PR #12 — "Add future-ideas brainstorm doc (2026-08-25)"** (branch
+  `future-ideas/2026-08-25`, opened 03:49 UTC). New dated section in
+  `docs/future-ideas.md`, building on today's three review PRs — docs only,
+  no application-code changes.
 
 This routine (docs) does not touch application code — this is a docs-only
 commit straight to `master`, no PR, per its own standing instructions.
