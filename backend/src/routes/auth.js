@@ -409,7 +409,13 @@ router.delete('/auth/me', requireAuth, async (req, res) => {
   });
   deleteUser(user.id);
 
-  fs.rm(path.join(HIGHLIGHT_CLIPS_DIR, String(user.id)), { recursive: true, force: true }, () => {});
+  // Fire-and-forget so the response isn't held up by disk I/O, but a swallowed
+  // failure here (permission error, EBUSY from an in-flight highlights.js
+  // request) would leave this user's video files on disk indefinitely with
+  // no trace anywhere that "delete my account" didn't actually delete them.
+  fs.rm(path.join(HIGHLIGHT_CLIPS_DIR, String(user.id)), { recursive: true, force: true }, (err) => {
+    if (err) console.error(`[auth/delete] failed to remove highlight clips for user ${user.id}:`, err.message);
+  });
 
   res.status(204).end();
 });

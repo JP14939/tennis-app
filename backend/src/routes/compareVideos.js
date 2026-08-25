@@ -9,6 +9,7 @@ const { SHOT_TYPES } = require('../config/shotTypes');
 const { persistAndCrop, toUrl } = require('../utils/videoCrop');
 const { runPythonJson } = require('../utils/runPythonJson');
 const { safeVideoExt, videoFileFilter } = require('../utils/videoUpload');
+const { isTimestampSec } = require('../domain/invariants');
 
 const router = express.Router();
 
@@ -61,9 +62,12 @@ router.post('/compare-videos', requireAuth, requirePremium, upload.fields([
   for (const [field, flag] of [[contactTimeA, '--contact-a'], [contactTimeB, '--contact-b']]) {
     if (field !== undefined && field !== '') {
       const t = parseFloat(field);
-      if (!Number.isFinite(t)) {
+      // isTimestampSec (not just isFinite) so negative values and values past
+      // MAX_VIDEO_SECONDS 400 here too, same as any other video-offset field
+      // -- see analyse.js's contactTime for the matching fix.
+      if (!isTimestampSec(t)) {
         cleanup();
-        return res.status(400).json({ error: `${flag} value must be a number (seconds)` });
+        return res.status(400).json({ error: `${flag} value must be a number of seconds between 0 and the video length` });
       }
       args.push(flag, String(t));
     }

@@ -80,6 +80,16 @@ const MAX_LENGTHS = {
   drillTitle: 200,
   drillExplanation: 5000,
   drillStepLabel: 200,
+  // POST /history trusts req.body as a whole (see history.js's comment on
+  // that route) -- these three flow straight into a SQLite bind param, and
+  // better-sqlite3 throws a TypeError (surfacing as an unhandled 500, not a
+  // clean 400) if the bound value is anything but a string/number/null, e.g.
+  // an object or array. Capped generously above real observed values (pro
+  // ids look like "forehand_0042"; angle labels like "Semi-front"; tip text
+  // is a full coaching sentence) -- these exist to enforce TYPE, not length.
+  proId: 50,
+  angleLabel: 40,
+  tipText: 1000,
   // A pen stroke's `points` array grows with every pixel of drag, and a
   // save can carry many strokes across both panes -- unlike every other cap
   // above (a length on the string itself), this bounds the SERIALIZED size

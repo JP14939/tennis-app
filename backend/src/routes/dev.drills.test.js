@@ -168,6 +168,29 @@ describe('POST /dev/drills create/update', () => {
     ).toBeDefined();
   });
 
+  // Regression: target_reps was validated via Number(v), so a non-numeric
+  // JS type that happens to coerce to a passing positive integer (a boolean,
+  // an array) slipped past the 400 check and reached better-sqlite3's bind
+  // as that same boolean/array, throwing a TypeError inside the transaction
+  // and surfacing as an opaque 500 instead of a clean validation error.
+  test.each([
+    [true, 'a boolean'],
+    [[5], 'an array'],
+  ])('rejects target_reps %p (%s) with a 400 instead of a 500', async (target_reps) => {
+    const { token } = admin();
+    const countBefore = db.prepare('SELECT COUNT(*) AS c FROM drill_items').get().c;
+
+    const res = await request(app)
+      .post('/api/dev/drills')
+      .set('Authorization', `Bearer ${token}`)
+      .field('kind', 'drill').field('shot_type', 'forehand')
+      .field('title', 'T').field('explanation', 'E')
+      .field('steps', JSON.stringify([{ label: 'Step', shot_type: 'forehand', target_reps }]));
+
+    expect(res.status).toBe(400);
+    expect(db.prepare('SELECT COUNT(*) AS c FROM drill_items').get().c).toBe(countBefore);
+  });
+
   test('a malformed drill id is rejected instead of silently creating a duplicate item', async () => {
     const { token } = admin();
     const countBefore = db.prepare('SELECT COUNT(*) AS c FROM drill_items').get().c;

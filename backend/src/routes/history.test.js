@@ -68,3 +68,53 @@ describe('PATCH /history/:id mutually-exclusive verdict flags', () => {
     expect(!!row.flagged_not_shot && !!row.confirmed_real_shot).toBe(false);
   });
 });
+
+// Regression test: pro_id/angle_label/tip_text used to have no type check at
+// all -- a non-string value bound straight into the INSERT threw a
+// TypeError out of better-sqlite3, surfacing as a bare 500 instead of the
+// app's normal 400 shape (see history.js's comment on the same validate()
+// call).
+describe('POST /history rejects non-string pro_id/angle_label/tip_text', () => {
+  test('an object pro_id is rejected with 400, not a 500', async () => {
+    const { token } = makeUser('history4@test.com');
+    const res = await request(app)
+      .post('/api/history')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ shotType: 'forehand', matches: [{ overall_score: 80, pro_id: { x: 1 } }] });
+    expect(res.status).toBe(400);
+    expect(res.body.field).toBe('matches[0] pro_id');
+  });
+
+  test('an array angle_label is rejected with 400, not a 500', async () => {
+    const { token } = makeUser('history5@test.com');
+    const res = await request(app)
+      .post('/api/history')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ shotType: 'forehand', angle_label: ['side'], matches: [{ overall_score: 80 }] });
+    expect(res.status).toBe(400);
+    expect(res.body.field).toBe('angle_label');
+  });
+
+  test('a boolean tip_text is rejected with 400, not a 500', async () => {
+    const { token } = makeUser('history6@test.com');
+    const res = await request(app)
+      .post('/api/history')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ shotType: 'forehand', matches: [{ overall_score: 80, tips: [{ tip_text: true }] }] });
+    expect(res.status).toBe(400);
+    expect(res.body.field).toBe('matches[0] tips[0].tip_text');
+  });
+
+  test('a valid string pro_id/angle_label/tip_text still saves fine', async () => {
+    const { token } = makeUser('history7@test.com');
+    const res = await request(app)
+      .post('/api/history')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        shotType: 'forehand',
+        angle_label: 'Semi-front',
+        matches: [{ overall_score: 80, pro_id: 'forehand_0042', tips: [{ tip_text: 'Rotate your hips more.' }] }],
+      });
+    expect(res.status).toBe(201);
+  });
+});

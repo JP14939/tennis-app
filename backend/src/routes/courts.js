@@ -53,14 +53,22 @@ function queryNearbyCourts(lat, lng, radiusKm, userId) {
   `).all(userId, userId, lat - latDelta, lat + latDelta, lng - lngDelta, lng + lngDelta);
 
   return candidates
-    .map((c) => ({
-      ...c,
-      already_confirmed: !!c.already_confirmed,
-      club_already_watched: !!c.club_already_watched,
-      distance_km: Math.round(haversineKm(lat, lng, c.latitude, c.longitude) * 10) / 10,
-    }))
-    .filter((c) => c.distance_km <= radiusKm)
-    .sort((a, b) => a.distance_km - b.distance_km);
+    .map((c) => {
+      const exactDistanceKm = haversineKm(lat, lng, c.latitude, c.longitude);
+      return {
+        ...c,
+        already_confirmed: !!c.already_confirmed,
+        club_already_watched: !!c.club_already_watched,
+        exactDistanceKm,
+        // Rounded for display only -- filtering/sorting on this instead of
+        // exactDistanceKm let a court up to 0.05km outside radiusKm round
+        // down to it and be wrongly admitted.
+        distance_km: Math.round(exactDistanceKm * 10) / 10,
+      };
+    })
+    .filter((c) => c.exactDistanceKm <= radiusKm)
+    .sort((a, b) => a.exactDistanceKm - b.exactDistanceKm)
+    .map(({ exactDistanceKm, ...c }) => c);
 }
 
 router.get('/courts', requireAuth, async (req, res) => {

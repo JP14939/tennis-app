@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.join(SCRIPTS_DIR, '07_ball_racket_tracking'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '09_coaching_ai'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '00_utils'))
 from infer_angle import infer_camera_angle, angle_label, detect_view_direction, extract_frame, create_landmarker
-from build_pro_database import normalise_landmarks, trajectory_scale, PRE_SEC, POST_SEC
+from build_pro_database import normalise_landmarks, trajectory_scale, PRE_SEC, POST_SEC, MIN_TRAJECTORY_POINTS
 from trajectory_compare import dtw_distance
 from track_racket_in_clip import track_racket_body, avg_racket_body_distance, track_racket_path
 from select_coaching_tips import get_coaching_tips
@@ -208,6 +208,17 @@ def build_user_trajectory(frames, fps, contact_time_sec=None):
         norm = normalise_landmarks(frame_index[f], scale)
         if norm is not None:
             trajectory.append({'t': round((f - contact_frame_num) / fps, 4), 'landmarks': norm})
+
+    # Mirrors extract_swing_trajectory's guard in build_pro_database.py --
+    # without it, a near-empty (1-4 point) trajectory sails past the `if not
+    # user_trajectory` check below (it's non-empty, just barely) and DTW
+    # against a full pro swing degrades into little more than the average
+    # per-frame distance from one static pose, silently returning a
+    # meaningless similarity score instead of the clear "couldn't extract a
+    # usable pose trajectory" error this same failure mode already produces
+    # when it's total rather than near-total.
+    if len(trajectory) < MIN_TRAJECTORY_POINTS:
+        return [], contact_frame_num
 
     return trajectory, contact_frame_num
 

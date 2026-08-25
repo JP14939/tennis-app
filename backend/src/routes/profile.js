@@ -38,8 +38,12 @@ function rankForCount(greatCount) {
 }
 
 router.get('/profile/rank', requireAuth, (req, res) => {
+  // Same flagged_not_shot = 0 exclusion leaderboard.js's queries already
+  // apply -- a swing the user has flagged as "not actually a shot" shouldn't
+  // count toward their great-swing tally any more than it counts toward a
+  // leaderboard.
   const { greatCount } = db.prepare(
-    'SELECT COUNT(*) AS greatCount FROM analyses WHERE user_id = ? AND similarity >= ?'
+    'SELECT COUNT(*) AS greatCount FROM analyses WHERE user_id = ? AND flagged_not_shot = 0 AND similarity >= ?'
   ).get(req.user.id, GREAT_SWING_THRESHOLD);
 
   const { current, next } = rankForCount(greatCount);
@@ -123,7 +127,10 @@ function computePlayerType(userId) {
     return { ...PLAYER_TYPES.all_court, confidence: 'estimated' };
   }
 
-  const analyses = db.prepare('SELECT shot_type FROM analyses WHERE user_id = ?').all(userId);
+  // Same flagged_not_shot exclusion as greatCount above and leaderboard.js's
+  // queries -- a row the user has flagged as "not actually a shot" shouldn't
+  // feed the shot-type mix this heuristic is built from.
+  const analyses = db.prepare('SELECT shot_type FROM analyses WHERE user_id = ? AND flagged_not_shot = 0').all(userId);
   if (analyses.length >= MIN_ANALYSES) {
     const serveShare = analyses.filter((a) => a.shot_type === 'serve').length / analyses.length;
     if (serveShare >= 0.45) {

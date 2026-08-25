@@ -172,6 +172,9 @@ router.post('/users/:id/block', requireAuth, (req, res) => {
 
 router.delete('/users/:id/block', requireAuth, (req, res) => {
   const blockedId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(blockedId)) {
+    return res.status(400).json({ error: 'Invalid user id' });
+  }
   db.prepare('DELETE FROM user_blocks WHERE blocker_id = ? AND blocked_id = ?')
     .run(req.user.id, blockedId);
   res.status(204).end();

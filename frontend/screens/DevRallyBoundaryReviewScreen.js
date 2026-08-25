@@ -290,7 +290,16 @@ export default function DevRallyBoundaryReviewScreen({ route, navigation }) {
           .filter((clipId) => tags[clipId] || boundaryNotes[clipId]?.length > 0)
           .map(async (clipId) => {
             const value = tags[clipId];
-            const body = { boundary_note: boundaryNotes[clipId]?.length ? boundaryNotes[clipId].join(',') : undefined };
+            // Only include boundary_note when this clip's boxes were actually
+            // touched this session -- omitting the key means "leave it
+            // alone" on the backend. When touched but ending up empty (every
+            // box unchecked), send an explicit '' rather than leaving the
+            // key out: JSON.stringify drops undefined-valued keys, and an
+            // omitted key can't be told apart from "no change intended".
+            const body = {};
+            if (Object.prototype.hasOwnProperty.call(boundaryNotes, clipId)) {
+              body.boundary_note = boundaryNotes[clipId].length ? boundaryNotes[clipId].join(',') : '';
+            }
             if (value) {
               body.outcome_tag = value;
               body.archived = value !== 'skip';

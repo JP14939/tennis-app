@@ -318,7 +318,11 @@ router.post('/dev/drills', requireAuth, requireAdmin, uploadDrillVideo.single('v
     const badStep = validate([
       [`steps[${i}].label`, step?.label, isText(MAX_LENGTHS.drillStepLabel), `must be a label of ${MAX_LENGTHS.drillStepLabel} characters or fewer`],
       [`steps[${i}].shot_type`, step?.shot_type, (v) => v === undefined || v === null || isDrillShotType(v), oneOfMessage(DRILL_SHOT_TYPES)],
-      [`steps[${i}].target_reps`, step?.target_reps, (v) => v === undefined || v === null || (Number.isInteger(Number(v)) && Number(v) > 0), 'must be a positive whole number'],
+      // typeof-gated (not just Number(v)) so a non-numeric JS type -- a
+      // boolean or array both coerce to a passing integer via Number() --
+      // can't pass here and then reach better-sqlite3's bind as that same
+      // boolean/array, which throws a TypeError there instead of 400ing here.
+      [`steps[${i}].target_reps`, step?.target_reps, (v) => v === undefined || v === null || (typeof v === 'number' && Number.isInteger(v) && v > 0), 'must be a positive whole number'],
       // An unparseable step id is data loss, not a nicety: Number.parseInt
       // yields NaN, NaN is falsy, so the reconciliation below treats the step
       // as brand new AND sweeps the existing step it meant to reference into
