@@ -11,6 +11,161 @@ scope or timing before starting.
 
 ---
 
+### 2026-08-25
+
+Context for this pass: read `CLAUDE.md`, all of `HANDOVER.md` (all 42
+dated items plus the pipeline/backend backlogs), and `TODO_MANUAL.md`, plus
+the existing 2026-08-23 section below and the still-open
+`future-ideas/2026-08-24` PR content (not merged into master as of this
+pass, but read to avoid repeating it) and today's three fresh
+scheduled-routine PRs (`logic-review/2026-08-25`,
+`bug-sweep/2026-08-25`, `security-review/2026-08-25` — all open, none
+merged yet). Ideas below deliberately build on what those three PRs just
+found rather than repeating the 2026-08-23/08-24 lists, and skip
+re-proposing anything already tried and declined: `Z_WEIGHT`
+re-enablement, the direct-regression racket keypoint model, freeform
+Claude ball-bbox labeling, coaching-tip-verifier training on synthetic
+pro-vs-pro data, and `verify_shot_contact.py`'s removed speed-based
+`static_hold` rejection rule.
+
+#### Product features (building on the DTW pro-comparison core loop)
+
+- **Turn the new low-trajectory guard into user guidance, not just a
+  clean error.** `bug-sweep/2026-08-25` fixed `compare_swing.py` silently
+  returning a fake similarity score when MediaPipe only found a usable
+  pose on 1-4 frames near contact (now raises, matching the pro-database
+  build's own `MIN_TRAJECTORY_POINTS` guard) — correct, but "analysis
+  failed" alone doesn't tell a user *why* or what to do differently. The
+  app already computes a pose-detection-rate percentage elsewhere (the
+  ball-detector audit used it); surfacing "we could barely see your body
+  near contact — try better lighting or a less occluded angle" on this
+  specific failure would turn a dead-end error into the same kind of
+  actionable camera guidance `check_camera_setup.py` already gives
+  pre-upload. **S** — the detection-rate number likely already exists in
+  the pipeline output, mostly a frontend error-message + one backend field.
+- **A "this match doesn't look right" flag on results, feeding the
+  existing Pro Clip Review log.** The Pro Clip Review Dev Page tool (admin/
+  Jack-only today, `clip_review_log.jsonl`) already has the exact shape
+  needed to record a bad pro-database entry. Real users hitting a
+  genuinely mismatched top-match clip is a much larger, ongoing sample
+  than one person's manual review pass — a small flag button on
+  `ResultsScreen` next to the existing "Yes, real shot"/"No, not a shot"
+  pair, logging to the same `clip_review_log.jsonl` shape (tagged
+  `source: 'user_flag'`, same pattern already used for shot-verification
+  and shot-type corrections), would let real usage help find the pro
+  database's data-quality problems faster than manual review alone. **S–M**.
+- **Weekly recap email.** Password-reset email delivery (Resend) is built
+  and just needs `RESEND_API_KEY`/domain setup per `TODO_MANUAL.md` — once
+  that's live, the same `backend/src/utils/email.js` plumbing plus the
+  already-real `GET /profile/rank` and history-aggregation queries could
+  send a weekly "N swings analyzed, rank progress, where you land on the
+  leaderboard" digest with near-zero new backend logic. **S–M**, gated on
+  the Resend account setup already sitting in `TODO_MANUAL.md`.
+
+#### ML pipeline improvements (numbered `scripts/` stages)
+
+- **Apply the shot-verification trust-bucketing pattern to camera-angle
+  confidence.** `shot_contact_training_log.py`'s per-evidence-type Wilson-
+  score trust gating (bucket net-detection method → confidence, rather
+  than one pooled number) already solved a real "some methods are more
+  reliable than others" problem for shot verification. `infer_angle.py`
+  today has two methods with genuinely different reliability (Hough net-
+  line detection vs. the sideline-symmetry fallback, the latter
+  deliberately capped low-confidence per the pipeline backlog) but no
+  learned trust signal between them — just a fixed confidence constant per
+  method. Reusing the same bucketing/Wilson-bound machinery (which already
+  exists and is proven) against real angle-vs-ground-truth data as it
+  accumulates could make that confidence number earned rather than
+  assumed. **M**.
+- **Audit for the same "filter on the rounded value" bug class
+  elsewhere.** `logic-review/2026-08-25` found `courts.js` filtering
+  the radius search on the *rounded* `distance_km` instead of the exact
+  haversine value, silently admitting a court a few dozen meters outside
+  the requested radius. The same shape of bug — round for display, then
+  accidentally filter/sort on the rounded copy — is worth a quick grep
+  across `compare_swing.py`'s angle-window filter (`abs(pro_angle -
+  user_angle) <= angle_window`) and anywhere else a value gets both
+  displayed and filtered, since this is exactly the kind of drift a
+  logic-review pass catches one site at a time rather than as a class.
+  **S** — a targeted grep-and-check, not a rewrite.
+- **Validate `contactTime` against the video's real duration before
+  spawning Python.** `logic-review/2026-08-25` tightened `contactTime`
+  validation to reject negative/absurd-but-finite values via the shared
+  `isTimestampSec` invariant — but that check has no upper bound tied to
+  the actual uploaded video's length, so a syntactically-valid but
+  video-exceeding timestamp (e.g. `contactTime=999` on a 3-second clip)
+  still reaches the Python subprocess before failing there instead of
+  failing fast in Node with a clearer message. Worth a follow-up: probe
+  duration (already needed for camera-setup checks) and bound
+  `contactTime` against it before spawning. **S**.
+
+#### Data quality opportunities
+
+- **Audit every `analyses` consumer for `flagged_not_shot` parity, not
+  just the two `logic-review/2026-08-25` fixed.** That PR closed the gap
+  in `profile.js`'s rank count and player-type fallback (leaderboard.js
+  already excluded flagged rows) — worth checking `TrendChart.js`'s
+  client-side progression-chart aggregation and `HomeScreen.js`'s stats
+  strip too, since both compute similar "how good are this user's real
+  swings" numbers straight from the fetched history list and could have
+  the identical gap, just never audited. **S** — a targeted check of two
+  more call sites, same shape of fix if either is affected.
+- **A manual-review-backlog dashboard.** `TODO_MANUAL.md` currently
+  tracks four separate open manual-review backlogs in prose (230 ball-
+  label frames, 20 high-camera-angle pro entries, 120 unmatched
+  shot-verification rows from the 2026-08-10 retrain, the un-verified
+  `IMG_5823.MOV` dry-run) — easy for any one of them to quietly get lost
+  across sessions since nothing surfaces "how many are still open" in one
+  place. A small Dev Page summary tile or a `scripts/`-level status
+  command that counts each backlog directly from its source of truth
+  (`needs_manual_review` frames, `camera_angle > 65` entries, unmatched
+  ids, etc.) would make "is this actually still open" a one-glance check
+  instead of trusting doc prose to stay current. **S**.
+- **Close the `drills.js` read-side validation gap `logic-review/2026-08-25`
+  noticed but didn't touch.** `GET /drills`'s `shot_type` query param isn't
+  checked against `DRILL_SHOT_TYPES` the way the write-side already is —
+  today that's harmless (an invalid value just yields zero rows), but it's
+  a one-line addition for consistency and removes a spot future review
+  passes will keep re-flagging as "noticed, not fixed." **S**.
+
+#### Technical debt worth paying down
+
+- **Give the scheduled-routine sandbox real Python execution, not just
+  code-reading confidence.** `bug-sweep/2026-08-25`'s ML-side fix (the
+  near-empty-trajectory guard) explicitly could not be run — "no `cv2`/
+  `mediapipe`/venv available in the sandbox this ran in" — and verified
+  the fix only by pattern-matching against an already-tested sibling
+  guard. That's a real, recurring gap: every scheduled review that
+  touches `scripts/` is flying blind on actual execution, unlike the
+  backend's `npm test`, which every PR runs for real. Worth checking
+  whether the routine's environment can get a slim `scripts/venv` (even
+  without the full model weights, just enough to import and unit-test
+  pure-Python logic like trajectory guards) so ML-pipeline fixes get the
+  same real-test confidence backend fixes already do. **M**, and
+  needs Jack's call on whether that environment access is worth granting.
+- **Lock in today's JWT algorithm pin with a regression test, not just
+  the fix.** `security-review/2026-08-25` added `algorithms: ['HS256']`
+  to both `jwt.verify()` call sites — correct, and confirmed
+  not-currently-exploitable, but nothing stops a future change from
+  adding a third verify call site (or a second signing path) without the
+  same pin. A one-line static check (grep-in-CI, or a small test that
+  greps `requireAuth.js`/`optionalAuth.js` for the `algorithms` option) is
+  the same "catch the pattern automatically" idea already proposed for
+  the `optionalAuth`-vs-`requireAuth` convention in the 2026-08-23 list,
+  scoped to this specific hardening instead. **S**.
+- **A doc/comment-drift audit pass across `scripts/`.** `logic-review/
+  2026-08-25` noted (but correctly left alone, per its own "no unrelated
+  cleanup" scope) that `compare_swing.py`'s `build_user_trajectory()`
+  docstring still claims "every 2nd frame" when the actual sampling — and
+  every path that depends on it — has been "every 3rd frame" since the
+  DTW calibration fix. Harmless today since the code paths already agree
+  with each other, but it's exactly the kind of stale claim that misleads
+  the next person reading the docstring instead of the code, the same
+  class of drift `CLAUDE.md` itself warns about for `HANDOVER.md`/
+  `TODO_MANUAL.md`. Worth a one-off grep pass for comments describing
+  sampling rates, thresholds, or constants that may have drifted from
+  their real values, rather than waiting for review passes to catch them
+  one docstring at a time. **S**.
 ### 2026-08-24
 
 Context for this pass: read `CLAUDE.md`, all of `HANDOVER.md` (through item
