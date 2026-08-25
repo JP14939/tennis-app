@@ -1,0 +1,37 @@
+name: Deploy backend
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'backend/**'
+      - 'scripts/**'
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - 'Caddyfile'
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH and redeploy
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: cd /opt/tennis_app && git pull && docker compose up --build -d app
+
+      - name: Wait for health check
+        run: |
+          for i in $(seq 1 12); do
+            if curl -fsS "${{ secrets.DEPLOY_HEALTH_URL }}" -o /dev/null; then
+              echo "Health check passed"
+              exit 0
+            fi
+            echo "Waiting for app to come back up ($i/12)..."
+            sleep 10
+          done
+          echo "Health check failed after redeploy"
+          exit 1

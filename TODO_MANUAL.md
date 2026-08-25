@@ -190,9 +190,9 @@ none of it was actually clicked through as a live user this session:
 - Swing Review's new rough-pick contact-marking step (History... actually
   Dev Page → Swing Review → pick a job → mark a real shot → confirm the
   rough scrub feels right before the fine ±50 slider takes over).
-- Rally Boundary Review's lazy video loading (Dev Page → Rally Boundary
-  Review on a job with several pending clips — confirm videos only start
-  loading once tapped, not all at once).
+- ~~Rally Boundary Review's lazy video loading~~ — resolved 2026-08-25,
+  click-tested live on a job with several pending clips: videos only
+  start loading once tapped, not all at once, as intended.
 - Drills & Lessons: History → Drills segment should now show 30 real
   drills instead of "coming soon"; try adding a test lesson via Dev Page →
   Drills & Lessons Editor and confirm the Lessons segment/Premium page
@@ -620,12 +620,12 @@ follow-up build (I can just do it) or needs your call first.
    deletion anonymizes rather than deletes rows other users still
    reference) — needs your call before attempting, since getting it
    wrong could break account deletion or history deletion outright.
-3. **No CI/CD.** Every deploy is a manual SSH + `git pull` +
-   `docker compose up --build app` — see item #41 in `HANDOVER.md` for
-   how this let the hosted server run stale code across multiple
-   sessions without anyone noticing. Needs your call (GitHub Actions
-   vs. something simpler, and whether the Hetzner box should accept
-   inbound deploy hooks at all).
+3. ~~**No CI/CD.**~~ — resolved 2026-08-25. `.github/workflows/deploy.yml`
+   now auto-redeploys on push to `master` (code paths only, docs-only
+   commits are excluded), via a dedicated forced-command-restricted SSH
+   key rather than the personal `rallymax_key`. See `HANDOVER.md` item
+   #44 and `DEPLOY.md`'s new "Continuous deployment" section for the
+   full setup and what's still manual (`data/` transfers, `.env` edits).
 4. **SQLite is still standing in for the Postgres `DATABASE_URL`
    already implies.** `pg` has been an installed-but-unused dependency
    for a while, and this migration has been scoped as "later" for
@@ -959,14 +959,11 @@ session summary.
 
 ## New from the 2026-08-25 session (manual work, not a scheduled routine)
 
-1. **Review the 5 flagged ball-label clips** (Dev Page → Ball Label data,
-   `manual_ball_label_log.jsonl` on the hosted server) — `analysis534`,
-   `analysis501`, `analysis532`, `analysis519`, `analysis522` all show zero
-   motion across their entire labeled sequence, flagged by
-   `scripts/07_ball_racket_tracking/audit_ball_label_motion.py` as likely
-   static-decoy contamination. For each, confirm keep (a real slow/soft
-   shot) or exclude (was a decoy) before Phase 3 fine-tuning starts. See
-   `HANDOVER.md` item #43 for the full story.
+1. ~~**Review the 5 flagged ball-label clips.**~~ — resolved 2026-08-25.
+   `analysis534`, `analysis501`, `analysis532`, `analysis519`, `analysis522`
+   all confirmed decoys by Jack, excluded from Phase 3 ball-detector
+   fine-tuning data. See `HANDOVER.md` item #43 for the original flagging
+   and item #44 for the resolution.
 2. **Ball-speed feature is scoped but not built.** Recommended approach:
    net-keypoint-based local scale calibration, v1 metric is speed *at the
    net crossing* (not off the racket at contact — a real, disclosed

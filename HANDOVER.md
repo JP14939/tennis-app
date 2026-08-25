@@ -905,6 +905,16 @@ Several distinct threads, landing together:
 
 ---
 
+### 44. CI/CD for the hosted backend (2026-08-25)
+
+Closes out the long-standing "no CI/CD" gap (items #41/#43 above, and the backend-architecture-backlog item 3 in `TODO_MANUAL.md`). New `.github/workflows/deploy.yml`: on every push to `master` that touches `backend/**`, `scripts/**`, `Dockerfile`, `docker-compose.yml`, or `Caddyfile` (deliberately excluding docs, so the scheduled docs-round-up routine's direct pushes to master don't trigger a pointless rebuild), it SSHes into the server and runs the same `git pull && docker compose up --build -d app` that was previously always done by hand, then polls `/health` and fails loudly if the app doesn't come back up. Also triggerable manually via `workflow_dispatch`.
+
+Deliberately uses a **new, dedicated, forced-command-restricted** SSH key rather than the personal `rallymax_key` — a CI secret is a bigger exposure surface than a key that only ever lives on Jack's own machine, so it's scoped server-side (`command="/opt/tennis_app/deploy.sh"` in `authorized_keys`) to do nothing but run the deploy script, even if the GitHub secret ever leaked. Full setup — keygen, the `authorized_keys` line, and the 3 GitHub repo secrets (`DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, plus `DEPLOY_HEALTH_URL` for the health-check step) — needed Jack's own hands (prod SSH access and GitHub secrets aren't something this session touches); see `DEPLOY.md`'s new "Continuous deployment" section for what's automatic now vs. still manual (`data/` transfers, `.env` changes).
+
+Also resolved this session, both confirmed directly by Jack: the 5 ball-label clips flagged by `audit_ball_label_motion.py` in item #43 (`analysis534`, `analysis501`, `analysis532`, `analysis519`, `analysis522`) were all confirmed decoys and excluded from Phase 3 ball-detector fine-tuning data; and Rally Boundary Review's lazy-video-loading behavior (from the 2026-08-18 session) was click-tested live and confirmed working. See `TODO_MANUAL.md` for both, now struck through.
+
+---
+
 ## How to Run Everything
 
 ```powershell

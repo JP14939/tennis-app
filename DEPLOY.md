@@ -159,6 +159,40 @@ available today. Migrating to Oracle later, if capacity frees up, is just
 repeating the "one-time setup on the server" steps above on the new host —
 nothing about the app or this Dockerfile is Oracle-specific.
 
+## Continuous deployment (added 2026-08-25)
+
+A `git push` to `master` (or a merge landing on it) now auto-redeploys, via
+`.github/workflows/deploy.yml`. It's scoped to only fire on paths that actually
+affect the running app (`backend/**`, `scripts/**`, `Dockerfile`,
+`docker-compose.yml`, `Caddyfile`) so doc-only commits — including the scheduled
+docs-round-up routine's direct pushes to master — don't trigger a pointless
+rebuild. It can also be triggered manually from the Actions tab
+(`workflow_dispatch`), useful right after merging one of the scheduled review
+PRs if you don't want to wait for the merge-commit push to fire it.
+
+**What's automatic now:** SSH into the server as a dedicated, restricted deploy
+user/key (not the personal `rallymax_key`), run the same `git pull && docker
+compose up --build -d app` this doc already documents, then poll `/health` and
+fail the workflow loudly if the app doesn't come back up.
+
+**What's still manual (unchanged):**
+- The one-time `data/` transfer to a fresh server, and any later `data/`
+  additions (new ML model weights, pro-database rebuilds) — these files are
+  gitignored and large, so CD only ever redeploys *code*, never `data/`. Same
+  `rsync`/`scp`/`tar` steps as above.
+- `backend/.env` changes — CD doesn't touch environment variables; edit them
+  on the server directly and restart if needed.
+- The very first setup of the deploy key + `authorized_keys` restriction on a
+  new server (see the repo's CD plan / commit for the exact
+  `command="..."` forced-command line) — one-time per server, not part of the
+  automated flow.
+
+Fallback: the manual `docker compose up --build app` flow above still works
+unchanged if the automated pipeline is ever down or you want to sanity-check
+a deploy by hand.
+
+---
+
 ## Known gaps this doesn't address
 
 - **Database**: still SQLite (`backend/data/app.db`), fine for a single
