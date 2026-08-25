@@ -13,7 +13,8 @@ function optionalAuth(req, res, next) {
   req.user = null;
   if (token) {
     try {
-      req.user = jwt.verify(token, process.env.JWT_SECRET);
+      // Same algorithm pinning as requireAuth.js -- see its comment.
+      req.user = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     } catch {
       // Invalid/expired token -- treat as anonymous rather than rejecting.
     }
