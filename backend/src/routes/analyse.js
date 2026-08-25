@@ -12,6 +12,7 @@ const { persistAndCrop, croppedProClipPath, toUrl, PRO_CLIPS_DIR, PRO_CLIPS_CROP
 const { reserveDailyUsageSlot, releaseUsageSlot, LIMIT_EXCEEDED } = require('../utils/usageLimit');
 const { runPythonJson } = require('../utils/runPythonJson');
 const { safeVideoExt, videoFileFilter } = require('../utils/videoUpload');
+const { isTimestampSec } = require('../domain/invariants');
 
 const router = express.Router();
 
@@ -66,12 +67,15 @@ router.post('/analyse', requireAuth, upload.single('video'), async (req, res) =>
   let parsedContactTime;
   if (contactTime !== undefined && contactTime !== '') {
     parsedContactTime = parseFloat(contactTime);
-    // isFinite (not isNaN) so Infinity/-Infinity 400 here too -- either one
-    // would otherwise reach the Python subprocess as a literal argv string
-    // and blow up pose extraction with an OverflowError.
-    if (!Number.isFinite(parsedContactTime)) {
+    // isTimestampSec (not just isFinite) so negative values and values past
+    // MAX_VIDEO_SECONDS 400 here too, same as any other video-offset field
+    // (e.g. coach.js's timestampSec) -- these used to only reject
+    // Infinity/-Infinity/NaN, letting a negative or absurdly large contact
+    // time reach the Python subprocess and corrupt the contact-frame
+    // alignment instead of failing cleanly.
+    if (!isTimestampSec(parsedContactTime)) {
       cleanup();
-      return res.status(400).json({ error: 'contactTime must be a number (seconds)' });
+      return res.status(400).json({ error: 'contactTime must be a number of seconds between 0 and the video length' });
     }
   }
 
