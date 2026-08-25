@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { StyleSheet } from 'react-native';
 import Svg, { Circle, Line } from 'react-native-svg';
 
@@ -15,6 +15,77 @@ const BONES = [
   ['right_shoulder', 'right_hip'],
   ['left_hip', 'right_hip'],
 ];
+
+// compare_swing.py only samples a pose every 3rd video frame (~10/sec on a
+// 30fps clip) and keeps every detected landmark regardless of MediaPipe's own
+// per-sample noise -- the Catmull-Rom spline below curves THROUGH that noise,
+// and a spline can visibly overshoot between two noisy points worse than a
+// straight line would, right around contact where wrist velocity (and
+// detection noise) is highest. A One Euro Filter smooths each joint's raw
+// x/y signal before interpolation: it adapts its cutoff to the signal's own
+// velocity, so slow segments get smoothed hard while fast segments (the
+// swing itself) keep low lag instead of visibly trailing the real motion.
+// https://cristal.univ-lille.fr/~casiez/1euro/ -- mincutoff/beta are the
+// paper's own starting defaults, may need a visual tuning pass per Jack.
+function makeOneEuroFilter(mincutoff = 1.0, beta = 0.007, dcutoff = 1.0) {
+  let xPrev = null;
+  let dxPrev = 0;
+  let tPrev = null;
+
+  const alpha = (cutoff, dt) => {
+    const tau = 1 / (2 * Math.PI * cutoff);
+    return 1 / (1 + tau / dt);
+  };
+  const lowPass = (value, prev, a) => (prev === null ? value : a * value + (1 - a) * prev);
+
+  return (value, t) => {
+    if (tPrev === null) {
+      xPrev = value;
+      tPrev = t;
+      return value;
+    }
+    const dt = Math.max(t - tPrev, 1e-6);
+    const dx = (value - xPrev) / dt;
+    const dxSmoothed = lowPass(dx, dxPrev, alpha(dcutoff, dt));
+    const cutoff = mincutoff + beta * Math.abs(dxSmoothed);
+    const xSmoothed = lowPass(value, xPrev, alpha(cutoff, dt));
+
+    xPrev = xSmoothed;
+    dxPrev = dxSmoothed;
+    tPrev = t;
+    return xSmoothed;
+  };
+}
+
+// Runs each joint's non-null x/y samples (in time order) through their own
+// filter instance, writing the smoothed value back into a cloned trajectory
+// with the same shape -- null gaps are left untouched, since
+// interpolatedLandmarks()'s gap-bridging already handles those correctly and
+// there's nothing to smooth where there's no data.
+function smoothTrajectory(trajectory) {
+  if (!trajectory || trajectory.length === 0) return trajectory;
+
+  const jointNames = new Set();
+  for (const frame of trajectory) {
+    for (const name of Object.keys(frame.landmarks || {})) jointNames.add(name);
+  }
+
+  const filters = {};
+  for (const name of jointNames) {
+    filters[name] = { x: makeOneEuroFilter(), y: makeOneEuroFilter() };
+  }
+
+  return trajectory.map((frame) => {
+    const landmarks = {};
+    for (const name of jointNames) {
+      const lm = frame.landmarks?.[name];
+      landmarks[name] = lm
+        ? { x: filters[name].x(lm.x, frame.t), y: filters[name].y(lm.y, frame.t) }
+        : null;
+    }
+    return { t: frame.t, landmarks };
+  });
+}
 
 // Catmull-Rom spline through 4 points (p0..p3), evaluated at t in [0,1]
 // between p1 and p2 -- unlike a straight lerp, this curves through the
@@ -108,9 +179,15 @@ function interpolatedLandmarks(trajectory, currentTimeSec) {
 }
 
 function SkeletonOverlay({ trajectory, currentTimeSec, width, height, color }) {
+  // Keyed on `trajectory` alone, same reasoning as RacketPathOverlay's own
+  // trajectory-derived memo: the raw samples are fixed for the whole clip,
+  // so this must run once per video, not on every playback status tick
+  // (20Hz on native, every animation frame on web).
+  const smoothed = useMemo(() => smoothTrajectory(trajectory), [trajectory]);
+
   if (!trajectory || trajectory.length === 0 || !width || !height) return null;
 
-  const landmarks = interpolatedLandmarks(trajectory, currentTimeSec ?? 0);
+  const landmarks = interpolatedLandmarks(smoothed, currentTimeSec ?? 0);
   if (!landmarks) return null;
 
   const px = (lm) => ({ x: lm.x * width, y: lm.y * height });

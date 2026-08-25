@@ -222,7 +222,7 @@ router.get('/dev/ball-label-candidates', requireAuth, requireAdmin, (req, res) =
 });
 
 // Logs Jack's manually-drawn ball box (or "no ball" verdict). Body is
-// {file, bucket, ball_visible, box_norm}.
+// {file, bucket, ball_visible, box_norm, is_live_ball}.
 router.post('/dev/ball-label/label', requireAuth, requireAdmin, (req, res) => {
   sendPythonJson(res, [LOG_MANUAL_BALL_LABEL], {
     timeoutMs: LOG_BALL_LABEL_TIMEOUT_MS,

@@ -104,6 +104,12 @@ export default function DevBallLabelScreen({ navigation }) {
   const [candidates, setCandidates] = useState([]);
   const [index, setIndex] = useState(0);
   const [drawnBox, setDrawnBox] = useState(null);
+  // For a frame where the ball actually in play isn't visible, Jack's past
+  // practice was to box a static ball instead (one sitting on court, not
+  // being played) rather than leave the frame unlabeled -- indistinguishable
+  // from a real label without this flag. Defaults true (the common case);
+  // reset on every new candidate so it can't accidentally carry over.
+  const [isLiveBall, setIsLiveBall] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [doneCount, setDoneCount] = useState(0);
   const [reloadKey, setReloadKey] = useState(0);
@@ -165,6 +171,7 @@ export default function DevBallLabelScreen({ navigation }) {
     // every other review tool in this app; drawing a new box (or "No ball
     // in this frame") still overrides it as before.
     setDrawnBox(current?.purpose === 'spotcheck' && current.existing_box_norm ? current.existing_box_norm : null);
+    setIsLiveBall(true);
   }, [current]);
 
   const advance = () => {
@@ -185,6 +192,9 @@ export default function DevBallLabelScreen({ navigation }) {
           file: current.file, bucket: current.bucket,
           ball_visible: ballVisible,
           box_norm: ballVisible ? drawnBox : null,
+          // Only meaningful when a box is actually being submitted -- true
+          // (the default/common case) unless explicitly toggled off below.
+          is_live_ball: ballVisible ? isLiveBall : null,
         }),
       });
       if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -261,6 +271,20 @@ export default function DevBallLabelScreen({ navigation }) {
           {drawnBox ? 'Box drawn — tap "Confirm box" or redraw' : 'Drag on the image to draw a box around the ball'}
         </Text>
 
+        {drawnBox && (
+          <TouchableOpacity
+            style={s.liveBallToggle}
+            onPress={() => setIsLiveBall((v) => !v)}
+          >
+            <View style={[s.checkbox, !isLiveBall && s.checkboxChecked]}>
+              {!isLiveBall && <Text style={s.checkboxMark}>✓</Text>}
+            </View>
+            <Text style={s.liveBallToggleText}>
+              Not the ball in play (static/decoy ball)
+            </Text>
+          </TouchableOpacity>
+        )}
+
         <View style={s.actionBar}>
           <TouchableOpacity
             style={[s.actionBtn, s.noBallBtn]}
@@ -293,6 +317,12 @@ const s = StyleSheet.create({
 
   imageWrap: { alignItems: 'center', justifyContent: 'center', marginTop: 6 },
   hint: { color: colors.muted, fontSize: 12, textAlign: 'center', marginTop: 8, fontFamily: fonts.regular },
+
+  liveBallToggle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 10, gap: 8 },
+  checkbox: { width: 18, height: 18, borderRadius: 4, borderWidth: 1.5, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  checkboxChecked: { backgroundColor: colors.coral, borderColor: colors.coral },
+  checkboxMark: { color: colors.white, fontSize: 12, fontFamily: fonts.extrabold },
+  liveBallToggleText: { color: colors.muted, fontSize: 12.5, fontFamily: fonts.regular },
 
   actionBar: { flexDirection: 'row', gap: 10, paddingHorizontal: spacing.xl, marginTop: 16 },
   actionBtn: { flex: 1, borderRadius: radius.lg, paddingVertical: 15, alignItems: 'center' },
