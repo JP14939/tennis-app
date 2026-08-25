@@ -890,3 +890,33 @@ suite was green after.
 pull` + `docker compose up --build app`) — everything above is merged to
 master but not live yet. Explicitly deferred to a separate session per
 your own call.
+
+---
+
+## New from the 2026-08-25 docs round-up
+
+**Review and merge (or request changes on) PRs #9–#12 from today's
+scheduled routines** — logic review (`logic-review/2026-08-25`, 4 fixes:
+`contactTime` timestamp validation, flagged-swing leakage into profile
+stats, courts radius using the exact vs. rounded distance, `target_reps`
+type coercion), bug sweep (`bug-sweep/2026-08-25`, 5 fixes including a
+near-empty pose trajectory producing a fake similarity score instead of
+an error), security review (`security-review/2026-08-25`, pins JWT
+verification to HS256 — hardening, not an active exploit), and brainstorm
+(`future-ideas/2026-08-25`, docs only). None titled `🚨 CRITICAL:`. Also
+still open and unmerged from yesterday: **PR #8**
+(`future-ideas/2026-08-24`) — same as the last two round-ups, purely
+docs, no urgency. See `HANDOVER.md`'s "Scheduled-routine PR round-up
+(2026-08-25)" for the full per-PR summary.
+
+**Worth checking before merging PR #10 specifically**: its headline fix
+(a minimum pose-trajectory-length guard in `compare_swing.py`'s
+`build_user_trajectory()`, mirroring the pro-database side's existing
+`MIN_TRAJECTORY_POINTS` guard) could not be executed in the routine's
+sandbox — no `cv2`/`mediapipe`/venv available there. The PR verified it
+by inspection only, against an existing tested pattern it mirrors, but
+this is the one live-inference code path in this batch — worth a real
+`cd scripts && .\venv\Scripts\activate && pytest` pass (or at least a
+manual `compare_swing.py` run against a real short/occluded clip) before
+merging, since a mistake here would land directly on the core swing-match
+flow.
