@@ -11,6 +11,132 @@ scope or timing before starting.
 
 ---
 
+### 2026-08-24
+
+Context for this pass: read `CLAUDE.md`, all of `HANDOVER.md` (through item
+42 and the 2026-08-23 PR-merge/round-up sections), and `TODO_MANUAL.md`.
+The 2026-08-23 pass already covers a lot of good ground (weakest-phase
+drills, session recap, ball detector Phase 3, net-keypoint wiring, test
+coverage, `optionalAuth` convention, CI/CD, SQLite/Postgres, FK enforcement,
+`expo-av` migration) — this pass tries not to repeat those and instead
+builds on what changed since: the four 2026-08-23 PRs got merged, item 42's
+real-device testing found a cluster of native-only bugs invisible to web
+testing, and a handful of concrete "still your call" items are sitting in
+`TODO_MANUAL.md`'s "Product-call items from PR #1" list without a proposed
+direction. Also skipping anything already explicitly declined — e.g. still
+not re-proposing `Z_WEIGHT` re-enablement or the direct-regression racket
+model.
+
+#### Product features (building on the DTW pro-comparison core loop)
+
+- **Seed the worldwide leaderboard.** `celebrity_scores` has 0 rows right
+  now (confirmed in the 2026-08-22 commit that shipped `FirstSwingCard` and
+  hid the leaderboard when empty) — the "worldwide, admin-added pros/
+  celebrities" leaderboard mode built in item 18 has no data to actually
+  show yet, so it's effectively dead weight in the UI today. Populating it
+  is pure content work: run a handful of well-known pro clips through the
+  existing comparison engine (or hand-enter representative scores) and
+  seed the table. **S** — no code changes, just data + maybe a small admin
+  script if one doesn't already exist.
+- **Haptic feedback on score reveal and achievements.** The 2026-08-22
+  session added a real motion system (`theme.js` easing/duration/spring
+  tokens, `PressableScale` spring feedback, an orchestrated `ScoreCard`
+  reveal) but it's visual-only — `expo-haptics` isn't used anywhere. A
+  light tap on the score-count-up landing and on an achievement/rank-tier
+  unlock would be a small, cheap follow-on to that work, and fits the
+  "make AI feedback feel tangible" goal the original GolfFix brief called
+  out for the skeleton overlay. **S**.
+- **Self-serve recovery for a missing History video.** The 85-row gap from
+  the 2026-08-14 local batch run (item in `TODO_MANUAL.md`) is a one-off,
+  but the underlying failure mode — a saved analysis whose `user_clip_url`
+  points at a file that isn't actually on the server — isn't specific to
+  that batch and could recur after any future local-run-then-deploy
+  mismatch. Instead of (or in addition to) manually copying the old files,
+  a "video unavailable — re-upload this swing to restore playback" prompt
+  on `HistoryScreen`/`ResultsScreen` when the clip 404s would make the
+  failure self-healing for users instead of needing a manual `scp` every
+  time it happens. **S–M**.
+
+#### ML pipeline improvements (numbered `scripts/` stages)
+
+- **Spot-check the 120 "unmatched" analyses from the 2026-08-10 shot-
+  verification retrain.** Called out in item 7 of `HANDOVER.md` and never
+  followed up: when `apply_verification_to_history.py` was run against
+  Jack's real history, 120 of 245 existing rows couldn't be matched to a
+  swing-index in the fresh verification pass (numbering didn't line up
+  between the original overnight run and the retrain), so they never got a
+  real verified/flagged/re-cropped verdict either way — they're just
+  sitting there unverified. The two-way "Yes, real shot"/"No, not a shot"
+  buttons already on every History card are the exact tool needed to clear
+  this backlog by hand; a small script to list just the 120 unmatched ids
+  first would make it a bounded task instead of an open-ended scroll.
+  **S**.
+
+#### Data quality opportunities
+
+- **Reconcile `annotationStrokesJson`'s per-field cap against the shared
+  `express.json()` body limit, everywhere else this pattern exists.** Item
+  42 found and fixed one real instance (a 200KB per-field cap that was
+  structurally unreachable because two such fields share a 100KB total
+  body limit, so the parser's 413 always fired first) — worth a quick
+  audit of `invariants.js`/`validateBody.js` for any other per-field size
+  cap that could have the same problem (drill/lesson content bodies,
+  message text, coach notes) rather than assuming this was the only site.
+  **S** — a grep-and-check pass, not new architecture.
+- **`celebrity_scores` being empty** is also worth flagging here as a data
+  gap in its own right, separate from the leaderboard feature idea above —
+  whatever gets used to seed it (real pro footage run through
+  `compare_swing.py`, or hand-entered reference scores) should get the
+  same "verified against real code, not guessed" treatment the rest of
+  this app's data has had. **S**, same effort as the feature item above —
+  listed twice deliberately since it's both a UI gap and a DB gap.
+
+#### Technical debt worth paying down
+
+- **Four route files still have zero test coverage, and they're not the
+  low-risk ones.** Route-level test coverage has moved a lot since
+  yesterday's pass (`analyse.js` now has `analyse.test.js`, e.g.) — as of
+  today, exactly `billing.js`, `webhooks.js`, `calibration.js`, and
+  `compareVideos.js` have no test file at all. That's the entire real-money
+  path (`billing.js`/`webhooks.js` are what keep `users.tier` correct) plus
+  the second live comparison engine entry point. Worth calling out
+  specifically rather than folding into the general "14 files untested"
+  framing from yesterday, since the remaining gap is now small enough to
+  name file-by-file. **S** each, **M** for all four.
+- **`runPythonJson`'s missing `SIGKILL` escalation doesn't actually need
+  Jack's call.** It's listed in `TODO_MANUAL.md` alongside three genuinely
+  product-judgment items (the invite-code TOCTOU race, the non-transactional
+  Overpass upsert, the empty-`rallyIds` semantics question), but unlike
+  those three it's pure robustness with no behavioral ambiguity to resolve
+  — a hung Python subprocess should die on timeout, full stop. Worth
+  splitting out and just building: `SIGTERM` then a short grace window then
+  `SIGKILL` if the process hasn't exited. **S**.
+- **Give the coaching-tip Claude verifier a real kill switch before ever
+  re-enabling it.** The logic-review PR found it silently live on every
+  `/api/analyse`/`/api/compare-videos` call (up to 3 synchronous Anthropic
+  calls per request) and disabled both call sites — but `CLAUDE.md` still
+  describes `09_coaching_ai/` as "never run with real data, not wired in,"
+  so the docs and the code have drifted apart on this before and could
+  again. If/when this comes back, wiring it behind an explicit env flag
+  plus the cost-budget tracking `tip_training_log.py` already has the
+  shape for (rather than a bare import) would make "is this live" a
+  one-line check instead of a full-file read. **M**, and still needs
+  Jack's call on *whether* to re-enable, just not on *how* to gate it
+  safely if he does.
+- **Turn `npm run verify:db` into a scheduled check, not just a manual
+  command.** The 2026-08-22 session built real infrastructure here (48
+  integrity checks, safe to run read-only against production) but it only
+  runs when someone remembers to type the command. A daily scheduled run
+  against a read-only copy of the hosted `app.db` (or over SSH, output
+  piped back) would catch the next `outcome_tag` -style silent-mismatch
+  bug automatically instead of waiting for someone to notice a feature
+  quietly not working, the same way the Player Type bug was found this
+  time. **S–M** — the checking logic already exists, this is scheduling +
+  a place to report failures (could ride on the same GitHub-connected
+  routine infra the other five scheduled routines already use).
+
+---
+
 ### 2026-08-23
 
 Context for this pass: read `CLAUDE.md`, all of `HANDOVER.md` (items 1–41
