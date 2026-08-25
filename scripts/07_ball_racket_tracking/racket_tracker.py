@@ -15,6 +15,8 @@ import sys
 import cv2
 from ultralytics import YOLO
 
+from ball_tracker import track_ball
+
 RACKET_CLASS = 38
 BALL_CLASS = 32
 CONF_THRESHOLD = 0.15
@@ -171,28 +173,18 @@ def _interpolated_ball_track(detections, start_frame, end_frame, max_gap_frames=
     """
     (frame, ball_center) for every frame in [start_frame, end_frame] with a
     ball detection, in original-frame coordinate space (see
-    _center_in_original_space), linearly interpolating through gaps up to
-    max_gap_frames long (the ball vanishing for a frame or two right at
-    contact is expected -- see _find_gap_contact's comment -- and shouldn't
-    kill a real departure trend). A gap longer than that isn't filled --
-    there's no real basis to guess where the ball went for that long, and
-    interpolating across it would fabricate a trend rather than measure one.
+    _center_in_original_space). Delegates to ball_tracker.py's constant-
+    velocity Kalman filter: predicts through a gap up to max_gap_frames long
+    (the ball vanishing for a frame or two right at contact is expected --
+    see _find_gap_contact's comment -- and shouldn't kill a real departure
+    trend) rather than plain linear fill, and rejects a measurement that
+    doesn't fit the ball's established motion (a stray ball-shaped object
+    elsewhere in frame) instead of blindly trusting every detection. Predicts
+    on faith for up to max_gap_frames consecutive misses; beyond that there's
+    no real basis to guess where the ball went, so the track breaks there
+    rather than fabricating a trend indefinitely.
     """
-    real = [(d['frame'], _center_in_original_space(d['ball_box'], d)) for d in detections
-            if d['ball_box'] and start_frame <= d['frame'] <= end_frame]
-    real.sort(key=lambda p: p[0])
-    if len(real) < 2:
-        return real
-
-    track = [real[0]]
-    for (f0, c0), (f1, c1) in zip(real, real[1:]):
-        gap = f1 - f0
-        if 1 < gap <= max_gap_frames:
-            for f in range(f0 + 1, f1):
-                t = (f - f0) / gap
-                track.append((f, (c0[0] + (c1[0] - c0[0]) * t, c0[1] + (c1[1] - c0[1]) * t)))
-        track.append((f1, c1))
-    return track
+    return track_ball(detections, start_frame, end_frame, _center_in_original_space, max_gap_frames)
 
 
 def ball_departure_confirmed(detections, contact_frame, fps, window_sec=0.3):
