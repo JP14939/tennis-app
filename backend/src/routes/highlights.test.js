@@ -74,4 +74,34 @@ describe('PATCH /highlights/rallies/:id field validation', () => {
       .send({ outcome_tag: { bogus: true } });
     expect(res.status).toBe(400);
   });
+
+  // Regression test: `?? clip.boundary_note` used to treat an OMITTED
+  // boundary_note key the same as "leave it unchanged" -- there was no way
+  // to actually clear a previously-set note (an explicit '' is what the
+  // frontend now sends when every box gets unchecked). Also confirms an
+  // omitted key really does leave an existing note untouched, so the fix
+  // doesn't regress that legitimate case.
+  test('an explicit empty boundary_note clears a previously-set note', async () => {
+    const { id: userId, token } = makeUser('rally_clearnote@test.com', 'free');
+    const jobId = db.prepare(`INSERT INTO highlight_jobs (user_id, video_path, status) VALUES (?, 'x', 'done')`)
+      .run(userId).lastInsertRowid;
+    const clipId = db.prepare(`
+      INSERT INTO rally_clips (job_id, user_id, clip_path, start_sec, end_sec, duration_sec, swing_count, boundary_note)
+      VALUES (?, ?, 'clip.mp4', 0, 1, 1, 1, 'started_too_late')
+    `).run(jobId, userId).lastInsertRowid;
+
+    const cleared = await request(app)
+      .patch(`/api/highlights/rallies/${clipId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ outcome_tag: 'winner_this_side', boundary_note: '' });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.boundary_note).toBeFalsy();
+
+    const untouched = await request(app)
+      .patch(`/api/highlights/rallies/${clipId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ outcome_tag: 'winner_other_side' });
+    expect(untouched.status).toBe(200);
+    expect(untouched.body.boundary_note).toBeFalsy();
+  });
 });

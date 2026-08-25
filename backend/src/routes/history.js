@@ -5,7 +5,7 @@ const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
 const { currentTier } = require('../utils/tier');
 const { DATA_DIR } = require('../config/paths');
-const { SHOT_TYPES, isShotType, isScore } = require('../domain/invariants');
+const { SHOT_TYPES, isShotType, isScore, isOptionalText, MAX_LENGTHS } = require('../domain/invariants');
 const { validate, oneOfMessage } = require('../validation/validateBody');
 
 const router = express.Router();
@@ -138,9 +138,18 @@ router.post('/history', requireAuth, (req, res) => {
   const rawScore = top.overall_score ?? top.similarity;
   const similarity = rawScore === undefined || rawScore === null ? 0 : Number(rawScore);
 
+  // top.pro_id / result.angle_label / top.tips[0].tip_text also flow straight
+  // into a SQLite bind param below (see the comment above on why this whole
+  // body is untrusted). Unlike shotType/similarity, these three used to have
+  // no type check at all -- a non-string (e.g. {"pro_id": {"x": 1}}) throws
+  // a TypeError out of better-sqlite3's .run(), which server.js's generic
+  // handler turns into a bare 500 instead of the app's normal 400 shape.
   const bad = validate([
     ['shotType', shotType, isShotType, oneOfMessage(SHOT_TYPES)],
     ['matches[0] score', similarity, isScore, 'must be a number between 0 and 100'],
+    ['matches[0] pro_id', top.pro_id, isOptionalText(MAX_LENGTHS.proId), `must be a string of at most ${MAX_LENGTHS.proId} characters`],
+    ['angle_label', result.angle_label, isOptionalText(MAX_LENGTHS.angleLabel), `must be a string of at most ${MAX_LENGTHS.angleLabel} characters`],
+    ['matches[0] tips[0].tip_text', top.tips?.[0]?.tip_text, isOptionalText(MAX_LENGTHS.tipText), `must be a string of at most ${MAX_LENGTHS.tipText} characters`],
   ]);
   if (bad) return res.status(400).json(bad);
 

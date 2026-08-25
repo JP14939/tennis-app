@@ -314,10 +314,20 @@ router.patch('/highlights/rallies/:id', requireAuth, (req, res) => {
   const clip = db.prepare(`SELECT * FROM rally_clips WHERE id = ? AND user_id = ?`).get(req.params.id, req.user.id);
   if (!clip) return res.status(404).json({ error: 'Rally clip not found' });
 
+  // `?? clip.boundary_note` treats an OMITTED key the same as an explicit
+  // null, so there was no way to actually clear a previously-set
+  // boundary_note -- DevRallyBoundaryReviewScreen.js unchecking every
+  // boundary box for a clip sends a body with the key left out entirely
+  // (JSON.stringify drops undefined-valued keys), and the stale note
+  // silently kept poisoning tune_rally_gap.py's training data. Distinguish
+  // "key present" (even if null/'', a real clear request) from "key absent"
+  // (no change intended) instead.
+  const clearsBoundaryNote = Object.prototype.hasOwnProperty.call(req.body || {}, 'boundary_note');
+
   db.prepare(`UPDATE rally_clips SET outcome_tag = ?, archived = ?, boundary_note = ? WHERE id = ?`).run(
     outcome_tag ?? clip.outcome_tag,
     archived !== undefined ? (archived ? 1 : 0) : clip.archived,
-    boundary_note ?? clip.boundary_note,
+    clearsBoundaryNote ? (boundary_note ?? null) : clip.boundary_note,
     clip.id
   );
 
