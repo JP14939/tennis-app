@@ -9,6 +9,7 @@ process.env.DB_PATH = ':memory:';
 process.env.JWT_SECRET = 'test-secret';
 process.env.ADMIN_EMAILS = 'admin@test.com';
 
+const fs = require('fs');
 const express = require('express');
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
@@ -263,5 +264,68 @@ describe('DELETE /dev/drills/:id', () => {
     const { token } = admin();
     const res = await request(app).delete('/api/dev/drills/999999').set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(404);
+  });
+});
+
+// video_path is only ever set from the newest upload -- re-uploading a
+// video on an existing drill/lesson used to leave the previous file on disk
+// forever with nothing left pointing at it (an unbounded slow leak on every
+// re-edit). Fixed by deleting the old file once the DB update commits.
+describe('POST /dev/drills video replacement', () => {
+  test('replacing a video on an existing drill deletes the old file from disk', async () => {
+    const { token } = admin();
+
+    const create = await request(app)
+      .post('/api/dev/drills')
+      .set('Authorization', `Bearer ${token}`)
+      .field('kind', 'drill').field('shot_type', 'forehand')
+      .field('title', 'T').field('explanation', 'E').field('steps', '[]')
+      .attach('video', Buffer.from('first video bytes'), 'first.mp4');
+    expect(create.status).toBe(200);
+    const itemId = create.body.id;
+    const firstPath = db.prepare('SELECT video_path FROM drill_items WHERE id = ?').get(itemId).video_path;
+    expect(fs.existsSync(firstPath)).toBe(true);
+
+    const update = await request(app)
+      .post('/api/dev/drills')
+      .set('Authorization', `Bearer ${token}`)
+      .field('id', String(itemId))
+      .field('kind', 'drill').field('shot_type', 'forehand')
+      .field('title', 'T').field('explanation', 'E').field('steps', '[]')
+      .attach('video', Buffer.from('second video bytes'), 'second.mp4');
+    expect(update.status).toBe(200);
+    const secondPath = db.prepare('SELECT video_path FROM drill_items WHERE id = ?').get(itemId).video_path;
+
+    expect(secondPath).not.toBe(firstPath);
+    expect(fs.existsSync(firstPath)).toBe(false);
+    expect(fs.existsSync(secondPath)).toBe(true);
+
+    fs.unlinkSync(secondPath);
+  });
+
+  test('an edit with no new video keeps the existing file untouched', async () => {
+    const { token } = admin();
+
+    const create = await request(app)
+      .post('/api/dev/drills')
+      .set('Authorization', `Bearer ${token}`)
+      .field('kind', 'drill').field('shot_type', 'forehand')
+      .field('title', 'T').field('explanation', 'E').field('steps', '[]')
+      .attach('video', Buffer.from('only video bytes'), 'only.mp4');
+    const itemId = create.body.id;
+    const videoPath = db.prepare('SELECT video_path FROM drill_items WHERE id = ?').get(itemId).video_path;
+
+    const update = await request(app)
+      .post('/api/dev/drills')
+      .set('Authorization', `Bearer ${token}`)
+      .field('id', String(itemId))
+      .field('kind', 'drill').field('shot_type', 'forehand')
+      .field('title', 'Renamed').field('explanation', 'E').field('steps', '[]');
+    expect(update.status).toBe(200);
+
+    expect(db.prepare('SELECT video_path FROM drill_items WHERE id = ?').get(itemId).video_path).toBe(videoPath);
+    expect(fs.existsSync(videoPath)).toBe(true);
+
+    fs.unlinkSync(videoPath);
   });
 });
