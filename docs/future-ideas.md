@@ -11,6 +11,182 @@ scope or timing before starting.
 
 ---
 
+### 2026-08-26
+
+Context for this pass: read `CLAUDE.md`, all of `HANDOVER.md` (all 44 dated
+items, the pipeline/backend/frontend backlogs, and the three PR round-up
+sections), `TODO_MANUAL.md` in full, and all three prior dated sections
+below. A lot closed out since the 2026-08-25 pass specifically: CI/CD now
+exists (`.github/workflows/deploy.yml`, item #44), the 5 flagged ball-label
+clips were resolved, JWT is pinned to HS256, and `webhooks.js` picked up a
+validation test file. Ideas below try to build on that fresh ground and
+deliberately skip repeating anything already sitting in the 2026-08-23/24/25
+sections — including every item in those sections' own "already tried and
+declined" lists (`Z_WEIGHT` at the DTW level, freeform Claude ball-bbox
+labeling, synthetic-data training for the coaching-tip verifier,
+`static_hold`'s speed-based rejection rule, the direct-regression racket
+model) plus, this pass, the friends system's **single-sided, no-dedup match
+logging** — confirmed in `HANDOVER.md` item 16 as "a deliberate scope call
+... rather than building a confirm/dispute flow," not an oversight, so it's
+left alone here too.
+
+#### Product features (building on the DTW pro-comparison core loop)
+
+- **Actually verify Coach Collaboration Mode end-to-end, not just that the
+  files exist.** `HANDOVER.md` item 14 flagged this explicitly back on
+  2026-08-11 — "only confirmed via a quick file-existence check... treat
+  'how complete this is' as still an open question" — and nothing since has
+  closed that question. `coach.js`/`coach_links`/`coach_notes` are real, but
+  whether the full invite → link → student-history → per-analysis-note loop
+  actually works end-to-end for two real accounts has never been the subject
+  of its own verification pass the way Friends and Find Games got. **S–M**
+  to verify; if it holds up, the natural next increment is a coach-facing
+  aggregate view across all of a coach's students (weakest-phase trends,
+  who hasn't logged a swing recently) instead of only per-analysis notes —
+  **M**, and only worth scoping once the audit confirms the base loop is
+  solid.
+- **Graduate `player-type` from a rule-based heuristic to the same
+  teacher-student pattern already proven for shot-type and shot-contact.**
+  `GET /api/profile/player-type` ships today as an explicitly-labeled
+  `confidence: 'estimated'` guess (outcome-tag rates or shot-type mix,
+  hand-picked thresholds) because, per item 14, "the app has no
+  court-position/rally-pattern data" for a real tactical classifier — that
+  hasn't changed, but the verified-rally-outcome corpus behind it has grown
+  a lot since 2026-08-13 (85+ real match rows, a shot-verification pipeline
+  now gating what counts as a real shot). A lighter-weight win than true
+  tactical classification: train on the *existing* feature set (outcome-tag
+  rates, rally length, shot-type mix) instead of hand-picked thresholds, and
+  validate it the same teacher-student way `classify_shot.classify_ml()`
+  was — Claude labels a small verified sample, compare against the current
+  rule-based labels. **M**.
+- **Surface the existing head-to-head record on Home, not just inside a
+  friend's detail view.** `friend_matches`/`GET /friends` already compute a
+  live per-friend win/loss badge (e.g. "3–1"), but it's only visible one tap
+  deep in the Friends tab. A small "your rivalries" card on `HomeScreen.js`
+  (top 1-2 friends by recent match activity) would surface data that
+  already exists today, no backend changes. **S**.
+
+#### ML pipeline improvements (numbered `scripts/` stages)
+
+- **Build ball-speed v1 — both things it was waiting on now exist.** Item
+  #43 scoped this in detail and explicitly held it "behind Phase 3
+  fine-tuning landing first," but the two concrete prerequisites named at
+  the time — a real ball-motion model instead of raw detections, and an
+  agreed-on scale/approach — are both now in place: `ball_tracker.py`'s
+  Kalman filter (built 2026-08-25, 6 tests, smoke-tested) gives a stable
+  track to measure velocity from, and the net-keypoint-based local-scale
+  approach (speed *at the net crossing*, not at racket contact — an agreed,
+  disclosed v1 limitation) was already worked out with Jack. Phase 3
+  fine-tuning improving raw detection quality only makes this converge
+  faster, it was never a hard blocker on starting. **M–L**.
+- **Give `ball_tracker.py` a gravity-aware flight model, per its own
+  "deliberately NOT... yet" scoping note.** The shipped constant-velocity
+  Kalman filter is explicitly flagged in item #43 as "a real future
+  refinement, not built this session." Now that the constant-velocity
+  baseline is live, tested, and has a real caller (`ball_departure_confirmed`
+  via `_interpolated_ball_track()`), swapping in (or blending toward) a
+  parabolic/gravity motion model for the post-contact flight phase would
+  improve exactly the segment where a ball decelerates and drops
+  differently than a constant-velocity model assumes — directly relevant to
+  the ball-speed feature above, whichever lands first. **M–L**.
+- **Reuse the Wilson-score trust-bucketing pattern per predicted class, not
+  just per evidence-type.** `shot_contact_training_log.py`'s bucketing (one
+  trust score per evidence category) already solved "some signals are more
+  reliable than others" for shot verification, and the 2026-08-25 section
+  already proposed applying the same idea to camera-angle confidence. A
+  third, distinct place it fits: the ML shot-type classifier's honestly-
+  reported 0.30 backhand precision (vs. much healthier forehand/serve
+  numbers) is being masked by one pooled 90%/50-example trust gate — bucket
+  `should_trust_bucket()`-style by *predicted class* instead, so forehand/
+  serve predictions could start being trusted standalone well before
+  backhand clears the same bar. **M**.
+
+#### Data quality opportunities
+
+- **Apply the new "not moving = not the ball being played" audit to the pro
+  database too, not just the 354 manual user labels.** `audit_ball_label_
+  motion.py` (built 2026-08-25) exists purely because Jack's own labeling
+  practice could box a static decoy ball — but the *pro* database's
+  `ball_visibility_audit.json` (the filter that turns ~914 raw entries into
+  631) was built earlier, by a different process, and has never been
+  checked against this exact rule. If any of the 631 live entries have a
+  similar decoy-vs-real-ball ambiguity, it's silently feeding every user's
+  comparison today. Running the same motion-check logic (adapted from
+  per-label to per-database-entry) against the pro database's own ball
+  track data is a cheap, direct reuse of code that already exists and is
+  already trusted. **S–M**.
+- **Recheck the ship-time-guessed thresholds now that real usage data
+  exists.** At least three real numbers went live as explicit placeholders,
+  never revisited: the 8-tier rank ladder's thresholds (item 14: "a
+  first-pass geometric spacing with no real usage data behind it yet"),
+  `player-type`'s minimum-data gates (`≥5` tagged rallies / `≥10`
+  analyses, also picked without usage data), and the `similarity >= 75`
+  "great swing" cutoff duplicated across `theme.js`/`HomeScreen.js`/
+  `HistoryScreen.js`/`profile.js`. There's now real distribution data
+  (hundreds of real analyses, 85+ real match-derived rows) to check whether
+  any of these guesses are badly off — e.g. everyone hitting "Legend" too
+  fast, or `player-type` staying `null` for most real users. **S**, a data
+  pull + threshold tuning pass, no new architecture; also a natural moment
+  to collapse the duplicated `75` into one shared constant while touching
+  those call sites.
+
+#### Technical debt worth paying down
+
+- **The new CD pipeline has no test gate before it deploys.**
+  `.github/workflows/deploy.yml` (item #44) triggers straight from a push to
+  `master` touching `backend/**`/`scripts/**` — it SSHes in and rebuilds
+  immediately, with no `npm test` (or `pytest`) step in between and no
+  separate CI workflow anywhere in `.github/workflows/` to catch a red suite
+  first. Before CI/CD existed, a broken push just sat on GitHub until
+  someone manually deployed; now the exact same broken push reaches
+  production automatically, faster. Worth adding a `test` job the `deploy`
+  job depends on (`needs:`) — the backend suite already runs fast enough
+  locally to not meaningfully slow the pipeline down. **S–M**, and pairs
+  directly with the next item: this is sharpest on exactly the routes with
+  no test coverage to catch a regression before deploy.
+- **Three route files still have zero test coverage: `billing.js`,
+  `calibration.js`, `compareVideos.js`.** Down from the four named in the
+  2026-08-24 pass — `webhooks.js` picked up `webhooks.validation.test.js`
+  since then — but the remaining three are still real-money (`billing.js`
+  is the client-triggered tier-sync path) and the second live comparison
+  engine entry point. Combined with the CD test-gate gap above, these are
+  currently the routes most exposed to "a bad change reaches production
+  with nothing to catch it." **S** each, **M** for all three.
+- **A zero-account-setup interim DB backup, using infrastructure that
+  already exists.** `TODO_MANUAL.md`'s off-box-backup item has real,
+  tested code (`backupDatabase.js`, `npm run backup:db`) sitting behind
+  three human steps (a Backblaze B2 account, `rclone` on the VPS, a cron
+  job) that haven't happened yet. The CD pipeline (item #44) already has a
+  working, scoped SSH credential into the same server — a stopgap cron job
+  that `scp`s a nightly `app.db` snapshot to wherever the CD workflow's own
+  runner (or any already-authorized machine) can write it would give real
+  off-box coverage today, without waiting on the Backblaze account to get
+  created. Not a replacement for the real B2 setup once it happens, just a
+  way to not have zero backups in the meantime. **S**.
+- **`tip_verifier.py`'s safety-gate comment is now factually wrong.** Its
+  module docstring still reads "do not call `verify_picks()` until the
+  ANTHROPIC_API_KEY... has been rotated (the current one was exposed in
+  chat and needs replacing first)" — but the key was rotated back on
+  2026-08-10, 16 days before this pass. Harmless today since the whole
+  coaching-tip verifier loop is independently disabled at both live call
+  sites (per the 2026-08-23 logic-review PR), but a stale safety gate is
+  exactly the kind of comment someone re-enabling this system later would
+  reasonably trust at face value. Update it to describe the real current
+  gate (disabled pending a kill-switch decision, not "key not rotated
+  yet"). **S**.
+- **`TODO_MANUAL.md`'s "Quick status" banner is now stale by 4 days of real
+  work.** `CLAUDE.md` tells every fresh session to read this exact line
+  first, but it's still dated 2026-08-22 and predates CI/CD, the ball
+  tracker, the pose-overlay jitter fix, and three more PR rounds — someone
+  reading it cold today would miss all of that. Worth either updating it as
+  part of the next docs round-up or considering whether a banner that has
+  to be manually kept current across many sessions is the right shape for
+  this at all (vs., say, deriving "what's open" from the struck-through/
+  plain headings that already exist further down the same file). **S** to
+  just refresh it; **M** if it's worth restructuring instead.
+
+---
+
 ### 2026-08-25
 
 Context for this pass: read `CLAUDE.md`, all of `HANDOVER.md` (all 42
