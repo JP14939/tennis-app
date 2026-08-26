@@ -176,7 +176,7 @@ def find_peak_wrist_frame(frames, fps):
 def build_user_trajectory(frames, fps, contact_time_sec=None):
     """
     Sample every available pose frame (native ~15-30fps, since
-    extract_user_poses keeps every 2nd frame) from PRE_SEC before to POST_SEC
+    extract_user_poses keeps every 3rd frame) from PRE_SEC before to POST_SEC
     after the contact frame, mirroring extract_swing_trajectory in
     build_pro_database.py so the two are DTW-comparable.
 
