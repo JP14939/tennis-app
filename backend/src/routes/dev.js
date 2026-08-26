@@ -98,6 +98,16 @@ router.get('/dev/ml-status', requireAuth, requireAdmin, (req, res) => {
 // candidate for a job's rally clips, with the geometric student's opinion
 // (no Claude involved) for reference by log-manual-review below.
 router.get('/dev/swing-candidates/:jobId', requireAuth, requireAdmin, (req, res) => {
+  // list_swing_candidates.py joins this argv straight onto its clips
+  // directory (`os.path.join(HIGHLIGHT_CLIPS_DIR, job_id)`) and lists
+  // whatever directory results -- an unvalidated jobId like `../../..`
+  // escapes HIGHLIGHT_CLIPS_DIR entirely, letting this admin-only route walk
+  // and pose-extract arbitrary directories on the host. highlight_jobs.id is
+  // always a real autoincrement integer, so anything else is never a
+  // legitimate job id.
+  if (!isPositiveIntegerId(req.params.jobId)) {
+    return res.status(400).json({ error: 'jobId must be a positive whole number' });
+  }
   sendPythonJson(res, [LIST_SWING_CANDIDATES, req.params.jobId], {
     timeoutMs: CANDIDATES_TIMEOUT_MS,
     label: 'list_swing_candidates.py',
@@ -115,6 +125,14 @@ router.get('/dev/swing-candidates/:jobId', requireAuth, requireAdmin, (req, res)
 // candidate object from GET /dev/swing-candidates/:jobId (student_* fields)
 // plus his verdict (is_real_shot, shot_type).
 router.post('/dev/swing-candidates/label', requireAuth, requireAdmin, (req, res) => {
+  // log_manual_review.py builds a clip_path from these two fields the same
+  // unsanitized way list_swing_candidates.py's jobId does (see that route's
+  // comment above) -- job_id/rally_id are always real row ids in a
+  // legitimate request from DevSwingReviewScreen.js, so reject anything else
+  // before it reaches the subprocess.
+  if (!isPositiveIntegerId(req.body?.job_id) || !isPositiveIntegerId(req.body?.rally_id)) {
+    return res.status(400).json({ error: 'job_id and rally_id must be positive whole numbers' });
+  }
   sendPythonJson(res, [LOG_MANUAL_REVIEW], {
     timeoutMs: LOG_REVIEW_TIMEOUT_MS,
     stdinBody: req.body,
