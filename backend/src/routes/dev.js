@@ -352,6 +352,11 @@ router.post('/dev/drills', requireAuth, requireAdmin, uploadDrillVideo.single('v
   }
 
   const videoPath = req.file ? req.file.path : undefined;
+  // Captured so a replaced video's old file can be deleted once the save
+  // commits -- video_path only ever points at the newest upload, so without
+  // this every re-upload on an existing drill/lesson orphaned the previous
+  // file on disk permanently (nothing else ever references it again).
+  let oldVideoPathToRemove = null;
 
   const save = db.transaction(() => {
     let itemId = id ? Number.parseInt(id, 10) : null;
@@ -359,6 +364,9 @@ router.post('/dev/drills', requireAuth, requireAdmin, uploadDrillVideo.single('v
     if (itemId) {
       const existing = db.prepare('SELECT * FROM drill_items WHERE id = ?').get(itemId);
       if (!existing) throw new Error('NOT_FOUND');
+      if (videoPath && existing.video_path && existing.video_path !== videoPath) {
+        oldVideoPathToRemove = existing.video_path;
+      }
       db.prepare(`
         UPDATE drill_items
         SET kind = ?, shot_type = ?, title = ?, explanation = ?, emphasis = ?,
@@ -417,6 +425,15 @@ router.post('/dev/drills', requireAuth, requireAdmin, uploadDrillVideo.single('v
 
   try {
     const itemId = save();
+    // Synchronous, unlike discardUpload()'s fire-and-forget cleanup above --
+    // this runs on the success path after the DB already points at the new
+    // file, so there's no request latency to protect and no reason to leave
+    // the old file's removal racing the response.
+    if (oldVideoPathToRemove) {
+      try { fs.unlinkSync(oldVideoPathToRemove); } catch (err) {
+        if (err.code !== 'ENOENT') console.error('[dev] failed to remove replaced drill video:', err);
+      }
+    }
     res.json({ id: itemId });
   } catch (err) {
     if (err.message === 'NOT_FOUND') return reject(404, { error: 'Drill/lesson not found' });
