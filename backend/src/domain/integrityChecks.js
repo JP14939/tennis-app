@@ -145,6 +145,11 @@ const VALUE_DOMAIN_CHECKS = [
           WHERE ${numericTypeGuard('score')} OR score < 0 OR score > 100`,
   },
   {
+    name: 'celebrity_scores.shot_type',
+    description: `every curated leaderboard entry targets one of the ML pipeline's shot types (${SHOT_TYPES.join(', ')})`,
+    sql: `SELECT id, name, shot_type FROM celebrity_scores WHERE shot_type NOT IN (${sqlIn(SHOT_TYPES)})`,
+  },
+  {
     name: 'users.email',
     description: 'every email is stored normalised to lowercase, so the UNIQUE constraint means what it says',
     sql: 'SELECT id, email FROM users WHERE email != lower(email)',
