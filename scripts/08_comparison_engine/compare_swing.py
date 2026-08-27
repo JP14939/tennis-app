@@ -28,7 +28,6 @@ from infer_angle import infer_camera_angle, angle_label, detect_view_direction, 
 from build_pro_database import normalise_landmarks, trajectory_scale, PRE_SEC, POST_SEC, MIN_TRAJECTORY_POINTS
 from trajectory_compare import dtw_distance
 from track_racket_in_clip import track_racket_body, avg_racket_body_distance, track_racket_path
-from ball_speed import estimate_net_crossing_ball_speed_kmh
 from select_coaching_tips import get_coaching_tips
 from paths import DATA_DIR
 import phase_breakdown
@@ -307,17 +306,6 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
     else:
         print(f'  View direction: {user_view_direction}', file=sys.stderr)
 
-    # Ball speed at the net crossing -- see ball_speed.py's module docstring
-    # for why "at the net" rather than off the racket at contact, and why a
-    # low/unknown camera angle just silently disables the stat rather than
-    # reporting an unreliable number.
-    ball_speed_kmh = None
-    try:
-        ball_speed_kmh = estimate_net_crossing_ball_speed_kmh(
-            video_path, peak_frame, fps, camera_angle_deg=user_angle)
-    except Exception as e:
-        print(f'  Ball speed estimation failed (non-fatal): {e}', file=sys.stderr)
-
     # Done with the shared landmarker -- release it now rather than at
     # function end, since there's real work below (DTW over hundreds of
     # candidates, phase breakdown) and this is called once per swing in
@@ -498,7 +486,6 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         'angle_label':  angle_label(user_angle) if user_angle is not None else None,
         'angle_conf':   angle_conf if user_angle is not None else None,
         'contact_time_sec': round(peak_frame / fps, 3),
-        'ball_speed_kmh': ball_speed_kmh,
         'user_view_direction': user_view_direction,
         'user_overlay_trajectory': build_overlay_trajectory(frames),
         'racket_overlay_trajectory': user_racket_overlay_trajectory,

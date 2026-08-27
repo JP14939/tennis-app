@@ -67,14 +67,10 @@ const LOG_TIP_REVIEW_TIMEOUT_MS = 15 * 1000; // just appends a line to two JSONL
 
 const LIST_PRO_CLIP_REVIEW_CANDIDATES = path.join(SCRIPTS_DIR, '06_database_build', 'list_pro_clip_review_candidates.py');
 const LOG_PRO_CLIP_REVIEW = path.join(SCRIPTS_DIR, '06_database_build', 'log_pro_clip_review.py');
-const CUT_PRO_CLIP = path.join(SCRIPTS_DIR, '06_database_build', 'cut_pro_clip.py');
-const CORRECT_SHOT_TYPE = path.join(SCRIPTS_DIR, '06_database_build', 'correct_shot_type.py');
 // Just reads pro_database.json + the review log, no pose extraction --
 // near-instant, but generous ceiling matches the other list routes' style.
 const PRO_CLIP_REVIEW_CANDIDATES_TIMEOUT_MS = 30 * 1000;
 const LOG_PRO_CLIP_REVIEW_TIMEOUT_MS = 15 * 1000; // just appends a line to one JSONL file
-const CUT_PRO_CLIP_TIMEOUT_MS = 60 * 1000; // re-encodes up to two clip files with ffmpeg
-const CORRECT_SHOT_TYPE_TIMEOUT_MS = 15 * 1000; // just moves file(s) + rewrites pro_database.json
 
 const LIST_BALL_LABEL_CANDIDATES = path.join(SCRIPTS_DIR, '07_ball_racket_tracking', 'list_ball_label_candidates.py');
 const LOG_MANUAL_BALL_LABEL = path.join(SCRIPTS_DIR, '07_ball_racket_tracking', 'log_manual_ball_label.py');
@@ -220,39 +216,6 @@ router.post('/dev/pro-clip-review/label', requireAuth, requireAdmin, (req, res) 
       nonzero_exit: 'Failed to log pro clip review',
       invalid_json: 'Log pro clip review produced invalid output',
       spawn_failed: 'Failed to start pro clip review logging',
-    },
-  });
-});
-
-// Trims a pro-database clip in place (DevProClipReviewScreen.js's "Cut"
-// mode). Body is {id, start_sec, end_sec, name}.
-router.post('/dev/pro-clip-review/cut', requireAuth, requireAdmin, (req, res) => {
-  sendPythonJson(res, [CUT_PRO_CLIP], {
-    timeoutMs: CUT_PRO_CLIP_TIMEOUT_MS,
-    stdinBody: req.body,
-    label: 'cut_pro_clip.py',
-    logTag: 'cut_pro_clip.py failed',
-    messages: {
-      nonzero_exit: 'Failed to cut clip',
-      invalid_json: 'Cut clip produced invalid output',
-      spawn_failed: 'Failed to start clip cutting',
-    },
-  });
-});
-
-// Corrects a mislabeled shot type on a pro-database entry
-// (DevProClipReviewScreen.js's "Wrong shot type?"). Body is
-// {id, new_shot_type, name}, new_shot_type one of 'forehand'|'backhand'|'serve'.
-router.post('/dev/pro-clip-review/correct-shot-type', requireAuth, requireAdmin, (req, res) => {
-  sendPythonJson(res, [CORRECT_SHOT_TYPE], {
-    timeoutMs: CORRECT_SHOT_TYPE_TIMEOUT_MS,
-    stdinBody: req.body,
-    label: 'correct_shot_type.py',
-    logTag: 'correct_shot_type.py failed',
-    messages: {
-      nonzero_exit: 'Failed to correct shot type',
-      invalid_json: 'Correct shot type produced invalid output',
-      spawn_failed: 'Failed to start shot type correction',
     },
   });
 });
