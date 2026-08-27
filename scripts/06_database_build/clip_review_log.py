@@ -19,13 +19,20 @@ from paths import DATA_DIR  # noqa: E402
 
 LOG_PATH = os.path.join(DATA_DIR, '06_pro_database', 'clip_review_log.jsonl')
 
-VERDICTS = ('ok', 'mismatched', 'slow_motion', 'wrong_boundary')
+# 'excluded' is a catch-all "don't use this clip" verdict for clips that are
+# bad but don't cleanly fit the more specific reasons below. 'cut' is logged
+# automatically by cut_pro_clip.py, not chosen directly in the review UI --
+# it means the clip was fixed by trimming rather than flagged for exclusion.
+# 'shot_type_corrected' is likewise logged automatically, by
+# correct_shot_type.py -- the clip was fixed by relabeling/moving it to the
+# right shot type, not excluded.
+VERDICTS = ('ok', 'mismatched', 'slow_motion', 'wrong_boundary', 'excluded', 'cut', 'shot_type_corrected')
 
 
-def log_verdict(entry_id, verdict, note=None):
+def log_verdict(entry_id, verdict, note=None, name=None):
     if verdict not in VERDICTS:
         raise ValueError(f'Unknown verdict {verdict!r}, expected one of {VERDICTS}')
-    record = {'entry_id': entry_id, 'verdict': verdict, 'note': note, 'timestamp': time.time()}
+    record = {'entry_id': entry_id, 'verdict': verdict, 'note': note, 'name': name, 'timestamp': time.time()}
     os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
     with open(LOG_PATH, 'a') as f:
         f.write(json.dumps(record) + '\n')

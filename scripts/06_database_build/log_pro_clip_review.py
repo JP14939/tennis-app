@@ -18,7 +18,7 @@ import clip_review_log  # noqa: E402
 
 def main():
     payload = json.loads(sys.stdin.read())
-    clip_review_log.log_verdict(payload['id'], payload['verdict'], payload.get('note'))
+    clip_review_log.log_verdict(payload['id'], payload['verdict'], payload.get('note'), payload.get('name'))
     print(json.dumps({'logged': True}))
 
 
