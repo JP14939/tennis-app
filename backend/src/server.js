@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
@@ -35,6 +36,13 @@ const app = express();
 // proxy in front of this container.
 app.set('trust proxy', 1);
 app.use(cors());
+// JSON API responses (esp. GET /api/history, which grows with account size)
+// went from loopback-fast to real internet round-trips once the hosted
+// backend became the default target -- gzip cuts that payload noticeably.
+// Static video files under /user-clips etc. are already compressed formats,
+// so compression's default filter (skips already-compressed content types)
+// leaves those alone.
+app.use(compression());
 app.use(express.json());
 
 app.get('/health', (req, res) => {

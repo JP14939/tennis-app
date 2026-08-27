@@ -1,7 +1,8 @@
-// EXPO_PUBLIC_API_BASE (set via frontend/.env, see .env.example) overrides
-// this for pointing a build at a deployed server. With no .env present,
-// falls back to the dev machine's LAN IP so both the phone (Expo Go) and the
-// browser on this machine can reach a locally-running backend unchanged —
-// update this fallback if your laptop's IP changes (check with `ipconfig` /
-// `ifconfig`), Wi-Fi networks often reassign it.
-export const API_BASE = process.env.EXPO_PUBLIC_API_BASE || 'http://192.168.1.236:5000';
+// Defaults to the hosted backend so the app works from any network without
+// requiring .env to be present/correct on every device — mobile especially,
+// since Expo Go on a phone on a different network than the dev machine
+// can't reach a LAN IP at all. For local dev against a locally-running
+// backend, set EXPO_PUBLIC_API_BASE in frontend/.env to your dev machine's
+// LAN IP (see .env.example) — Expo inlines it into the build, overriding
+// this fallback.
+export const API_BASE = process.env.EXPO_PUBLIC_API_BASE || 'https://rallymax.167-233-107-31.sslip.io';
