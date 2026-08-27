@@ -65,7 +65,13 @@ router.post('/webhooks/revenuecat', (req, res) => {
     return res.status(200).json({ ok: true, note: 'user not found, event logged only' });
   }
 
-  const entitlementIds = event.entitlement_ids || [];
+  // entitlement_ids needs the same type check as event.type above: a
+  // truthy non-array (e.g. {}) would make `.length` undefined, skip the
+  // `=== 0` short-circuit, and throw inside `.includes()` below -- after
+  // the payment_events INSERT above already ran, so a malformed delivery
+  // would permanently fail to apply while RevenueCat keeps retrying and
+  // logging duplicate rows.
+  const entitlementIds = Array.isArray(event.entitlement_ids) ? event.entitlement_ids : [];
   const affectsOurEntitlement = entitlementIds.length === 0 || entitlementIds.includes(ENTITLEMENT_ID);
 
   if (affectsOurEntitlement && GRANT_EVENTS.has(event.type)) {

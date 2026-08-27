@@ -16,6 +16,32 @@ const DEFAULT_RADIUS_KM = 20;
 // enough to show as a normal (verified) court to everyone.
 const CONFIRMATION_THRESHOLD = 2;
 
+// In-process, best-effort memory of areas that were just seeded and came
+// back with nothing -- without this, every request for a genuinely
+// court-less area (rural spot, GPS glitch, ocean) re-triggers a live
+// Overpass call on every single request, forever, since an empty result
+// always looks like "never queried before" to the self-heal check below.
+// Repeated hits risk Overpass rate-limiting/banning this backend's shared
+// IP, which would degrade court search for every user, not just this area.
+// Keyed on a coarse lat/lng bucket (~1.1km) so nearby requests share a
+// cache entry; resets on server restart, which is fine -- worst case is
+// one real Overpass call per area per process lifetime plus this TTL.
+const SEED_MISS_TTL_MS = 60 * 60 * 1000;
+const recentEmptySeedAreas = new Map();
+
+function seedAreaKey(lat, lng) {
+  return `${Math.round(lat * 100)},${Math.round(lng * 100)}`;
+}
+
+function wasRecentlySeededEmpty(lat, lng) {
+  const seededAt = recentEmptySeedAreas.get(seedAreaKey(lat, lng));
+  return seededAt !== undefined && Date.now() - seededAt < SEED_MISS_TTL_MS;
+}
+
+function markSeededEmpty(lat, lng) {
+  recentEmptySeedAreas.set(seedAreaKey(lat, lng), Date.now());
+}
+
 function haversineKm(lat1, lng1, lat2, lng2) {
   const toRad = (d) => (d * Math.PI) / 180;
   const dLat = toRad(lat2 - lat1);
@@ -93,10 +119,11 @@ router.get('/courts', requireAuth, async (req, res) => {
   // `courts` table has nothing for it -- lazily pull real courts from OSM
   // once, then re-query. Best-effort: if Overpass is unreachable/rate-limited
   // we just fall back to an empty result rather than failing the request.
-  if (courts.length === 0) {
+  if (courts.length === 0 && !wasRecentlySeededEmpty(lat, lng)) {
     try {
       await seedCourtsNear(lat, lng, radiusKm);
       courts = queryNearbyCourts(lat, lng, radiusKm, req.user.id);
+      if (courts.length === 0) markSeededEmpty(lat, lng);
     } catch (err) {
       console.error('Lazy court seed failed:', err.message);
     }

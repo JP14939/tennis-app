@@ -53,6 +53,9 @@ const PHASE_KEYS = ['backswing', 'contact', 'follow_through', 'body_rotation'];
 // Mirrors of the CHECK constraints db.js already declares. Duplicated here so
 // the validation layer can reject a bad value with a clean 400 instead of
 // letting SQLite raise SQLITE_CONSTRAINT_CHECK and falling through to a 500.
+// (SHOT_TYPES, above, is also mirrored by a db.js CHECK constraint --
+// celebrity_scores.shot_type -- but that one is generated FROM SHOT_TYPES
+// rather than redeclared, so it can't drift the way these can.)
 const TIERS = ['free', 'premium'];
 const JOB_STATUSES = ['pending', 'processing', 'done', 'failed'];
 const COURT_SOURCES = ['osm', 'user'];

@@ -124,10 +124,23 @@ def build_pose_index(frames):
     return index
 
 
+MIN_LANDMARK_VISIBILITY = 0.3
+
+
 def get_shoulder_ref(lm_dict):
     ls = lm_dict.get('left_shoulder')
     rs = lm_dict.get('right_shoulder')
     if not ls or not rs:
+        return None, None, None
+    # Every other landmark normalise_landmarks() outputs is gated on this same
+    # 0.3 visibility threshold -- the shoulders themselves weren't, even
+    # though mid_x/mid_y become the translation ORIGIN every other landmark in
+    # the frame is measured against. An occluded/low-confidence shoulder still
+    # gets a real (non-null) x/y from MediaPipe, so `not ls or not rs` alone
+    # never catches it -- it would silently shift every "confident" landmark
+    # in that frame by however wrong the shoulder guess was, worst right at
+    # contact where occlusion is most likely. Reject the whole frame instead.
+    if ls.get('visibility', 0) < MIN_LANDMARK_VISIBILITY or rs.get('visibility', 0) < MIN_LANDMARK_VISIBILITY:
         return None, None, None
     mid_x = (ls['x'] + rs['x']) / 2
     mid_y = (ls['y'] + rs['y']) / 2
@@ -168,7 +181,7 @@ def normalise_landmarks(lm_dict, scale=None):
     result = {}
     for name in KEY_LANDMARKS:
         lm = lm_dict.get(name)
-        if lm and lm.get('visibility', 0) >= 0.3:
+        if lm and lm.get('visibility', 0) >= MIN_LANDMARK_VISIBILITY:
             result[name] = {
                 'x': round((lm['x'] - mid_x) / scale, 4),
                 'y': round((lm['y'] - mid_y) / scale, 4),

@@ -77,4 +77,36 @@ describe('GET /courts', () => {
     expect(res.status).toBe(200);
     expect(res.body.courts.some((c) => c.name === 'Zero Radius Court')).toBe(true);
   });
+
+  // A genuinely court-less area (no rows in the DB nearby, and Overpass also
+  // has nothing) always looks like "never queried before" to the self-heal
+  // check, so without a negative cache every single request for that area
+  // re-hits the live Overpass API -- risking rate-limiting/a ban on this
+  // backend's shared IP, which would degrade court search for every user.
+  describe('repeated empty results for a court-less area', () => {
+    const originalFetch = global.fetch;
+
+    beforeEach(() => {
+      global.fetch = jest.fn(async () => ({ ok: true, json: async () => ({ elements: [] }) }));
+    });
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
+    test('only calls Overpass once across repeated queries for the same area', async () => {
+      const { token } = makeUser('courts3@test.com');
+      // Middle of the ocean -- guaranteed no courts in the seeded test DB.
+      const query = { lat: 0.0001, lng: 0.0002, radiusKm: 5 };
+
+      const first = await request(app).get('/api/courts').query(query).set('Authorization', `Bearer ${token}`);
+      const second = await request(app).get('/api/courts').query(query).set('Authorization', `Bearer ${token}`);
+
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(first.body.courts).toEqual([]);
+      expect(second.body.courts).toEqual([]);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+  });
 });

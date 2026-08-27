@@ -58,4 +58,20 @@ describe('POST /webhooks/revenuecat payload validation', () => {
     expect(rowCount('payment_events')).toBe(before + 1);
     expect(db.prepare('SELECT tier FROM users WHERE id = ?').get(user.id).tier).toBe('premium');
   });
+
+  // entitlement_ids had the same gap event.type used to have: `|| []` only
+  // guards against a falsy value, so a truthy non-array (e.g. {}) made
+  // entitlementIds.length undefined, skipped the `=== 0` short-circuit, and
+  // threw inside .includes() below -- after the payment_events INSERT above
+  // had already run. Assert this now 200s (doesn't crash) and still applies
+  // the tier change, since a non-array entitlement_ids shouldn't block an
+  // otherwise well-formed event from being processed.
+  test('a non-array truthy entitlement_ids does not crash and still grants premium', async () => {
+    const user = makeUser();
+    const res = await post({
+      event: { app_user_id: String(user.id), type: 'INITIAL_PURCHASE', entitlement_ids: {} },
+    });
+    expect(res.status).toBe(200);
+    expect(db.prepare('SELECT tier FROM users WHERE id = ?').get(user.id).tier).toBe('premium');
+  });
 });

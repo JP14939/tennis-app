@@ -98,6 +98,16 @@ router.get('/dev/ml-status', requireAuth, requireAdmin, (req, res) => {
 // candidate for a job's rally clips, with the geometric student's opinion
 // (no Claude involved) for reference by log-manual-review below.
 router.get('/dev/swing-candidates/:jobId', requireAuth, requireAdmin, (req, res) => {
+  // list_swing_candidates.py joins this argv straight onto its clips
+  // directory (`os.path.join(HIGHLIGHT_CLIPS_DIR, job_id)`) and lists
+  // whatever directory results -- an unvalidated jobId like `../../..`
+  // escapes HIGHLIGHT_CLIPS_DIR entirely, letting this admin-only route walk
+  // and pose-extract arbitrary directories on the host. highlight_jobs.id is
+  // always a real autoincrement integer, so anything else is never a
+  // legitimate job id.
+  if (!isPositiveIntegerId(req.params.jobId)) {
+    return res.status(400).json({ error: 'jobId must be a positive whole number' });
+  }
   sendPythonJson(res, [LIST_SWING_CANDIDATES, req.params.jobId], {
     timeoutMs: CANDIDATES_TIMEOUT_MS,
     label: 'list_swing_candidates.py',
@@ -115,6 +125,14 @@ router.get('/dev/swing-candidates/:jobId', requireAuth, requireAdmin, (req, res)
 // candidate object from GET /dev/swing-candidates/:jobId (student_* fields)
 // plus his verdict (is_real_shot, shot_type).
 router.post('/dev/swing-candidates/label', requireAuth, requireAdmin, (req, res) => {
+  // log_manual_review.py builds a clip_path from these two fields the same
+  // unsanitized way list_swing_candidates.py's jobId does (see that route's
+  // comment above) -- job_id/rally_id are always real row ids in a
+  // legitimate request from DevSwingReviewScreen.js, so reject anything else
+  // before it reaches the subprocess.
+  if (!isPositiveIntegerId(req.body?.job_id) || !isPositiveIntegerId(req.body?.rally_id)) {
+    return res.status(400).json({ error: 'job_id and rally_id must be positive whole numbers' });
+  }
   sendPythonJson(res, [LOG_MANUAL_REVIEW], {
     timeoutMs: LOG_REVIEW_TIMEOUT_MS,
     stdinBody: req.body,
@@ -334,6 +352,11 @@ router.post('/dev/drills', requireAuth, requireAdmin, uploadDrillVideo.single('v
   }
 
   const videoPath = req.file ? req.file.path : undefined;
+  // Captured so a replaced video's old file can be deleted once the save
+  // commits -- video_path only ever points at the newest upload, so without
+  // this every re-upload on an existing drill/lesson orphaned the previous
+  // file on disk permanently (nothing else ever references it again).
+  let oldVideoPathToRemove = null;
 
   const save = db.transaction(() => {
     let itemId = id ? Number.parseInt(id, 10) : null;
@@ -341,6 +364,9 @@ router.post('/dev/drills', requireAuth, requireAdmin, uploadDrillVideo.single('v
     if (itemId) {
       const existing = db.prepare('SELECT * FROM drill_items WHERE id = ?').get(itemId);
       if (!existing) throw new Error('NOT_FOUND');
+      if (videoPath && existing.video_path && existing.video_path !== videoPath) {
+        oldVideoPathToRemove = existing.video_path;
+      }
       db.prepare(`
         UPDATE drill_items
         SET kind = ?, shot_type = ?, title = ?, explanation = ?, emphasis = ?,
@@ -399,6 +425,15 @@ router.post('/dev/drills', requireAuth, requireAdmin, uploadDrillVideo.single('v
 
   try {
     const itemId = save();
+    // Synchronous, unlike discardUpload()'s fire-and-forget cleanup above --
+    // this runs on the success path after the DB already points at the new
+    // file, so there's no request latency to protect and no reason to leave
+    // the old file's removal racing the response.
+    if (oldVideoPathToRemove) {
+      try { fs.unlinkSync(oldVideoPathToRemove); } catch (err) {
+        if (err.code !== 'ENOENT') console.error('[dev] failed to remove replaced drill video:', err);
+      }
+    }
     res.json({ id: itemId });
   } catch (err) {
     if (err.message === 'NOT_FOUND') return reject(404, { error: 'Drill/lesson not found' });

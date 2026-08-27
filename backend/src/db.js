@@ -1,6 +1,13 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const { SHOT_TYPES } = require('./config/shotTypes');
+
+// SQL fragment for `col IN ('a','b')` built from a JS vocabulary, so a schema
+// CHECK constraint can't drift from the same list domain/invariants.js and
+// the routes validate against. See SHOT_TYPES's own comment in
+// config/shotTypes.js -- this constraint used to be a 6th hardcoded copy.
+const shotTypesSqlIn = SHOT_TYPES.map((v) => `'${v}'`).join(', ');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -341,7 +348,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS celebrity_scores (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     name       TEXT NOT NULL,
-    shot_type  TEXT NOT NULL CHECK (shot_type IN ('forehand', 'backhand', 'serve')),
+    shot_type  TEXT NOT NULL CHECK (shot_type IN (${shotTypesSqlIn})),
     score      REAL NOT NULL,
     note       TEXT,
     added_by   INTEGER NOT NULL REFERENCES users(id),

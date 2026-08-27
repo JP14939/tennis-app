@@ -981,3 +981,37 @@ session summary.
    recorded here. `RESEND_API_KEY` still isn't configured locally, so the
    real "Forgot password?" email flow won't work on local dev until that's
    set up (see the still-open Resend section above).
+
+---
+
+## New from the 2026-08-26 docs round-up
+
+**Review and merge (or request changes on) PRs #13–#16 from today's
+scheduled routines** — logic review (`logic-review/2026-08-26`, a
+`celebrity_scores.shot_type` vocabulary-drift fix plus a shoulder-
+visibility gate added to the live DTW normalization path), bug sweep
+(`bug-sweep/2026-08-26`, 3 fixes: a RevenueCat webhook crash/infinite-
+redelivery loop, a drill-video disk leak, and unbounded Overpass API
+hammering from court-less areas), security review
+(`security-review/2026-08-26`, closes a path-traversal gap in the Dev
+Page's swing-review tool — admin-only, not filed as critical), and
+brainstorm (`future-ideas/2026-08-26`, docs only). None titled
+`🚨 CRITICAL:`. See `HANDOVER.md`'s "Scheduled-routine PR round-up
+(2026-08-26)" for the full per-PR summary.
+
+**Worth checking before merging PR #13 specifically**: like PR #10 on
+2026-08-25, its `build_pro_database.py` shoulder-visibility fix touches
+the live DTW comparison path (`compare_swing.py` imports the same
+`normalise_landmarks`/`get_shoulder_ref` functions) but could not be
+run through the real `scripts/` pytest suite in the routine's sandbox (no
+`cv2`/`mediapipe`/venv there) — only verified by stubbing those modules
+out and exercising the function directly. Worth a real
+`cd scripts && .\venv\Scripts\activate && pytest` pass before merging,
+same as the resolved 2026-08-25 case.
+
+**Deliberately left unfixed by the bug-sweep PR — still your call, still
+open**: RevenueCat's webhook delivery is at-least-once and not
+guaranteed in-order, so a stale `EXPIRATION` redelivered after a newer
+`RENEWAL` could downgrade a currently-paying user to `free` until the
+next `/billing/sync` call. Needs a real design decision (e.g. tracking
+the latest-applied-event timestamp per user), not a targeted diff.
