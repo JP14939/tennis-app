@@ -984,6 +984,49 @@ session summary.
 
 ---
 
+## New from the 2026-08-28 docs round-up
+
+**Review and merge (or request changes on) PRs #17–#19** from today's
+scheduled routines — logic review (`logic-review/2026-08-28`, fixes an
+FK-order bug in `DELETE /api/auth/me` that 500'd account deletion for any
+user with a drill-practice attempt linked to their own analysis), bug
+sweep (`bug-sweep/2026-08-28`, 7 fixes including a RevenueCat webhook
+id-truncation collision risk and a one-bad-frame crash in
+`infer_camera_angle()`), and security review (`security-review/2026-08-28`,
+redacts server filesystem paths that were leaking into Python subprocess
+error messages returned to authenticated callers). None titled
+`🚨 CRITICAL:`. See `HANDOVER.md`'s "Scheduled-routine PR round-up
+(2026-08-28)" for the full per-PR summary. No brainstorm PR today — see
+below, this is expected now, not missing.
+
+**Confirm the scheduled-routines' new cadence was an intentional
+change.** Found while chasing why 2026-08-27 had zero routine activity
+(it turned out to be by design, not broken — see `HANDOVER.md`'s
+2026-08-28 round-up for the full diagnosis via `list_triggers`): sometime
+2026-08-26 evening (~20:25–20:33 UTC), all five original scheduled
+routines' cron expressions were edited — logic review / bug sweep /
+security review / docs round-up went from **daily** to **every 3 days**,
+and brainstorm went from **daily** to **weekly (Mondays 04:00 UTC)**. A
+**new sixth routine, "Training-data drift watch,"** also appeared at the
+same timestamp — weekly (Mondays 03:00 UTC), reads the 4 ML training-log
+files for detection-bias drift and only opens a PR
+(`training-drift-watch/YYYY-MM-DD`) if it finds a real pipeline bug, no
+PR otherwise. This session has no way to tell whether this was Jack
+deliberately dialing back routine frequency/cost (plausible — the
+original design doc under "Connect GitHub..." below explicitly flagged
+these as 5 real billed sessions/day) or an unintended side effect of
+something else done that evening. If intentional, no action needed
+beyond knowing the new cadence; if not, the cron expressions can be
+edited back via `update_trigger` (trigger IDs: `trig_011sHvTPPZQakqFFjsbgzsxc`
+logic review, `trig_016cG4EgHceFYLqvp3yR3Lr5` bug sweep,
+`trig_01K624LMYJnvqVySVKKCE4Sk` security review,
+`trig_01BHQYrzSmvB5mH9a5AgGonr` docs round-up,
+`trig_01Q1Q3vD9Rwmmxoqcq4mhrgr` brainstorm, and the new
+`trig_017z4WgJUGmFH7WSpFyJGDBV` training-data drift watch can just be
+disabled/deleted if unwanted).
+
+---
+
 ## New from the 2026-08-26 docs round-up
 
 **Review and merge (or request changes on) PRs #13–#16 from today's
