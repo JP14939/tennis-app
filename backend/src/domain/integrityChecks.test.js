@@ -242,6 +242,36 @@ describe('value-domain violations', () => {
     expect(violationNames()).toEqual([expected]);
   });
 
+  test('catches a coach note pinned to both a phase and a timestamp at once', () => {
+    const student = makeUser('s@test.com');
+    const coach = makeUser('c@test.com');
+    const analysisId = makeAnalysis(student);
+    withoutConstraints(() => db.prepare(
+      'INSERT INTO coach_notes (coach_id, analysis_id, note_text, phase_key, timestamp_sec) VALUES (?, ?, ?, ?, ?)'
+    ).run(coach, analysisId, 'Note', 'contact', 12.5));
+    expect(violationNames()).toEqual(['coach_notes.exclusive_pin']);
+  });
+
+  test('catches a lesson step naming a shot type outside the drill vocabulary', () => {
+    const item = db.prepare(
+      "INSERT INTO drill_items (kind, shot_type, title, explanation) VALUES ('lesson', 'forehand', 'L', 'E')"
+    ).run().lastInsertRowid;
+    withoutConstraints(() => db.prepare(
+      'INSERT INTO drill_routine_steps (drill_item_id, step_order, label, shot_type) VALUES (?, ?, ?, ?)'
+    ).run(item, 0, 'Step', 'smash'));
+    expect(violationNames()).toEqual(['drill_routine_steps.shot_type']);
+  });
+
+  test('allows a lesson step with no shot type (a footwork-only step)', () => {
+    const item = db.prepare(
+      "INSERT INTO drill_items (kind, shot_type, title, explanation) VALUES ('lesson', 'forehand', 'L', 'E')"
+    ).run().lastInsertRowid;
+    db.prepare(
+      'INSERT INTO drill_routine_steps (drill_item_id, step_order, label, shot_type) VALUES (?, ?, ?, ?)'
+    ).run(item, 0, 'Step', null);
+    expect(violationNames()).toEqual([]);
+  });
+
   test('catches an availability post whose end time is not a real date', () => {
     const user = makeUser('a@test.com');
     db.prepare('INSERT INTO availability_posts (user_id, court_id, start_time, end_time) VALUES (?, ?, ?, ?)')
