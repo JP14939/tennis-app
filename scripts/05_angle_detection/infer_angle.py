@@ -743,7 +743,15 @@ def _court_line_fallback_angle(video_path, candidate_frames, view_direction_hint
     """
     court_angles = []
     for fn in candidate_frames:
-        frame = extract_frame(video_path, fn)
+        try:
+            frame = extract_frame(video_path, fn)
+        except RuntimeError:
+            # cap.get(CAP_PROP_FRAME_COUNT) can overstate a real-world
+            # phone-recorded/VFR video's actual decodable frame count, so a
+            # candidate frame index clamped against it can still fail to
+            # read. Treated the same as "no sidelines found on this frame"
+            # rather than aborting the whole fallback for one bad sample.
+            continue
         sidelines = detect_court_sidelines(frame)
         if sidelines is None:
             continue
@@ -806,7 +814,16 @@ def infer_camera_angle(video_path, frame_number=None, landmarker=None, view_dire
     measurements = []
     if view_direction_hint != 'front':
         for fn in candidate_frames:
-            frame = extract_frame(video_path, fn)
+            try:
+                frame = extract_frame(video_path, fn)
+            except RuntimeError:
+                # Same as the court-line fallback below: cap.get() reports a
+                # frame count the decoder can't always honour, so one
+                # candidate frame failing to read shouldn't crash the whole
+                # comparison (previously did -- see compare_swing.py's call
+                # site, which otherwise treats "no measurements" as a normal,
+                # gracefully-handled outcome).
+                continue
             result = _angle_from_frame(frame, landmarker)
             if result is not None:
                 measurements.append(result)
