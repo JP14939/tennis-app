@@ -350,6 +350,10 @@ router.delete('/auth/me', requireAuth, async (req, res) => {
     // alone (that other user's shared swing/feedback shouldn't vanish).
     db.prepare('DELETE FROM shared_analyses WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?)').run(userId);
     db.prepare('DELETE FROM swing_annotations WHERE analysis_id IN (SELECT id FROM analyses WHERE user_id = ?)').run(userId);
+    // Must run before the `analyses` delete below: drill_practice_attempts.analysis_id
+    // references analyses(id), and FK enforcement is on by default (see orphan-canary
+    // test in integrityChecks.test.js), so deleting analyses first would throw.
+    db.prepare('DELETE FROM drill_practice_attempts WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM analyses WHERE user_id = ?').run(userId);
 
     db.prepare('DELETE FROM analysis_usage WHERE user_id = ?').run(userId);
@@ -361,7 +365,6 @@ router.delete('/auth/me', requireAuth, async (req, res) => {
     db.prepare('DELETE FROM court_confirmations WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM availability_posts WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM friend_codes WHERE user_id = ?').run(userId);
-    db.prepare('DELETE FROM drill_practice_attempts WHERE user_id = ?').run(userId);
     // Any reset token issued before the deletion request must die with the
     // account. The users row is anonymized rather than deleted below, so
     // foreign keys alone wouldn't clear these -- an emailed, still-unexpired
