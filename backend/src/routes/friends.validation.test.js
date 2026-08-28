@@ -130,6 +130,15 @@ describe('POST /friends/:userId/share', () => {
     await expectRejected(() => share(me.token, friend.id, { analysisId }), 'shared_analyses');
   });
 
+  // isPositiveIntegerId explicitly accepts a numeric string, but a redundant
+  // `!Number.isInteger(analysisId)` re-check further down used to reject
+  // that exact shape after it had already passed validation.
+  test('accepts a numeric-string analysisId, the same shape its own validator allows', async () => {
+    const { me, friend } = friendPair();
+    const res = await share(me.token, friend.id, { analysisId: String(makeAnalysis(me.id)) });
+    expect(res.status).toBe(201);
+  });
+
   test("still refuses to share an analysis you do not own", async () => {
     const { me, friend } = friendPair();
     const stranger = makeUser();
