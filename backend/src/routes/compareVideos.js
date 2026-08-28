@@ -79,10 +79,28 @@ router.post('/compare-videos', requireAuth, requirePremium, upload.fields([
       // and crop each for the sync-compare screen. Cropping failure is
       // non-fatal per video; the screen falls back to the original.
       const jobId = `${Date.now()}_${Math.round(Math.random() * 1e6)}`;
-      const [ref, yours] = await Promise.all([
-        persistAndCrop(referenceFile.path, path.join(COMPARISON_CLIPS_DIR, jobId, 'reference')),
-        persistAndCrop(yoursFile.path, path.join(COMPARISON_CLIPS_DIR, jobId, 'yours')),
-      ]);
+      const jobDir = path.join(COMPARISON_CLIPS_DIR, jobId);
+      let ref;
+      let yours;
+      try {
+        [ref, yours] = await Promise.all([
+          persistAndCrop(referenceFile.path, path.join(jobDir, 'reference')),
+          persistAndCrop(yoursFile.path, path.join(jobDir, 'yours')),
+        ]);
+      } catch (err) {
+        // persistAndCrop moves its source file into jobDir as its first
+        // step -- if one of the two calls above succeeds and the other then
+        // throws (e.g. disk full), Promise.all's rejection loses the
+        // reference to the one that already moved. cleanup() below only
+        // unlinks the ORIGINAL upload paths, which no longer exist for
+        // whichever one succeeded, so without this the successful copy was
+        // orphaned in jobDir forever. jobId is unique per request, so
+        // removing the whole directory is always safe.
+        fs.rm(jobDir, { recursive: true, force: true }, () => {});
+        cleanup();
+        console.error('[compare-videos] failed to persist/crop after a successful comparison:', err);
+        return res.status(500).json({ error: 'Failed to save comparison videos' });
+      }
       result.reference_clip_url = toUrl('/comparison-clips', COMPARISON_CLIPS_DIR, ref.originalPath);
       result.reference_clip_cropped_url = toUrl('/comparison-clips', COMPARISON_CLIPS_DIR, ref.croppedPath);
       result.your_clip_url = toUrl('/comparison-clips', COMPARISON_CLIPS_DIR, yours.originalPath);
