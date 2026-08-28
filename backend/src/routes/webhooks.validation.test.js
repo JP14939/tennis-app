@@ -59,6 +59,23 @@ describe('POST /webhooks/revenuecat payload validation', () => {
     expect(db.prepare('SELECT tier FROM users WHERE id = ?').get(user.id).tier).toBe('premium');
   });
 
+  // app_user_id used to go through parseInt(), which stops at the first
+  // non-digit instead of requiring the whole string to be numeric -- a
+  // digit-prefixed non-numeric id (RevenueCat sends UUID-shaped ids for
+  // anonymous customers) could truncate to a real, unrelated user's id and
+  // flip THEIR tier instead of being treated as unattributable.
+  test('a digit-prefixed non-numeric app_user_id does not collide with an existing user id', async () => {
+    const user = makeUser(); // gets some real integer id, e.g. 1
+    const before = rowCount('payment_events');
+    const res = await post({
+      event: { app_user_id: `${user.id}23-e29b-41d4-a716-446655440000`, type: 'INITIAL_PURCHASE' },
+    });
+    expect(res.status).toBe(200);
+    expect(rowCount('payment_events')).toBe(before + 1);
+    // The event is logged for debugging but must NOT be applied to `user`.
+    expect(db.prepare('SELECT tier FROM users WHERE id = ?').get(user.id).tier).toBe('free');
+  });
+
   // entitlement_ids had the same gap event.type used to have: `|| []` only
   // guards against a falsy value, so a truthy non-array (e.g. {}) made
   // entitlementIds.length undefined, skipped the `=== 0` short-circuit, and
