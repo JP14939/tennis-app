@@ -61,7 +61,17 @@ def main():
                           contact_time_sec=args.contact_time, view_direction_hint=args.view_direction_hint)
         print(json.dumps(result))
     except Exception as e:
-        print(json.dumps({'error': str(e)}))
+        # Some failures inside compare() (e.g. "Cannot open video: <path>")
+        # echo this process's own argv -- the full server-side upload path --
+        # straight into the exception message. That message flows unmodified
+        # through runPythonJson.js's nonzero_exit branch back to any
+        # authenticated caller of POST /api/analyse, so a deliberately
+        # corrupted/unreadable upload could be used to probe the server's
+        # internal directory layout. Redact the known argv path down to its
+        # basename before it leaves this process; every other message (the
+        # overwhelming majority, which never mention a path) is unaffected.
+        message = str(e).replace(args.video, os.path.basename(args.video))
+        print(json.dumps({'error': message}))
         sys.exit(1)
 
 
