@@ -32,7 +32,10 @@ const HIGHLIGHT_CLIPS_DIR = path.join(DATA_DIR, 'runtime', 'highlight_clips');
 
 function issueToken(user) {
   return jwt.sign(
-    { id: user.id, email: user.email, tier: user.tier },
+    // tv (token_version) lets requireAuth/optionalAuth revoke every token
+    // issued before a password change or account deletion in one write --
+    // see db.js's token_version comment.
+    { id: user.id, email: user.email, tier: user.tier, tv: user.token_version ?? 0 },
     process.env.JWT_SECRET,
     { expiresIn: TOKEN_TTL }
   );
@@ -202,7 +205,11 @@ router.post('/auth/reset-password', async (req, res) => {
     ).get(tokenHash, new Date().toISOString());
     if (!reset) return TOKEN_INVALID;
 
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, reset.user_id);
+    // token_version bump revokes every token issued before this reset --
+    // otherwise a password reset (often done specifically because a token/
+    // password may be compromised) left any already-issued token working
+    // for up to 30 more days regardless. See db.js's token_version comment.
+    db.prepare('UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?').run(passwordHash, reset.user_id);
     db.prepare('UPDATE password_resets SET used_at = datetime(\'now\') WHERE id = ?').run(reset.id);
     return reset.user_id;
   });
@@ -302,7 +309,11 @@ router.patch('/auth/password', requireAuth, async (req, res) => {
   }
 
   const passwordHash = await bcrypt.hash(newPassword, 10);
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, user.id);
+  // Same token_version bump as /auth/reset-password -- the request that
+  // just authenticated with the CURRENT (about-to-be-replaced) password
+  // also stops working after this, same as every other outstanding token,
+  // rather than being implicitly trusted just because it got here first.
+  db.prepare('UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?').run(passwordHash, user.id);
   res.status(204).end();
 });
 
@@ -396,6 +407,13 @@ router.delete('/auth/me', requireAuth, async (req, res) => {
     // sentinel string) so a login attempt fails cleanly through the normal
     // bcrypt.compare() path rather than depending on how the library
     // handles a malformed hash.
+    // token_version bump here matters independently of the password/email
+    // scrub above: requireAuth/optionalAuth never re-check email or
+    // password_hash on a per-request basis (only a handful of routes like
+    // GET /auth/me re-read the row at all), so without this, a token
+    // issued before deletion kept working exactly as before -- reaching
+    // every requireAuth route as this now-anonymized account -- for up to
+    // 30 more days. See db.js's token_version comment.
     const deadHash = bcrypt.hashSync(crypto.randomBytes(32).toString('hex'), 10);
     db.prepare(`
       UPDATE users
@@ -403,7 +421,8 @@ router.delete('/auth/me', requireAuth, async (req, res) => {
           password_hash = ?,
           name = 'Deleted user',
           username = NULL,
-          tier = 'free'
+          tier = 'free',
+          token_version = token_version + 1
       WHERE id = ?
     `).run(deadHash, userId);
   });
