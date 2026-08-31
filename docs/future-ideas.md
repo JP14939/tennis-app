@@ -11,6 +11,180 @@ scope or timing before starting.
 
 ---
 
+### 2026-08-31
+
+Context for this pass: read `CLAUDE.md`, all of `HANDOVER.md` (through item
+#44 and the full 2026-08-28 docs round-up), `TODO_MANUAL.md` in full, and all
+four prior dated sections below. No brainstorm PR ran on 2026-08-28/-29/-30 —
+the routine moved to weekly (Mondays), and today is the first Monday it fires,
+so this pass also had a few days of un-logged manual work to catch up on
+(`git log` since 2026-08-26: three manual commits on 2026-08-27 — a
+`pro-clip-review` crash fix, a `rally_clips` verdict-sync script, and pointing
+the whole app at the hosted backend by default with gzip'd responses and a
+one-off local→hosted data merge — plus that day's docs round-up). Checked
+directly against the current tree rather than assuming: `backend/src/routes/`
+still has exactly three files with *zero* test coverage of any kind
+(`billing.js`, `calibration.js`, `compareVideos.js` — unchanged from the
+2026-08-26 count) and `frontend/` has no test runner, no `jest` config, and no
+`*.test.js`/`*.spec.js` file anywhere. Deliberately skips repeating anything
+already sitting in the 2026-08-23 through -26 sections' own ideas or their
+"already tried and declined" lists, plus (new this pass) the vertical-
+angle-detection history and the coaching-tip-training deferral named directly
+in `HANDOVER.md`/`CLAUDE.md` — both explicitly tried, measured, and shelved
+for stated reasons, not oversights to re-propose.
+
+#### Product features (building on the DTW pro-comparison core loop)
+
+- **Give "Training-data drift watch" a human-facing view, not just a
+  PR-or-silence signal.** The new sixth scheduled routine (added the same
+  evening the other five were slowed down, first run today per its own
+  `next_run_at`) only surfaces anything if it decides a real pipeline bug
+  exists — fine for catching drift, but it means the 4 training logs'
+  day-to-day health (agreement rate vs. each `AGREEMENT_THRESHOLD`, example
+  count vs. `MIN_EXAMPLES_BEFORE_TRUST`) stays invisible between runs, and a
+  routine that never opens a PR looks identical whether it found "all
+  healthy" or silently never ran. A small Dev Page panel reusing the same
+  read the routine already does — one row per training log, trend over
+  time — would let Jack check in on demand instead of only learning about
+  drift the one time it crosses the routine's own bar for "worth a PR."
+  **S–M**.
+- **Add a second RevenueCat price point (annual plan).** Flagged as a known
+  gap the day payments went live and never revisited since: `TODO_MANUAL.md`'s
+  original payments checklist explicitly says "Annual/other plan tiers
+  weren't mentioned as done — add one later if you want a second price
+  point." Entitlement handling is already plan-agnostic (one `premium`
+  entitlement, tier flag doesn't care which package granted it), so this is
+  a RevenueCat dashboard product/package addition plus one more option in
+  `PremiumCheckout`, not a backend change. **S**.
+- **Surface a "local vs. hosted data drift" indicator, not just three
+  separate one-off fix-it scripts.** In the space of one week, three
+  distinct divergence incidents each needed their own bespoke script to
+  discover and fix: local-only analyses and a highlight job that never
+  reached the hosted DB (`mergeLocalAnalyses.js`/`mergeLocalHighlightJob.js`),
+  and separately 77 already-reviewed rally clips across 4 jobs that silently
+  showed as "unreviewed" on the hosted backend for an unknown stretch of time
+  because their verdicts were only ever saved locally (`syncRallyClipLabels.js`,
+  2026-08-27). Each was found by accident, not by any deliberate check. Now
+  that the app defaults everyone — mobile and web alike — to the hosted
+  backend, a cheap Dev Page row comparing row-counts/latest-timestamps for
+  the handful of tables known to get touched by local-only work would catch
+  the next occurrence before a review pass quietly does nothing for weeks.
+  **S–M**; pairs with the tech-debt item below on why this keeps recurring.
+
+#### ML pipeline improvements (numbered `scripts/` stages)
+
+- **Check whether `find_contact_frame()`'s teacher-student loop has enough
+  real data to graduate yet.** The 4th teacher-student loop
+  (`contact_frame_training_log.py`, live since 2026-08-18 both through the
+  Dev Page's Swing Review 3rd step and a detached background hook fired off
+  every real user's manual contact mark) has been accumulating silently for
+  two weeks with no reported status check anywhere in this doc since it
+  shipped — unlike the shot-classifier and shot-verification loops, which
+  get an explicit trust-threshold update called out whenever one's checked.
+  `find_contact_frame()` itself is still a pure, untrained heuristic. Worth
+  a one-off status check (the same shape as `should_trust_student()` on the
+  other three logs) to see how close it is, before it's forgotten simply
+  because nothing prompted anyone to look. **S** to check; **M** if it's
+  ready to wire in as a real candidate alongside the heuristic.
+- **Source new racket-keypoint training crops from real amateur uploads, not
+  just pro clips.** All 220 labeled crops behind the racket-keypoint model
+  (`data/09_racket_keypoints/labels.json`) came from pro-database footage,
+  but the model is used live against amateur user uploads (`body_rotation`
+  scoring, shot-contact verification) — a real train/inference domain gap,
+  and the model's known-weakest point (handle placement, 0.485 pose mAP50
+  overall) is exactly the kind of thing amateur framing/occlusion would
+  stress harder than clean pro footage. The Dev Page's Swing Review tool
+  already surfaces real user swings one at a time for a different review
+  purpose — reusing that same flow to sample and label a batch of amateur
+  racket crops (same crop-and-label pipeline `sample_racket_crops.py`
+  already has, pointed at different source frames) would target the actual
+  inference-time distribution instead of only the training-time one. **M**.
+
+#### Data quality opportunities
+
+- **Run the existing ball-label motion audit against the 124
+  Claude-auto-confirmed labels too, not only the 354 manual ones.**
+  `audit_ball_label_motion.py` (built 2026-08-25) applies the "if it isn't
+  moving, it's not the ball being played" rule and already found 5 real
+  decoy-ball clips — but its own writeup says it checked "all 354," which is
+  only the manual-review pool. The separate 124 frames `label_ball_frames.py`
+  auto-confirmed via Claude verification were never run through this same
+  check, and there's no reason to assume Claude's confirmation pass would
+  have caught a static decoy any better than a human eyeballing a single
+  crop did originally. Cheap reuse of code that already exists and is
+  already trusted for the other pool. **S**.
+- **Turn the 25%/49%-vs-82–100% pose-detection-rate finding from the
+  2026-08-20 zero-yield batch into an actual pre-check, not just a
+  retrospective explanation.** That batch (`finesse shot.mov`,
+  `game-winnder-stable.mov`) produced zero usable swings from 11.9 minutes of
+  footage, and the writeup at the time correctly diagnosed unusually poor
+  pose-detection rates as the likely cause — but nothing was built from that
+  observation. A cheap pre-filter (sample a handful of frames, check
+  MediaPipe's detection rate before running the full wrist-velocity /
+  contact-verification pipeline on a new batch) would flag "this footage
+  probably won't yield anything" up front, saving review time on batches
+  that are doomed by framing/distance before any Claude spend or manual
+  review happens. **S–M**.
+- **Spot-check that `cut_pro_clip.py`/`correct_shot_type.py`'s automatic
+  fixes actually landed correctly, now that the crash blocking them is
+  fixed.** `clip_review_log.py`'s `'cut'`/`'shot_type_corrected'` verdicts
+  are logged automatically by those two scripts when they trim or relabel a
+  flagged pro-database clip in place — but until 2026-08-27's fix, *every*
+  submission of those verdicts (along with `'excluded'`) raised an uncaught
+  `ValueError` server-side that the frontend silently swallowed, so button
+  presses looked like no-ops. Worth a quick audit of `pro_database.json`
+  against `clip_review_log.jsonl` for any clip logged as `'cut'` or
+  `'shot_type_corrected'` from before that fix landed, to confirm the
+  underlying trim/relabel actually happened rather than being lost the same
+  way the log entry itself briefly was. **S**.
+
+#### Technical debt worth paying down
+
+- **Frontend testing is a repeated caveat in this doc, never a scoped task —
+  time to make it one.** Three separate sections above (the `expo-av`
+  migration item, the annotation-canvas stale-closure bug, and the native-only
+  bug cluster from the first real device-testing pass) each note "no frontend
+  tests to catch a regression" in passing, but nothing has ever turned that
+  into concrete work. Confirmed directly: `frontend/package.json` has no
+  `test` script and no `jest` dependency, and there is not one `*.test.js` or
+  `*.spec.js` file anywhere under `frontend/`. Full component/native-behavior
+  testing isn't a realistic first step — this project's own experience is
+  that real bugs (the web-wide `Alert.alert` no-op, the `PanResponder`
+  stale-closure bug) needed actual device/browser testing to surface, not
+  something a naive RTL setup would have caught either. A realistic scope:
+  `jest-expo` plus tests for the pure, already-isolated logic that exists
+  today with zero coverage of any kind — `TrendChart.js`'s client-side score
+  aggregation, `AuthContext`'s token-restore/platform-storage branching — as
+  a first slice, not a claim that this replaces manual testing. **M**.
+- **No general mechanism for local-dev-vs-hosted-DB divergence — only
+  one-off scripts, written after the fact, each time it's discovered.** Same
+  underlying gap as the Dev Page indicator idea above, from the backend side:
+  `exportAnalysesForMigration.js`/`mergeLocalAnalyses.js`,
+  `exportHighlightJobForMigration.js`/`mergeLocalHighlightJob.js`, and
+  `syncRallyClipLabels.js` are three independently-written importers for
+  three different tables, each built only once the gap it covers was already
+  found by accident. Now that the app defaults everyone to the hosted
+  backend, any local-only dev/review work is guaranteed to keep reproducing
+  this same shape of bug unless something changes structurally — either a
+  documented convention for what's safe to do locally, or one small
+  diff-and-report script (row counts / max ids per table, both DBs) instead
+  of a bespoke importer invented fresh every time. **S–M**.
+- **Two small "noticed-but-not-fixed" mechanical drifts from the 2026-08-28
+  bug-sweep/logic-review PRs, still sitting exactly where those PRs left
+  them.** Neither is exploitable today (both PRs said so explicitly), but
+  both are the kind of drift that turns into a real bug at the next careless
+  call site: (a) `TIERS` in `invariants.js` sits unused while 3 files hardcode
+  the same 2 tier literals directly instead — the opposite of `CLAUDE.md`'s
+  own stated rule that a domain vocabulary like this belongs in
+  `invariants.js` once, not inlined per call site; (b) roughly 11 call sites
+  in `friends.js`/`messages.js` still validate ids with a looser
+  `parseInt`+`Number.isInteger` pattern instead of the stricter
+  `isPositiveIntegerId` helper already used elsewhere in those same files.
+  Both are mechanical find-and-replace, not design decisions. **S** for
+  each, **S** combined.
+
+---
+
 ### 2026-08-26
 
 Context for this pass: read `CLAUDE.md`, all of `HANDOVER.md` (all 44 dated
