@@ -84,9 +84,21 @@ function serializeRow(row) {
 // untouched full result for whichever single item is actually opened.
 function stripHeavyOverlays(result) {
   const { user_overlay_trajectory, racket_overlay_trajectory, ...rest } = result;
+  // matches is only validated at index 0 on the way in (see POST /history's
+  // comment on why this whole body is untrusted) -- a stored row can have a
+  // non-array matches, or an array containing null/non-object entries past
+  // index 0. Destructuring those unconditionally used to throw a TypeError
+  // ("Cannot destructure property ... of 'null' as it is null") from inside
+  // this very .map(), which GET /history calls once per row: a single
+  // corrupt row took down the ENTIRE list for that user, not just itself.
+  const matches = Array.isArray(result.matches) ? result.matches : [];
   return {
     ...rest,
-    matches: (result.matches ?? []).map(({ pro_overlay_trajectory, pro_racket_overlay_trajectory, ...m }) => m),
+    matches: matches.map((m) => {
+      if (!m || typeof m !== 'object') return m;
+      const { pro_overlay_trajectory, pro_racket_overlay_trajectory, ...rest2 } = m;
+      return rest2;
+    }),
   };
 }
 

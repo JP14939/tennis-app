@@ -12,6 +12,7 @@ const router = express.Router();
 
 const EARTH_RADIUS_KM = 6371;
 const DEFAULT_RADIUS_KM = 20;
+const MAX_RADIUS_KM = 100;
 // Independent confirmations a user-dropped pin needs before it's trusted
 // enough to show as a normal (verified) court to everyone.
 const CONFIRMATION_THRESHOLD = 2;
@@ -29,17 +30,58 @@ const CONFIRMATION_THRESHOLD = 2;
 const SEED_MISS_TTL_MS = 60 * 60 * 1000;
 const recentEmptySeedAreas = new Map();
 
+// recentEmptySeedAreas grew one entry per distinct empty-result coordinate
+// bucket forever -- wasRecentlySeededEmpty only ever READ an entry's
+// staleness, never removed one, and nothing else swept the map (unlike
+// middleware/rateLimit.js's own buckets Map, which sweeps on an interval).
+// A client hitting many distinct ocean/rural coordinates (this route has no
+// rate limit) could grow this unboundedly and eventually exhaust process
+// memory. Prune stale entries on read, plus a periodic sweep as a backstop
+// for keys that are never looked up again.
+const SEED_MISS_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, seededAt] of recentEmptySeedAreas) {
+    if (now - seededAt >= SEED_MISS_TTL_MS) recentEmptySeedAreas.delete(key);
+  }
+}, SEED_MISS_SWEEP_INTERVAL_MS).unref();
+
 function seedAreaKey(lat, lng) {
   return `${Math.round(lat * 100)},${Math.round(lng * 100)}`;
 }
 
 function wasRecentlySeededEmpty(lat, lng) {
-  const seededAt = recentEmptySeedAreas.get(seedAreaKey(lat, lng));
-  return seededAt !== undefined && Date.now() - seededAt < SEED_MISS_TTL_MS;
+  const key = seedAreaKey(lat, lng);
+  const seededAt = recentEmptySeedAreas.get(key);
+  if (seededAt === undefined) return false;
+  if (Date.now() - seededAt >= SEED_MISS_TTL_MS) {
+    recentEmptySeedAreas.delete(key);
+    return false;
+  }
+  return true;
 }
 
 function markSeededEmpty(lat, lng) {
   recentEmptySeedAreas.set(seedAreaKey(lat, lng), Date.now());
+}
+
+// Two or more concurrent requests for the same never-before-seeded area
+// each saw an empty local result and no recentEmptySeedAreas entry yet, so
+// each independently kicked off its own live Overpass call for the same
+// bounding box -- exactly the "risk rate-limiting/banning this backend's
+// shared IP" scenario the cache above exists to prevent, just not covered
+// for the concurrent case. Track one in-flight seed Promise per area key so
+// concurrent callers await the same request instead of each starting one.
+const inFlightSeeds = new Map();
+
+function seedCourtsNearOnce(lat, lng, radiusKm) {
+  const key = seedAreaKey(lat, lng);
+  let promise = inFlightSeeds.get(key);
+  if (!promise) {
+    promise = seedCourtsNear(lat, lng, radiusKm).finally(() => inFlightSeeds.delete(key));
+    inFlightSeeds.set(key, promise);
+  }
+  return promise;
 }
 
 function haversineKm(lat1, lng1, lat2, lng2) {
@@ -107,7 +149,12 @@ router.get('/courts', requireAuth, async (req, res) => {
   // actually in the DB, and since queryNearbyCourts().length === 0 is then
   // always true, it re-triggers the Overpass self-heal seed call on EVERY
   // request for that lat/lng instead of once.
-  const radiusKm = Number.isFinite(parsedRadiusKm) && parsedRadiusKm > 0 ? parsedRadiusKm : DEFAULT_RADIUS_KM;
+  // Capped so a caller can't force a continent/world-scale bounding box into
+  // a single query or Overpass call -- every other geo input here (lat/lng)
+  // already has a domain bound; radiusKm previously only had a `> 0` floor.
+  const radiusKm = Number.isFinite(parsedRadiusKm) && parsedRadiusKm > 0
+    ? Math.min(parsedRadiusKm, MAX_RADIUS_KM)
+    : DEFAULT_RADIUS_KM;
 
   if (Number.isNaN(lat) || Number.isNaN(lng)) {
     return res.status(400).json({ error: 'lat and lng are required' });
@@ -121,7 +168,7 @@ router.get('/courts', requireAuth, async (req, res) => {
   // we just fall back to an empty result rather than failing the request.
   if (courts.length === 0 && !wasRecentlySeededEmpty(lat, lng)) {
     try {
-      await seedCourtsNear(lat, lng, radiusKm);
+      await seedCourtsNearOnce(lat, lng, radiusKm);
       courts = queryNearbyCourts(lat, lng, radiusKm, req.user.id);
       if (courts.length === 0) markSeededEmpty(lat, lng);
     } catch (err) {

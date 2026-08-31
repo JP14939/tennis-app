@@ -108,5 +108,82 @@ describe('GET /courts', () => {
       expect(second.body.courts).toEqual([]);
       expect(global.fetch).toHaveBeenCalledTimes(1);
     });
+
+    // Regression test: wasRecentlySeededEmpty() used to only ever READ an
+    // entry's staleness, never remove it -- the fix prunes on read (and via a
+    // periodic sweep). This confirms that pruning doesn't break the TTL
+    // itself: once an entry is old enough, the area is treated as
+    // never-seeded again and Overpass is re-queried.
+    test('re-queries Overpass once the negative-cache TTL has expired', async () => {
+      const { token } = makeUser('courts3b@test.com');
+      const query = { lat: 10.0001, lng: 10.0002, radiusKm: 5 };
+
+      const nowSpy = jest.spyOn(Date, 'now');
+      nowSpy.mockReturnValue(1_000_000);
+      const first = await request(app).get('/api/courts').query(query).set('Authorization', `Bearer ${token}`);
+      expect(first.status).toBe(200);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+
+      // Still within the TTL -- no second Overpass call.
+      nowSpy.mockReturnValue(1_000_000 + 60 * 60 * 1000 - 1);
+      await request(app).get('/api/courts').query(query).set('Authorization', `Bearer ${token}`);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+
+      // Past the TTL -- treated as never-seeded again.
+      nowSpy.mockReturnValue(1_000_000 + 60 * 60 * 1000 + 1);
+      const third = await request(app).get('/api/courts').query(query).set('Authorization', `Bearer ${token}`);
+      expect(third.status).toBe(200);
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+
+      nowSpy.mockRestore();
+    });
+  });
+
+  // Regression test: two concurrent requests for the same never-before-seen
+  // area each saw zero local courts and no negative-cache entry yet (neither
+  // had finished seeding), so each independently kicked off its own live
+  // Overpass call for the same area instead of sharing one in-flight request.
+  test('concurrent requests for the same brand-new area only trigger one Overpass call', async () => {
+    const { token } = makeUser('courts4@test.com');
+    const originalFetch = global.fetch;
+    let resolveFetch;
+    const fetchPromise = new Promise((resolve) => { resolveFetch = resolve; });
+    global.fetch = jest.fn(() => fetchPromise.then(() => ({ ok: true, json: async () => ({ elements: [] }) })));
+
+    try {
+      const query = { lat: 20.0001, lng: 20.0002, radiusKm: 5 };
+      const first = request(app).get('/api/courts').query(query).set('Authorization', `Bearer ${token}`);
+      const second = request(app).get('/api/courts').query(query).set('Authorization', `Bearer ${token}`);
+
+      // Let both requests reach the seed call before letting Overpass "respond".
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      resolveFetch();
+
+      const [resA, resB] = await Promise.all([first, second]);
+      expect(resA.status).toBe(200);
+      expect(resB.status).toBe(200);
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  // Regression test: radiusKm had a `> 0` floor but no ceiling, so a caller
+  // could force an arbitrarily large (continent-scale) bounding box into the
+  // query and into a live Overpass call.
+  test('an excessive radiusKm is capped instead of matching courts far outside any sane search radius', async () => {
+    const { token } = makeUser('courts5@test.com');
+    // ~150km from the query point -- well outside the 100km cap, but well
+    // within the naive 1,000,000km radius requested below.
+    db.prepare(`INSERT INTO courts (name, latitude, longitude, source) VALUES (?, ?, ?, 'osm')`)
+      .run('Far Away Court', 41.35, -74.0);
+
+    const res = await request(app)
+      .get('/api/courts')
+      .query({ lat: 40.0, lng: -74.0, radiusKm: 1000000 })
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.courts.some((c) => c.name === 'Far Away Court')).toBe(false);
   });
 });
