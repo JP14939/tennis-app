@@ -1027,6 +1027,44 @@ disabled/deleted if unwanted).
 
 ---
 
+## New from the 2026-08-31 docs round-up
+
+**Review and merge (or request changes on) PRs #20–#23** from today's
+scheduled routines — logic review (`logic-review/2026-08-31`, 4 fixes
+including a contact-frame wrist-visibility gate mirroring the pro-database
+side's existing check), bug sweep (`bug-sweep/2026-08-31`, 5 fixes
+including a billing-sync/webhook race that could downgrade a paying user
+to `free`, and a single malformed saved shot that could crash a user's
+entire History list), security review (`security-review/2026-08-31`,
+adds JWT revocation via a new `token_version` column so a stolen token
+stops working the moment a user changes their password, resets it, or
+deletes their account — previously it stayed valid for the full 30-day
+token life regardless), and brainstorm (`future-ideas/2026-08-31`, docs
+only). None titled `🚨 CRITICAL:`. See `HANDOVER.md`'s "Scheduled-routine
+PR round-up (2026-08-31)" for the full per-PR summary.
+
+**This backlog is growing, not just today's four.** PRs #17–#19 from the
+2026-08-28 round (logic review, bug sweep, security review) are now three
+days old and still unmerged, and today's bug-sweep PR (#21) touches
+`analyse.js`/`billing.js`-adjacent routes that #18/#19 also touched —
+merging in the order they were opened (oldest first) will minimize the
+conflict-resolution work, same shape as the 2026-08-23 manual-merge
+session's approach (see that section below for the pattern: an isolated
+worktree, one branch merged and tested at a time).
+
+**Worth checking before merging PR #22 specifically**: the new
+`token_version` column needs to actually land in the deployed DB via
+whatever migration path this app uses (SQLite schema changes here have
+generally been applied by restarting against updated `db.js` table
+definitions, not a separate migration runner — confirm that's still true
+before assuming a hosted redeploy alone picks it up) — otherwise every
+`requireAuth`/`optionalAuth` check would start failing closed against a
+missing column rather than failing open, which would be a same-day outage
+rather than a quiet fix. Same shape as double-checking any schema-touching
+PR before it reaches the hosted server.
+
+---
+
 ## New from the 2026-08-26 docs round-up
 
 **Review and merge (or request changes on) PRs #13–#16 from today's
