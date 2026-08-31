@@ -131,6 +131,24 @@ describe('value-domain violations', () => {
     expect(violationNames()).toEqual(['analyses.similarity']);
   });
 
+  test('catches a routine step shot type outside the drill vocabulary', () => {
+    const item = db.prepare(
+      "INSERT INTO drill_items (kind, shot_type, title, explanation) VALUES ('lesson', 'forehand', 'L', 'E')"
+    ).run().lastInsertRowid;
+    db.prepare('INSERT INTO drill_routine_steps (drill_item_id, step_order, label, shot_type) VALUES (?, ?, ?, ?)')
+      .run(item, 0, 'First', 'banana');
+    expect(violationNames()).toEqual(['drill_routine_steps.shot_type']);
+  });
+
+  test('allows a routine step with no shot_type (e.g. a footwork step)', () => {
+    const item = db.prepare(
+      "INSERT INTO drill_items (kind, shot_type, title, explanation) VALUES ('lesson', 'forehand', 'L', 'E')"
+    ).run().lastInsertRowid;
+    db.prepare('INSERT INTO drill_routine_steps (drill_item_id, step_order, label) VALUES (?, ?, ?)')
+      .run(item, 0, 'First');
+    expect(violationNames()).toEqual([]);
+  });
+
   // The specific shape that poisons ORDER BY: SQLite stores a bound string in
   // a REAL column as text, and text sorts above every number.
   test('catches a score stored as text via type affinity', () => {

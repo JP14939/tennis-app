@@ -22,9 +22,14 @@ THUMB_W = 320
 PEAK_OFFSET_SEC = 1.8
 
 
-def grab_peak_frame(clip_path, fps):
+def grab_peak_frame(clip_path):
     cap = cv2.VideoCapture(clip_path)
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    # extract_amateur_clips.py preserves each source video's own fps rather
+    # than normalising to 30 (it passes pose_data['fps'] straight through to
+    # extract_clip) -- reading the clip's real fps here instead of assuming
+    # 30 keeps this in sync with clips cut from non-30fps source footage.
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     target = min(int(PEAK_OFFSET_SEC * fps), max(0, total - 1))
     cap.set(cv2.CAP_PROP_POS_FRAMES, target)
     ret, frame = cap.read()
@@ -52,7 +57,7 @@ def main():
     thumbs = []
     labels = []
     for entry in manifest:
-        frame = grab_peak_frame(entry['clip_path'], fps=30.0)
+        frame = grab_peak_frame(entry['clip_path'])
         if frame is None:
             print(f'  WARNING: could not read peak frame for {entry["clip_path"]}')
             continue

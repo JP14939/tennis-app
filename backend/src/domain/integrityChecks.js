@@ -169,6 +169,15 @@ const VALUE_DOMAIN_CHECKS = [
     description: `every library item targets ${DRILL_SHOT_TYPES.join(', ')}`,
     sql: `SELECT id, title, shot_type FROM drill_items WHERE shot_type NOT IN (${sqlIn(DRILL_SHOT_TYPES)})`,
   },
+  // dev.js validates this at write time via isDrillShotType (same vocabulary
+  // as drill_items.shot_type above) but, unlike that sibling field, had no
+  // at-rest counterpart here -- the gap this module exists to close.
+  {
+    name: 'drill_routine_steps.shot_type',
+    description: `a routine step's shot_type, when set, targets ${DRILL_SHOT_TYPES.join(', ')}`,
+    sql: `SELECT id, drill_item_id, shot_type FROM drill_routine_steps
+          WHERE shot_type IS NOT NULL AND shot_type NOT IN (${sqlIn(DRILL_SHOT_TYPES)})`,
+  },
   {
     name: 'highlight_jobs.status',
     description: `every detection job is ${JOB_STATUSES.join(', ')}`,
