@@ -244,10 +244,12 @@ const STRUCTURAL_CHECKS = [
 ];
 
 // ── Orphan canaries ─────────────────────────────────────────────────────────
-// better-sqlite3 enables `PRAGMA foreign_keys = ON` by default, so these
-// SHOULD be structurally impossible today -- which is exactly why they're
-// worth keeping cheap and present. If that default ever changes, or a future
-// connection opens the file with foreign keys off, these are what notice.
+// db.js never sets `PRAGMA foreign_keys = ON` (SQLite defaults it to OFF, and
+// better-sqlite3 does not change that default) -- every `REFERENCES` in the
+// schema is decorative, so these are NOT structurally impossible today. Each
+// known orphan source is closed by explicit cleanup at its DELETE site
+// instead; these checks are the real backstop that notices if one of those
+// sites ever drifts (an edit drops or reorders a cleanup line).
 
 const ORPHAN_CHECKS = [
   ['analyses', 'user_id', 'users'],
@@ -262,6 +264,7 @@ const ORPHAN_CHECKS = [
   ['reel_jobs', 'highlight_job_id', 'highlight_jobs'],
   ['court_confirmations', 'court_id', 'courts'],
   ['court_watches', 'court_id', 'courts'],
+  ['club_watches', 'club_id', 'clubs'],
   ['club_courts', 'club_id', 'clubs'],
   ['availability_posts', 'court_id', 'courts'],
   ['message_reports', 'message_id', 'messages'],

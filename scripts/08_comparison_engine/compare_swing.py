@@ -161,9 +161,9 @@ def find_peak_wrist_frame(frames, fps):
         rw = f['landmarks'].get('right_wrist')
         lw = f['landmarks'].get('left_wrist')
         vel = 0
-        if rw and prev_rw:
+        if rw and prev_rw and rw['visibility'] > 0.5:
             vel = max(vel, math.sqrt((rw['x']-prev_rw['x'])**2 + (rw['y']-prev_rw['y'])**2))
-        if lw and prev_lw:
+        if lw and prev_lw and lw['visibility'] > 0.5:
             vel = max(vel, math.sqrt((lw['x']-prev_lw['x'])**2 + (lw['y']-prev_lw['y'])**2))
         if vel > max_vel:
             max_vel = vel
