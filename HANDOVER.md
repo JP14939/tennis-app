@@ -1,6 +1,6 @@
 # RallyMax — Full Project Handover
 
-**Last updated:** 2026-08-03, corrected 2026-08-10, extended 2026-08-10 (same-day follow-up session), extended again 2026-08-11, extended again 2026-08-13 (social/gamification roadmap + Phase 1), extended again 2026-08-13 (same-day follow-up: Find Games), extended again 2026-08-13 (same-day follow-up: Friends + match tracking), extended again 2026-08-13 (same-day follow-up: send-to-friend + persisted annotations), extended again 2026-08-13 (same-day follow-up: leaderboards), extended again 2026-08-13 (same-day follow-up: navigation restructure + Find Games data fix), extended again 2026-08-13 (same-day follow-up: community court submission + confirmation), extended again 2026-08-13 (same-day follow-up: app icon + mascot), extended again 2026-08-13 (same-day follow-up: skeleton offset fix, video-error visibility, racket swing-path overlay), extended again 2026-08-13 (same-day follow-up: sound effects), extended again 2026-08-13 (same-day follow-up: sound effects expanded app-wide), extended again 2026-08-13 (same-day follow-up: analysis-complete/achievement/notification sounds), extended again 2026-08-13 (same-day follow-up: History payload-bloat fix, found via real in-app testing), extended again 2026-08-13 (same-day follow-up: Sync Compare video-unavailable fix, England court seed + 20km render radius), extended again 2026-08-14 (batch-analyzed 2 full match videos into 85 History rows; fixed a live angle-wraparound bug in body-rotation scoring; z-depth rotation signal retried with real measurements and shipped live), extended again 2026-08-15 (legal review prep docs; fixed a live account-deletion bug; added message block/report), extended again 2026-08-18 (Wimbledon/Pine & Lime theme rollout completed across all screens; new mascot-based Android icon/splash; 4th teacher-student training loop for exact contact-frame detection, incl. a live production hook; Drills & Lessons feature shipped — free Drills live now, paid Lessons deferred; Swing Review rough-pick contact marking + clip prefetch; Rally Boundary Review lazy video loading; a full DB audit added missing indexes, fixed a real practice-history data-loss bug, and added 21 regression tests) — **social/gamification roadmap fully complete, bottom nav consolidated to 5 tabs, sound effects fully rolled out, theme rollout complete, first real Drills content live**, extended again 2026-08-19 (RevenueCat live + backend hosted on Hetzner; shot-classifier ML model trained; Tip Review + Pro Clip Review Dev Page tools; camera-angle sideline fallback; skeleton-overlay real fix; tip severity shown to users — see items #34-36), extended again 2026-08-20/21 (ball detector project Phase 1/2; Premium folded into Home + Lessons with a responsive tab bar; app-wide fix for `Alert.alert` being a silent no-op on web across 20 files; self-serve password reset via Resend; a full Hetzner redeploy fixing a server that was never actually a git repo, broken SSH access, and missing data — see items #37-41) — **hosting is real and working end-to-end now, but has no CI/CD: every push needs a manual redeploy, see item #41**, extended again 2026-08-22 (a database-verification framework with 48 live integrity checks; two rounds of bug/optimization audits; a clean security review; and — the big one — the first real device-native testing this app has had, which surfaced and fixed a cluster of native-only bugs invisible to every prior web-only testing session, plus a live production SQL bug in Find Games, now fixed and deployed — see item #42), extended again 2026-08-23 (docs round-up of same-day scheduled-routine PR activity, and — later the same day — a manual review/merge of all four resulting PRs: security rate-limiting, a bug sweep, a logic review, plus the 2026-08-22 uncommitted work above finally committed — see "Scheduled-routine PR round-up" below), extended again 2026-08-24 (docs round-up: 4 more scheduled-routine PRs opened — logic review, bug sweep, security review, brainstorm — all still open awaiting human review, none titled 🚨 CRITICAL — see "Scheduled-routine PR round-up (2026-08-24)" below), extended again 2026-08-25 (docs round-up: 4 more scheduled-routine PRs opened — logic review, bug sweep, security review, brainstorm — all still open awaiting human review, none titled 🚨 CRITICAL, and yesterday's `future-ideas/2026-08-24` PR is also still unmerged — see "Scheduled-routine PR round-up (2026-08-25)" below), extended again 2026-08-25 (same-day follow-up: all 8 branches from the 2026-08-24/25 PR round-ups reviewed and merged; pose-overlay jitter fixed with a One Euro Filter; a real gap found in the manual ball-label data (5 clips flagged, needs Jack's review); ball detector reliability re-confirmed unchanged (53%/0.40); a new shared Kalman-filter ball tracker built; the ball-speed feature scoped but not built; hosted server found 2 days stale and redeployed — see item #43), extended again 2026-08-26 (docs round-up: 4 more scheduled-routine PRs opened — logic review, bug sweep, security review, brainstorm — all still open awaiting human review, none titled 🚨 CRITICAL — see "Scheduled-routine PR round-up (2026-08-26)" below), extended again 2026-08-28 (docs round-up: 3 more scheduled-routine PRs opened — logic review, bug sweep, security review — none titled 🚨 CRITICAL; no brainstorm PR today and no routine activity at all on 2026-08-27, but both are expected — the routines' own cadence was reconfigured 2026-08-26 evening from daily to every-3-days (code-review routines) / weekly-Mondays (brainstorm), and a new 6th weekly routine, "Training-data drift watch," was added at the same time — see "Scheduled-routine PR round-up (2026-08-28)" below), extended again 2026-08-31 (docs round-up: 4 more scheduled-routine PRs opened — logic review, bug sweep, security review, brainstorm — all still open awaiting human review, none titled 🚨 CRITICAL, and PRs #17–#19 from the 2026-08-28 round are also still unmerged — see "Scheduled-routine PR round-up (2026-08-31)" below)
+**Last updated:** 2026-08-03, corrected 2026-08-10, extended 2026-08-10 (same-day follow-up session), extended again 2026-08-11, extended again 2026-08-13 (social/gamification roadmap + Phase 1), extended again 2026-08-13 (same-day follow-up: Find Games), extended again 2026-08-13 (same-day follow-up: Friends + match tracking), extended again 2026-08-13 (same-day follow-up: send-to-friend + persisted annotations), extended again 2026-08-13 (same-day follow-up: leaderboards), extended again 2026-08-13 (same-day follow-up: navigation restructure + Find Games data fix), extended again 2026-08-13 (same-day follow-up: community court submission + confirmation), extended again 2026-08-13 (same-day follow-up: app icon + mascot), extended again 2026-08-13 (same-day follow-up: skeleton offset fix, video-error visibility, racket swing-path overlay), extended again 2026-08-13 (same-day follow-up: sound effects), extended again 2026-08-13 (same-day follow-up: sound effects expanded app-wide), extended again 2026-08-13 (same-day follow-up: analysis-complete/achievement/notification sounds), extended again 2026-08-13 (same-day follow-up: History payload-bloat fix, found via real in-app testing), extended again 2026-08-13 (same-day follow-up: Sync Compare video-unavailable fix, England court seed + 20km render radius), extended again 2026-08-14 (batch-analyzed 2 full match videos into 85 History rows; fixed a live angle-wraparound bug in body-rotation scoring; z-depth rotation signal retried with real measurements and shipped live), extended again 2026-08-15 (legal review prep docs; fixed a live account-deletion bug; added message block/report), extended again 2026-08-18 (Wimbledon/Pine & Lime theme rollout completed across all screens; new mascot-based Android icon/splash; 4th teacher-student training loop for exact contact-frame detection, incl. a live production hook; Drills & Lessons feature shipped — free Drills live now, paid Lessons deferred; Swing Review rough-pick contact marking + clip prefetch; Rally Boundary Review lazy video loading; a full DB audit added missing indexes, fixed a real practice-history data-loss bug, and added 21 regression tests) — **social/gamification roadmap fully complete, bottom nav consolidated to 5 tabs, sound effects fully rolled out, theme rollout complete, first real Drills content live**, extended again 2026-08-19 (RevenueCat live + backend hosted on Hetzner; shot-classifier ML model trained; Tip Review + Pro Clip Review Dev Page tools; camera-angle sideline fallback; skeleton-overlay real fix; tip severity shown to users — see items #34-36), extended again 2026-08-20/21 (ball detector project Phase 1/2; Premium folded into Home + Lessons with a responsive tab bar; app-wide fix for `Alert.alert` being a silent no-op on web across 20 files; self-serve password reset via Resend; a full Hetzner redeploy fixing a server that was never actually a git repo, broken SSH access, and missing data — see items #37-41) — **hosting is real and working end-to-end now, but has no CI/CD: every push needs a manual redeploy, see item #41**, extended again 2026-08-22 (a database-verification framework with 48 live integrity checks; two rounds of bug/optimization audits; a clean security review; and — the big one — the first real device-native testing this app has had, which surfaced and fixed a cluster of native-only bugs invisible to every prior web-only testing session, plus a live production SQL bug in Find Games, now fixed and deployed — see item #42), extended again 2026-08-23 (docs round-up of same-day scheduled-routine PR activity, and — later the same day — a manual review/merge of all four resulting PRs: security rate-limiting, a bug sweep, a logic review, plus the 2026-08-22 uncommitted work above finally committed — see "Scheduled-routine PR round-up" below), extended again 2026-08-24 (docs round-up: 4 more scheduled-routine PRs opened — logic review, bug sweep, security review, brainstorm — all still open awaiting human review, none titled 🚨 CRITICAL — see "Scheduled-routine PR round-up (2026-08-24)" below), extended again 2026-08-25 (docs round-up: 4 more scheduled-routine PRs opened — logic review, bug sweep, security review, brainstorm — all still open awaiting human review, none titled 🚨 CRITICAL, and yesterday's `future-ideas/2026-08-24` PR is also still unmerged — see "Scheduled-routine PR round-up (2026-08-25)" below), extended again 2026-08-25 (same-day follow-up: all 8 branches from the 2026-08-24/25 PR round-ups reviewed and merged; pose-overlay jitter fixed with a One Euro Filter; a real gap found in the manual ball-label data (5 clips flagged, needs Jack's review); ball detector reliability re-confirmed unchanged (53%/0.40); a new shared Kalman-filter ball tracker built; the ball-speed feature scoped but not built; hosted server found 2 days stale and redeployed — see item #43), extended again 2026-08-26 (docs round-up: 4 more scheduled-routine PRs opened — logic review, bug sweep, security review, brainstorm — all still open awaiting human review, none titled 🚨 CRITICAL — see "Scheduled-routine PR round-up (2026-08-26)" below), extended again 2026-08-28 (docs round-up: 3 more scheduled-routine PRs opened — logic review, bug sweep, security review — none titled 🚨 CRITICAL; no brainstorm PR today and no routine activity at all on 2026-08-27, but both are expected — the routines' own cadence was reconfigured 2026-08-26 evening from daily to every-3-days (code-review routines) / weekly-Mondays (brainstorm), and a new 6th weekly routine, "Training-data drift watch," was added at the same time — see "Scheduled-routine PR round-up (2026-08-28)" below), extended again 2026-08-31 (docs round-up: 4 more scheduled-routine PRs opened — logic review, bug sweep, security review, brainstorm — all still open awaiting human review, none titled 🚨 CRITICAL, and PRs #17–#19 from the 2026-08-28 round are also still unmerged — see "Scheduled-routine PR round-up (2026-08-31)" below), extended again 2026-09-01 (docs round-up: 3 more scheduled-routine PRs opened — logic review, bug sweep, security review — all still open awaiting human review, none titled 🚨 CRITICAL, no brainstorm PR today (weekly-Mondays cadence, last one was 2026-08-31) and no Training-data-drift-watch PR either, and PRs #17–#23 from the three prior rounds are also still unmerged, ten open PRs total now — see "Scheduled-routine PR round-up (2026-09-01)" below)
 **User:** Jack Price (jack.p14370@gmail.com)
 **Project root:** `C:\Users\jackp\tennis_app\`
 
@@ -1575,3 +1575,121 @@ those PRs also touch and will conflict the longer all of them sit.
   (three one-off sync scripts in a week per the 2026-08-27 manual-work
   note above), and two small mechanical drifts left over from the
   2026-08-28 PRs.
+
+---
+
+## Scheduled-routine PR round-up (2026-09-01)
+
+Checked via the GitHub MCP tools (`list_pull_requests`/`pull_request_read`,
+no `gh` CLI in this environment). Three routines opened a PR in the last
+24 hours — **PRs #24–#26, all still open**, none merged (these routines
+never merge their own work). **No `🚨 CRITICAL:` PR today** — the security
+review explicitly states "No CRITICAL finding." No brainstorm/future-ideas
+PR today, and no Training-data-drift-watch PR either — both expected,
+since brainstorm runs weekly-Mondays (last one was 2026-08-31) and the
+drift watch is also weekly. Also still open and unmerged from the three
+prior rounds: **PRs #17–#23** (2026-08-28 and 2026-08-31 batches) — ten
+open PRs in total now sitting unreviewed, several touching overlapping
+route files (`analyse.js`, `auth.js`, `integrityChecks.js`), which will
+only get more conflict-prone the longer they all sit.
+
+- **PR #24 — "Logic review 2026-09-01: contact-frame visibility gate,
+  account-deletion/orphan-check gaps"** (branch `logic-review/2026-09-01`,
+  opened 03:08 UTC). Four fixes: (1) `find_peak_wrist_frame()` in
+  `compare_swing.py` — the live contact-frame auto-detect fallback — had
+  no `visibility > 0.5` gate on wrist landmarks, unlike its already-gated
+  twin in `scripts/03_swing_detection/detect_swings.py`; a motion-blurred,
+  low-confidence wrist could get mis-picked as the contact frame and
+  silently shift the whole DTW comparison window. Now gated the same way.
+  (2) Account deletion (`auth.js`) deleted `court_watches` but never
+  `club_watches`, leaving a deleted user's club-watch subscription
+  orphaned forever — added the matching `DELETE`. (3) `integrityChecks.js`
+  was missing the `club_watches.club_id` orphan canary that
+  `court_watches.court_id` already has — added it. (4) Three comments
+  across `integrityChecks.js`/`history.js`/`dev.js` incorrectly claimed
+  `better-sqlite3` enables `PRAGMA foreign_keys = ON` by default (it
+  doesn't — `db.js` never sets it, so SQLite's real OFF default applies,
+  a known documented gap) — corrected the comments so a future edit isn't
+  made on a false safety assumption; did not flip the pragma itself, since
+  `TODO_MANUAL.md` already flags that as needing a full human-reviewed
+  audit. Noticed-but-not-touched: `club_watches` also lacks a `user_id`
+  orphan canary (matches its established twin `court_watches`, so left
+  alone as consistent rather than adding a one-off); the `PHASE_TARGET_T`
+  duplicate between `tip_selector.py`/`phase_breakdown.py` (already known,
+  currently harmless, previously deferred as out of scope). 478/478
+  backend tests passing. `npm run verify:db` and the Python suite couldn't
+  run in this sandbox (no `app.db`/no venv) — same known limitation as
+  every prior review PR on this code path; the wrist-visibility fix was
+  instead verified by extracting the function and running it against a
+  synthetic low-visibility spike.
+- **PR #25 — "Bug sweep 2026-09-01: crash guards, silent failures,
+  corrupted-row handling"** (branch `bug-sweep/2026-09-01`, opened 03:33
+  UTC). Largest of today's three — 9 fixes: (1) unguarded `JSON.parse()`
+  on TEXT columns in `history.js`/`coach.js`/`annotations.js`/`friends.js`
+  meant one corrupted row crashed an entire user's list response, not
+  just that row — added a shared `safeJsonParse()` helper that logs and
+  nulls the bad row instead. (2) `analyse.js` checked the user's own clip
+  exists on disk before returning its URL but not the matched *pro* clip
+  — now mirrors the same `fs.statSync` check, closing a real risk given
+  the documented `data/` manual-copy deploy gotcha. (3) `compareVideos.js`
+  used `Promise.all` on two `persistAndCrop` calls, so a partial failure
+  left an orphaned file with no cleanup — switched to `allSettled` +
+  delete the whole job directory on any failure. (4) `highlights.js`
+  treated an explicit `rallyIds: []` the same as "not specified," silently
+  building the wrong reel via a default instead of rejecting — now a clean
+  400 (resolves an open product-intent question flagged in a past
+  bug-sweep round). (5) `auth.js` never invalidated older password-reset
+  tokens when a newer one was issued or used, so a leaked older reset link
+  kept working for its full TTL — both routes now invalidate every other
+  unused token for that user. (6) `runPythonJson.js`'s subprocess timeout
+  only sent `SIGTERM`, which a hung MediaPipe/OpenCV call in a blocking
+  native call can ignore forever, hanging the awaiting request — this was
+  a previously-flagged, deliberately-deferred item, now actually fixed
+  with a `SIGKILL` escalation after a 5s grace period. (7) `integrityChecks.js`'s
+  `ORPHAN_CHECKS` list, based on the same incorrect FK-pragma comment PR
+  #24 also caught, covered only 17 of ~45 real foreign keys in the schema
+  — filled in the rest (`messages.sender_id`, `friend_links.user_a_id`/
+  `user_b_id`, `rally_clips.user_id`, `highlight_jobs.user_id`, and more),
+  plus a new `clubs.latitude`/`longitude` value-domain check. (8)
+  `infer_angle.py` let one undecodable video frame abort camera-angle
+  detection entirely at two of its three call sites; brought them in line
+  with the third, which already skips a bad frame instead of failing the
+  whole `/api/analyse` request. (9) the same wrist-visibility gate as PR
+  #24 (found independently by this sweep too). Investigated and
+  deliberately left alone: RevenueCat webhook ordering/idempotency vs.
+  `/billing/sync` (needs a product decision, already tracked); a suspected
+  TOCTOU race in `PATCH /highlights/rallies/:id` — implemented a fix, then
+  reverted it after confirming the handler is fully synchronous and the
+  app runs single-process/non-clustered, so the race isn't actually
+  exploitable today. 487/487 backend tests passing (9 new). Python changes
+  verified by stubbing `cv2`/`mediapipe`/`ultralytics` and confirming the
+  new test fails pre-fix and passes post-fix — no real venv in this
+  sandbox, same recommendation as prior PRs to run real `pytest` before
+  merging.
+- **PR #26 — "Security review 2026-09-01: cap heavy ML-subprocess routes
+  by user, not just by daily-success count"** (branch
+  `security-review/2026-09-01`, opened 03:43 UTC). Auth/JWT/SQL/spawn/
+  secrets all re-checked and confirmed clean — no auth bypass, SQL
+  injection, command injection, or secret exposure. **No CRITICAL
+  finding.** One real fix: `FREE_DAILY_LIMIT` on `/api/analyse` only caps
+  *successful* runs (a failed one releases its usage slot by design), and
+  premium accounts have no daily cap at all — so an authenticated caller
+  could trigger the real MediaPipe/DTW subprocess an unbounded number of
+  times (e.g. repeatedly failing validation with a bad `contactTime` after
+  the file upload already cost real server work), a resource-exhaustion
+  risk on the single-box Hetzner deploy. Added a generous, user-id-keyed
+  rate limiter (can't be sidestepped by rotating IPs) to the four routes
+  that spawn a Python ML process: `/analyse` (20/10min), `/compare-videos`
+  (15/10min), `/highlights/upload` (5/10min), `/check-setup` (30/10min).
+  Explicitly did not re-flag the JWT-revocation gap (already fixed in open
+  PR #22) or the server-path-redaction gap (already in open PR #19) since
+  those are already tracked. 480/480 backend tests passing (new rate-limit
+  test asserts the cap trips per-user without affecting other users).
+
+**Housekeeping note:** this session's branch policy required developing on
+`claude/pensive-maxwell-tcibik` rather than pushing straight to `master`
+as this routine's own instructions asked for — opened as a normal PR
+instead, matching how every other scheduled routine in this repo already
+operates (none of them push directly to master either). No functional
+difference for Jack: still docs-only, still needs a quick look-and-merge
+like the others.
