@@ -6,8 +6,16 @@ const requireAuth = require('../middleware/requireAuth');
 const { SCRIPTS_DIR, PYTHON } = require('../config/paths');
 const { runPythonJson } = require('../utils/runPythonJson');
 const { safeVideoExt, videoFileFilter } = require('../utils/videoUpload');
+const { rateLimit } = require('../middleware/rateLimit');
 
 const router = express.Router();
+
+// Same resource-exhaustion reasoning as analyse.js's analyseLimiter -- this
+// route's own comment already notes requireAuth exists specifically to stop
+// it being a "trivial resource-exhaustion DoS on the single-box hosted
+// deploy," but auth alone doesn't cap how many times one authenticated
+// account can trigger it. Keyed by user id.
+const checkSetupLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 30, keyPrefix: 'check-setup', keyGenerator: (req) => req.user?.id ?? req.ip });
 
 const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads');
 const CHECKER = path.join(SCRIPTS_DIR, '00_utils', 'check_camera_setup.py');
@@ -35,7 +43,7 @@ const uploadSnapshot = multer({ storage: multer.memoryStorage(), limits: { fileS
 // requireAuth: this spawns a real CPU-heavy Python process per request on a
 // 200MB upload -- left open to unauthenticated callers it's a trivial
 // resource-exhaustion DoS on the single-box hosted deploy.
-router.post('/check-setup', requireAuth, upload.single('video'), async (req, res) => {
+router.post('/check-setup', requireAuth, checkSetupLimiter, upload.single('video'), async (req, res) => {
   const cleanup = () => {
     if (req.file) fs.unlink(req.file.path, () => {});
   };
