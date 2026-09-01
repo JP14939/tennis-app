@@ -56,6 +56,43 @@ describe('POST /highlights/jobs/:id/reel premium gate', () => {
       .send({ rallyIds: [1, {}, 3] });
     expect(res.status).toBe(400);
   });
+
+  // Regression test: an explicit `rallyIds: []` (every rally deselected in
+  // the picker UI) used to fall through to the `else` branch and silently
+  // build a reel from the top-3-by-duration default instead -- the caller's
+  // explicit "none of these" was overridden rather than honored or rejected.
+  test('an explicit empty rallyIds array is rejected with 400, not silently defaulted to top-3', async () => {
+    const { id: userId, token } = makeUser('reel_emptyids@test.com', 'premium');
+    const jobId = db.prepare(`INSERT INTO highlight_jobs (user_id, video_path, status) VALUES (?, 'x', 'done')`)
+      .run(userId).lastInsertRowid;
+    db.prepare(`
+      INSERT INTO rally_clips (job_id, user_id, clip_path, start_sec, end_sec, duration_sec, swing_count)
+      VALUES (?, ?, 'clip.mp4', 0, 5, 5, 1)
+    `).run(jobId, userId);
+
+    const res = await request(app)
+      .post(`/api/highlights/jobs/${jobId}/reel`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ rallyIds: [] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/rallyIds cannot be empty/);
+  });
+
+  test('omitting rallyIds entirely still uses the top-N default', async () => {
+    const { id: userId, token } = makeUser('reel_omitids@test.com', 'premium');
+    const jobId = db.prepare(`INSERT INTO highlight_jobs (user_id, video_path, status) VALUES (?, 'x', 'done')`)
+      .run(userId).lastInsertRowid;
+    db.prepare(`
+      INSERT INTO rally_clips (job_id, user_id, clip_path, start_sec, end_sec, duration_sec, swing_count)
+      VALUES (?, ?, 'clip.mp4', 0, 5, 5, 1)
+    `).run(jobId, userId);
+
+    const res = await request(app)
+      .post(`/api/highlights/jobs/${jobId}/reel`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({});
+    expect(res.status).toBe(202);
+  });
 });
 
 describe('PATCH /highlights/rallies/:id field validation', () => {

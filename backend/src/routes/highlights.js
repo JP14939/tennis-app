@@ -250,7 +250,16 @@ router.post('/highlights/jobs/:id/reel', requireAuth, requirePremium, (req, res)
     return res.status(400).json({ error: 'rallyIds must be an array of integers' });
   }
   let clips;
-  if (Array.isArray(rallyIds) && rallyIds.length > 0) {
+  if (Array.isArray(rallyIds)) {
+    // An explicit `rallyIds: []` (e.g. the client's picker UI with every
+    // rally deselected) used to fall through to the `else` branch below and
+    // silently build a reel from the top-3-by-duration default instead --
+    // the caller's explicit "none of these" was overridden rather than
+    // honored or rejected. Now it's a clean 400 instead of a surprise reel;
+    // omit rallyIds entirely to get the top-N default.
+    if (rallyIds.length === 0) {
+      return res.status(400).json({ error: 'rallyIds cannot be empty -- select at least one rally, or omit rallyIds to use the default top clips' });
+    }
     const placeholders = rallyIds.map(() => '?').join(',');
     clips = db.prepare(
       `SELECT * FROM rally_clips WHERE job_id = ? AND user_id = ? AND id IN (${placeholders})`

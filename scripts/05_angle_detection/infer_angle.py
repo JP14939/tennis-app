@@ -743,7 +743,14 @@ def _court_line_fallback_angle(video_path, candidate_frames, view_direction_hint
     """
     court_angles = []
     for fn in candidate_frames:
-        frame = extract_frame(video_path, fn)
+        # Same undecodable-frame guard as infer_camera_angle()'s net-detection
+        # loop above -- one bad frame shouldn't abort the whole fallback,
+        # especially since this path runs on every 'front' (net-position)
+        # recording, not just as a rare failure mode.
+        try:
+            frame = extract_frame(video_path, fn)
+        except RuntimeError:
+            continue
         sidelines = detect_court_sidelines(frame)
         if sidelines is None:
             continue
@@ -806,7 +813,16 @@ def infer_camera_angle(video_path, frame_number=None, landmarker=None, view_dire
     measurements = []
     if view_direction_hint != 'front':
         for fn in candidate_frames:
-            frame = extract_frame(video_path, fn)
+            # extract_frame() raises when cap.read() fails on a clamped-but-
+            # undecodable frame -- common on phone-recorded/VFR video where
+            # the reported frame count overstates what's actually decodable.
+            # One bad frame among the 3 sampled used to abort angle
+            # detection entirely instead of just being skipped, the same as
+            # a frame with no confident net detection already is below.
+            try:
+                frame = extract_frame(video_path, fn)
+            except RuntimeError:
+                continue
             result = _angle_from_frame(frame, landmarker)
             if result is not None:
                 measurements.append(result)

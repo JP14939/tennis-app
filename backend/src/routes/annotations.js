@@ -3,6 +3,7 @@ const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
 const { MAX_LENGTHS, isPositiveIntegerId, isBoundedJsonArray } = require('../domain/invariants');
 const { validate } = require('../validation/validateBody');
+const { safeJsonParse } = require('../utils/safeJsonParse');
 
 const router = express.Router();
 
@@ -47,8 +48,11 @@ router.get('/analyses/:analysisId/annotations', requireAuth, (req, res) => {
     annotations: rows.map((row) => ({
       author_id: row.author_id,
       author_name: row.author_name,
-      pane_a_strokes: JSON.parse(row.pane_a_strokes),
-      pane_b_strokes: JSON.parse(row.pane_b_strokes),
+      // A single corrupted stroke blob used to throw here and crash the
+      // whole annotations fetch for everyone viewing this analysis, not
+      // just the author who saved the bad data.
+      pane_a_strokes: safeJsonParse(row.pane_a_strokes, `annotation pane_a (author ${row.author_id})`),
+      pane_b_strokes: safeJsonParse(row.pane_b_strokes, `annotation pane_b (author ${row.author_id})`),
       updated_at: row.updated_at,
     })),
   });

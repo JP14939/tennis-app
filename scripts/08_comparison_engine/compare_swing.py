@@ -161,9 +161,18 @@ def find_peak_wrist_frame(frames, fps):
         rw = f['landmarks'].get('right_wrist')
         lw = f['landmarks'].get('left_wrist')
         vel = 0
-        if rw and prev_rw:
+        # MediaPipe always returns an x/y for every landmark regardless of
+        # confidence -- rw/lw are truthy even when `visibility` is near 0
+        # (motion blur is common right at contact, on fast swings). Without
+        # this gate, a spuriously large frame-to-frame jump from a
+        # low-confidence wrist detection can be mistaken for the velocity
+        # peak, silently shifting the whole comparison window and
+        # corrupting the DTW score with no error surfacing anywhere. Same
+        # 0.5 threshold as detect_swings.py's compute_wrist_velocity(),
+        # the pro-database side's equivalent function.
+        if rw and prev_rw and rw['visibility'] > 0.5:
             vel = max(vel, math.sqrt((rw['x']-prev_rw['x'])**2 + (rw['y']-prev_rw['y'])**2))
-        if lw and prev_lw:
+        if lw and prev_lw and lw['visibility'] > 0.5:
             vel = max(vel, math.sqrt((lw['x']-prev_lw['x'])**2 + (lw['y']-prev_lw['y'])**2))
         if vel > max_vel:
             max_vel = vel

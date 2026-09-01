@@ -6,6 +6,7 @@ const {
   PHASE_KEYS, MAX_LENGTHS, isPhaseKey, isText, isTimestampSec, isPositiveIntegerId,
 } = require('../domain/invariants');
 const { validate, optional, oneOfMessage } = require('../validation/validateBody');
+const { safeJsonParse } = require('../utils/safeJsonParse');
 
 const router = express.Router();
 
@@ -86,7 +87,9 @@ router.get('/coach/students/:studentId/history', requireAuth, (req, res) => {
       angle_label: row.angle_label,
       tip: row.tip,
       created_at: row.created_at,
-      result: JSON.parse(row.result_json),
+      // See history.js's serializeRow -- one corrupted row used to crash
+      // this whole list for the coach instead of just coming back null.
+      result: safeJsonParse(row.result_json, `analysis ${row.id}`),
     })),
   });
 });

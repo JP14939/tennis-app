@@ -7,6 +7,7 @@ const { currentTier } = require('../utils/tier');
 const { DATA_DIR } = require('../config/paths');
 const { SHOT_TYPES, isShotType, isScore, isOptionalText, MAX_LENGTHS } = require('../domain/invariants');
 const { validate, oneOfMessage } = require('../validation/validateBody');
+const { safeJsonParse } = require('../utils/safeJsonParse');
 
 const router = express.Router();
 
@@ -71,7 +72,10 @@ function serializeRow(row) {
     created_at: row.created_at,
     flagged_not_shot: !!row.flagged_not_shot,
     confirmed_real_shot: !!row.confirmed_real_shot,
-    result: JSON.parse(row.result_json),
+    // A single corrupted result_json used to throw here and crash the
+    // whole list this row was part of (see GET /history below) -- now
+    // that one row just comes back with result: null instead.
+    result: safeJsonParse(row.result_json, `analysis ${row.id}`),
   };
 }
 
@@ -83,6 +87,7 @@ function serializeRow(row) {
 // Strip them for the list response; GET /history/:id below returns the
 // untouched full result for whichever single item is actually opened.
 function stripHeavyOverlays(result) {
+  if (!result) return result;
   const { user_overlay_trajectory, racket_overlay_trajectory, ...rest } = result;
   return {
     ...rest,

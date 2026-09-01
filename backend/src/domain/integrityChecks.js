@@ -92,6 +92,18 @@ const VALUE_DOMAIN_CHECKS = [
              OR latitude NOT BETWEEN -90 AND 90 OR longitude NOT BETWEEN -180 AND 180`,
   },
   {
+    // clubs.latitude/longitude has the exact same shape as courts' -- same
+    // NOT NULL REAL columns, no CHECK constraint -- but only clubs.js's
+    // scripts/clusterCourts.js writes it (no route does), so a bad centroid
+    // from that offline script had no check to catch it before poisoning
+    // every haversine-distance computation against that club silently.
+    name: 'clubs.coordinates',
+    description: 'every club sits at a real latitude/longitude',
+    sql: `SELECT id, name, latitude, longitude FROM clubs
+          WHERE ${numericTypeGuard('latitude')} OR ${numericTypeGuard('longitude')}
+             OR latitude NOT BETWEEN -90 AND 90 OR longitude NOT BETWEEN -180 AND 180`,
+  },
+  {
     name: 'courts.source',
     description: `every court came from a known source (${COURT_SOURCES.join(', ')})`,
     sql: `SELECT id, name, source FROM courts WHERE source NOT IN (${sqlIn(COURT_SOURCES)})`,
@@ -244,29 +256,63 @@ const STRUCTURAL_CHECKS = [
 ];
 
 // ── Orphan canaries ─────────────────────────────────────────────────────────
-// better-sqlite3 enables `PRAGMA foreign_keys = ON` by default, so these
-// SHOULD be structurally impossible today -- which is exactly why they're
-// worth keeping cheap and present. If that default ever changes, or a future
-// connection opens the file with foreign keys off, these are what notice.
+// db.js never sets `PRAGMA foreign_keys = ON` (confirmed -- there is no such
+// pragma call anywhere in that file), and SQLite's own default for that
+// pragma is OFF, not ON. The comment that used to sit here claimed
+// better-sqlite3 turns it on by default, which is not true of the underlying
+// SQLite library -- every `REFERENCES` in the schema below is decorative,
+// and these checks are catching real, currently-possible orphaned rows
+// today, not standing guard against a hypothetical future misconfiguration.
+// This list used to cover only 17 of the schema's ~45 REFERENCES columns;
+// the rest is filled in below so `npm run verify:db` actually sees the
+// whole foreign-key graph.
 
 const ORPHAN_CHECKS = [
   ['analyses', 'user_id', 'users'],
   ['analysis_usage', 'user_id', 'users'],
+  ['payment_events', 'user_id', 'users'],
+  ['highlight_jobs', 'user_id', 'users'],
   ['coach_notes', 'analysis_id', 'analyses'],
   ['coach_notes', 'coach_id', 'users'],
   ['shared_analyses', 'analysis_id', 'analyses'],
+  ['shared_analyses', 'owner_id', 'users'],
+  ['shared_analyses', 'friend_id', 'users'],
   ['swing_annotations', 'analysis_id', 'analyses'],
+  ['swing_annotations', 'author_id', 'users'],
+  ['drill_practice_attempts', 'user_id', 'users'],
   ['drill_practice_attempts', 'step_id', 'drill_routine_steps'],
+  ['drill_practice_attempts', 'analysis_id', 'analyses'],
   ['drill_routine_steps', 'drill_item_id', 'drill_items'],
   ['rally_clips', 'job_id', 'highlight_jobs'],
+  ['rally_clips', 'user_id', 'users'],
   ['reel_jobs', 'highlight_job_id', 'highlight_jobs'],
+  ['reel_jobs', 'user_id', 'users'],
+  ['courts', 'cost_updated_by', 'users'],
+  ['courts', 'submitted_by', 'users'],
   ['court_confirmations', 'court_id', 'courts'],
+  ['court_confirmations', 'user_id', 'users'],
   ['court_watches', 'court_id', 'courts'],
+  ['court_watches', 'user_id', 'users'],
   ['club_courts', 'club_id', 'clubs'],
+  ['club_courts', 'court_id', 'courts'],
+  ['club_watches', 'user_id', 'users'],
+  ['club_watches', 'club_id', 'clubs'],
   ['availability_posts', 'court_id', 'courts'],
+  ['availability_posts', 'user_id', 'users'],
   ['message_reports', 'message_id', 'messages'],
-  ['password_resets', 'user_id', 'users'],
+  ['message_reports', 'reporter_id', 'users'],
+  ['messages', 'user_a_id', 'users'],
+  ['messages', 'user_b_id', 'users'],
+  ['messages', 'sender_id', 'users'],
+  ['user_blocks', 'blocker_id', 'users'],
+  ['user_blocks', 'blocked_id', 'users'],
+  ['friend_codes', 'user_id', 'users'],
+  ['friend_links', 'user_a_id', 'users'],
+  ['friend_links', 'user_b_id', 'users'],
+  ['friend_matches', 'logged_by', 'users'],
   ['friend_matches', 'opponent_id', 'users'],
+  ['celebrity_scores', 'added_by', 'users'],
+  ['password_resets', 'user_id', 'users'],
 ].map(([table, column, parent]) => ({
   name: `${table}.${column}`,
   description: `every ${table} row points at a ${parent} row that still exists`,
