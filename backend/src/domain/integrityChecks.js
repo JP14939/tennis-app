@@ -182,6 +182,12 @@ const VALUE_DOMAIN_CHECKS = [
     sql: `SELECT id, title, shot_type FROM drill_items WHERE shot_type NOT IN (${sqlIn(DRILL_SHOT_TYPES)})`,
   },
   {
+    name: 'drill_routine_steps.shot_type',
+    description: `a step naming a shot type names one of ${DRILL_SHOT_TYPES.join(', ')} (null is a footwork-only step)`,
+    sql: `SELECT id, drill_item_id, shot_type FROM drill_routine_steps
+          WHERE shot_type IS NOT NULL AND shot_type NOT IN (${sqlIn(DRILL_SHOT_TYPES)})`,
+  },
+  {
     name: 'highlight_jobs.status',
     description: `every detection job is ${JOB_STATUSES.join(', ')}`,
     sql: `SELECT id, user_id, status FROM highlight_jobs WHERE status NOT IN (${sqlIn(JOB_STATUSES)})`,
@@ -239,6 +245,11 @@ const STRUCTURAL_CHECKS = [
     name: 'shared_analyses.self',
     description: 'an analysis is never shared with its own owner',
     sql: 'SELECT id, owner_id, friend_id FROM shared_analyses WHERE owner_id = friend_id',
+  },
+  {
+    name: 'coach_notes.exclusive_pin',
+    description: 'a coach note is pinned to a phase, a timestamp, or neither -- never both',
+    sql: 'SELECT id, analysis_id, phase_key, timestamp_sec FROM coach_notes WHERE phase_key IS NOT NULL AND timestamp_sec IS NOT NULL',
   },
   {
     name: 'drill_routine_steps.ordering',

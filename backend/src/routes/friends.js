@@ -233,14 +233,14 @@ router.post('/friends/:userId/share', requireAuth, (req, res) => {
   if (!isFriends(req.user.id, friendId)) {
     return res.status(403).json({ error: 'Not friends with this user' });
   }
-  // Bound directly into the SELECT below -- a non-primitive analysisId (e.g.
-  // an object) throws a RangeError deep in better-sqlite3 instead of a clean
-  // 400, same class of bug fixed elsewhere in this file for friendId.
-  if (!Number.isInteger(analysisId)) {
-    return res.status(400).json({ error: 'Invalid analysisId' });
-  }
+  // isPositiveIntegerId (unlike Number.isInteger) accepts a numeric STRING as
+  // well as a number -- the redundant `!Number.isInteger(analysisId)` check
+  // that used to sit here wrongly 400'd a numeric-string analysisId that had
+  // already passed the check above. Coerce once so the SELECT below always
+  // binds a real number, never a non-primitive.
+  const analysisIdNum = Number(analysisId);
   const analysis = db.prepare('SELECT * FROM analyses WHERE id = ? AND user_id = ?')
-    .get(analysisId, req.user.id);
+    .get(analysisIdNum, req.user.id);
   if (!analysis) {
     return res.status(404).json({ error: 'Analysis not found' });
   }

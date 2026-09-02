@@ -100,6 +100,38 @@ describe('boundary_note', () => {
   });
 });
 
+describe('archived', () => {
+  function storedArchived(clipId) {
+    return db.prepare('SELECT archived FROM rally_clips WHERE id = ?').get(clipId).archived;
+  }
+
+  test.each([true, false])('accepts %p', async (archived) => {
+    const { id, token } = makeUser();
+    const clipId = makeClip(id);
+
+    const res = await review(token, clipId, { archived });
+    expect(res.status).toBe(200);
+    expect(storedArchived(clipId)).toBe(archived ? 1 : 0);
+  });
+
+  // Was used raw (`archived ? 1 : 0`) with no type check -- any truthy
+  // non-boolean coerced to archived=1 (or, for a falsy-but-wrong type,
+  // silently to 0) with no 400 to flag the caller's mistake.
+  test.each([
+    ['true', 'the string "true" instead of the boolean'],
+    ['false', 'the string "false" -- truthy, so it would have wrongly archived'],
+    [1, 'a number instead of a boolean'],
+    [0, 'zero instead of the boolean false'],
+  ])('rejects %p (%s) and leaves archived unchanged', async (archived) => {
+    const { id, token } = makeUser();
+    const clipId = makeClip(id);
+
+    const res = await review(token, clipId, { archived });
+    expect(res.status).toBe(400);
+    expect(storedArchived(clipId)).toBe(0);
+  });
+});
+
 describe('a rejected review never partially applies', () => {
   test('a valid outcome_tag alongside a malformed boundary_note saves neither', async () => {
     const { id, token } = makeUser();

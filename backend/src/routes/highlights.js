@@ -324,6 +324,11 @@ router.patch('/highlights/rallies/:id', requireAuth, (req, res) => {
   const bad = validate([
     ['outcome_tag', outcome_tag, optional(isOutcomeTag), oneOfMessage(OUTCOME_TAGS)],
     ['boundary_note', boundary_note, isBoundaryNote, 'must be a comma-joined list of ok, started_too_late, cut_off_early, should_split (ok/should_split cannot be combined)'],
+    // Was used raw (`archived ? 1 : 0`) with no type check -- any truthy
+    // non-boolean (e.g. the string "false") coerced to archived=1 with no
+    // 400 to signal the caller's mistake, same class of bug as the
+    // flagged_not_shot/confirmed_real_shot fix in history.js.
+    ['archived', archived, (v) => v === undefined || typeof v === 'boolean', 'must be true or false'],
   ]);
   if (bad) return res.status(400).json(bad);
 

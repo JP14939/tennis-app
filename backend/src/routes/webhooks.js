@@ -1,6 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const db = require('../db');
+const { isPositiveIntegerId } = require('../domain/invariants');
 
 const router = express.Router();
 
@@ -51,9 +52,16 @@ router.post('/webhooks/revenuecat', (req, res) => {
 
   // app_user_id is set to our own users.id as a string when the frontend
   // identifies the shopper (see PremiumCheckout.web.js) -- maps straight
-  // back with no lookup table needed.
-  const userId = parseInt(event.app_user_id, 10);
-  const user = Number.isInteger(userId) ? db.prepare('SELECT id FROM users WHERE id = ?').get(userId) : null;
+  // back with no lookup table needed. RevenueCat also delivers events for
+  // customers it generated its own (non-numeric) anonymous id for, and
+  // sandbox/test deliveries can send arbitrary strings -- parseInt() would
+  // silently truncate a digit-prefixed one of those (e.g. a UUID-shaped id
+  // starting "12345678-...") into a small integer that could collide with a
+  // real, unrelated user's id and flip THEIR tier instead of ack'ing a
+  // delivery this app can't attribute. isPositiveIntegerId requires the
+  // whole string to be digits, so anything else maps to "no matching user".
+  const userId = isPositiveIntegerId(event.app_user_id) ? Number(event.app_user_id) : null;
+  const user = userId !== null ? db.prepare('SELECT id FROM users WHERE id = ?').get(userId) : null;
 
   db.prepare(
     'INSERT INTO payment_events (user_id, event_type, raw_payload) VALUES (?, ?, ?)'

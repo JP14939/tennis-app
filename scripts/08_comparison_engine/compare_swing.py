@@ -501,10 +501,6 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         'matches':      output,
     }
 
-    result_path = os.path.join(DATA_DIR, 'runtime', 'last_comparison.json')
-    with open(result_path, 'w', encoding='utf-8') as f:
-        json.dump(result, f, indent=2)
-    print(f'\n  Results saved to {result_path}', file=sys.stderr)
     return result
 
 
@@ -517,4 +513,15 @@ if __name__ == '__main__':
     parser.add_argument('--contact-time', type=float, default=None, help='User-marked contact time in seconds (from ContactMarkingScreen). If omitted, contact is auto-detected via wrist velocity.')
     parser.add_argument('--view-direction-hint', choices=['front', 'back'], default=None, help='User-stated filming position (from the record-time picker), used only if server-side detection is inconclusive.')
     args = parser.parse_args()
-    compare(args.video, args.shot_type, args.top, args.angle_window, args.contact_time, args.view_direction_hint)
+    result = compare(args.video, args.shot_type, args.top, args.angle_window, args.contact_time, args.view_direction_hint)
+
+    # Debug convenience for a manual CLI run only -- moved out of compare()
+    # itself, which the live backend calls once per /api/analyse request via
+    # pro_matcher.py (never through this __main__ block). Every one of those
+    # concurrent, per-user calls used to write this exact same fixed path,
+    # racing every other in-flight request's write for no reader anywhere in
+    # the app (confirmed: nothing else references last_comparison.json).
+    result_path = os.path.join(DATA_DIR, 'runtime', 'last_comparison.json')
+    with open(result_path, 'w', encoding='utf-8') as f:
+        json.dump(result, f, indent=2)
+    print(f'\n  Results saved to {result_path}', file=sys.stderr)
