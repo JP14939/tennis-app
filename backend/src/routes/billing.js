@@ -48,8 +48,10 @@ router.post('/billing/sync', requireAuth, async (req, res) => {
       if (!errType) {
         console.error(`[billing] 404 from RevenueCat for user ${req.user.id} had no recognizable error type -- proceeding as "no purchases" but flagging for visibility`);
       }
-      db.prepare('UPDATE users SET tier = ? WHERE id = ?').run('free', req.user.id);
-      return res.json({ tier: 'free' });
+      // Do NOT write tier='free' here -- see the isPremium branch below for
+      // why this route must never downgrade.
+      const { tier } = db.prepare('SELECT tier FROM users WHERE id = ?').get(req.user.id);
+      return res.json({ tier });
     }
     if (!response.ok) {
       throw new Error(`RevenueCat API returned ${response.status}`);
@@ -76,8 +78,24 @@ router.post('/billing/sync', requireAuth, async (req, res) => {
     // entitlement is ever added.
     const isPremium = (data.active_entitlements?.items || data.items || []).length > 0;
 
-    db.prepare('UPDATE users SET tier = ? WHERE id = ?').run(isPremium ? 'premium' : 'free', req.user.id);
-    res.json({ tier: isPremium ? 'premium' : 'free' });
+    // This route runs synchronously right after checkout, racing RevenueCat's
+    // own webhook delivery of the SAME purchase to POST /webhooks/revenuecat
+    // (routes/webhooks.js), which is the durable source of truth for
+    // renewals/cancellations (see this file's header comment). RevenueCat's
+    // read API can lag just behind a purchase it just accepted -- confirmed
+    // live, a sync call fired the instant checkout resolves can still see
+    // an empty active_entitlements list for a purchase whose webhook has
+    // already landed and correctly set tier='premium'. Writing 'free' here
+    // in that window silently clobbers the correct grant with no way for the
+    // user to notice or retry (the next webhook could be a month away, at
+    // renewal). This route is therefore upgrade-only: it can promote a user
+    // to premium the instant RevenueCat confirms it, but a downgrade is only
+    // ever the webhook's call.
+    if (isPremium) {
+      db.prepare('UPDATE users SET tier = ? WHERE id = ?').run('premium', req.user.id);
+    }
+    const { tier } = db.prepare('SELECT tier FROM users WHERE id = ?').get(req.user.id);
+    res.json({ tier });
   } catch (err) {
     console.error('[billing/sync] failed:', err.message);
     res.status(502).json({ error: 'Could not reach billing provider' });

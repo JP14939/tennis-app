@@ -159,3 +159,41 @@ describe('corrupted result_json does not crash the list or the single-item route
     expect(res.body.result).toBeNull();
   });
 });
+
+// Regression test for a sweep finding: POST /history only validates
+// matches[0] -- a null/non-object entry elsewhere in `matches` (or a
+// non-array `matches` altogether) saved fine, since result_json is stored
+// verbatim. GET /history's stripHeavyOverlays() then destructured every
+// match entry unconditionally, so a single such row crashed the ENTIRE list
+// with a TypeError, not just that row.
+describe('GET /history survives a stored row with a malformed matches entry', () => {
+  test('a null entry in matches (past index 0) does not take down the whole list', async () => {
+    const { token } = makeUser('history10@test.com');
+    const saveRes = await request(app)
+      .post('/api/history')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ shotType: 'forehand', matches: [{ overall_score: 80 }, null] });
+    expect(saveRes.status).toBe(201);
+
+    const listRes = await request(app).get('/api/history').set('Authorization', `Bearer ${token}`);
+    expect(listRes.status).toBe(200);
+    expect(listRes.body.analyses).toHaveLength(1);
+  });
+
+  test('a non-array matches does not take down the whole list', async () => {
+    const { id } = makeUser('history11@test.com');
+    const token = jwt.sign({ id }, process.env.JWT_SECRET);
+    // Simulate a row that predates/bypassed matches[0]-only validation --
+    // insert directly rather than via POST, since POST itself would 400 on
+    // an object matches today; the point is GET must survive whatever is
+    // already stored.
+    db.prepare(
+      `INSERT INTO analyses (user_id, shot_type, similarity, result_json) VALUES (?, 'forehand', 80, ?)`
+    ).run(id, JSON.stringify({ shotType: 'forehand', matches: { not: 'an array' } }));
+
+    const listRes = await request(app).get('/api/history').set('Authorization', `Bearer ${token}`);
+    expect(listRes.status).toBe(200);
+    expect(listRes.body.analyses).toHaveLength(1);
+    expect(listRes.body.analyses[0].result.matches).toEqual([]);
+  });
+});

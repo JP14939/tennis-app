@@ -132,6 +132,7 @@ router.post('/analyse', requireAuth, analyseLimiter, upload.single('video'), asy
     args.push('--view-direction-hint', viewDirectionHint);
   }
 
+  let result;
   try {
     // NOT parallelized with Promise.all, despite persistAndCrop not reading
     // `result` -- looks independent by data-flow alone, but persistAndCrop
@@ -142,8 +143,27 @@ router.post('/analyse', requireAuth, analyseLimiter, upload.single('video'), asy
     // interpreter + MediaPipe import + video-open that's slower by a wide
     // margin, i.e. the file being deleted out from under the still-running
     // matcher on essentially every request, not as a rare edge case.
-    const result = await runPythonJson(PYTHON, args, { timeoutMs: ANALYSIS_TIMEOUT_MS, label: 'pro_matcher.py' });
+    result = await runPythonJson(PYTHON, args, { timeoutMs: ANALYSIS_TIMEOUT_MS, label: 'pro_matcher.py' });
+  } catch (err) {
+    // The Python matcher itself never ran to completion -- this free-tier
+    // slot bought nothing, so give it back. (Anything that fails AFTER this
+    // point, in the block below, means the actual analysis succeeded and
+    // must NOT refund the slot -- see that block's own catch.)
+    cleanup();
+    releaseUsageSlot(db, usageRowId);
+    console.error(`[analyse] ${err.message}`, err.stderr?.slice(-2000));
+    const messages = {
+      spawn_failed: 'Failed to start analysis process',
+      invalid_json: 'Analysis produced invalid output',
+      timeout: 'Analysis timed out — try a shorter clip',
+      nonzero_exit: (() => {
+        try { return JSON.parse(err.stdout).error; } catch { return 'Analysis failed'; }
+      })(),
+    };
+    return res.status(500).json({ error: messages[err.kind] || 'Analysis failed' });
+  }
 
+  try {
     // Analysis succeeded -- keep the user's video (used to be deleted
     // here) and crop it for the sync-compare screen. Cropping failure is
     // non-fatal: croppedPath just comes back null and the screen falls
@@ -203,35 +223,49 @@ router.post('/analyse', requireAuth, analyseLimiter, upload.single('video'), asy
     // comment above. persistedOk guards against logging against a
     // missing/empty file; contactTime was already validated as a real
     // number earlier in this handler (or this request would have 400'd),
-    // so no need to re-validate here.
-    if (persistedOk && contactTime !== undefined && contactTime !== '') {
-      const bgProc = spawn(PYTHON, [CONTACT_FRAME_LOGGER, originalPath, String(parseFloat(contactTime))], {
-        detached: true, stdio: 'ignore',
-      });
-      // Without this, a spawn failure (e.g. ENOENT on the script path, or
-      // EMFILE under load) fires Node's 'error' event with no listener,
-      // which throws and crashes the ENTIRE server process for every
-      // concurrent user -- not just this request, since this spawn happens
-      // fire-and-forget after the response was already sent. Same shape of
-      // bug runPythonJson.js's header comment describes fixing for
-      // foreground calls; this detached call bypasses that helper entirely.
-      bgProc.on('error', (err) => {
-        console.error('[analyse] contact-frame logger failed to start:', err.message);
-      });
-      bgProc.unref();
+    // so no need to re-validate here. Wrapped in its own try/catch: a
+    // synchronous throw from spawn() here (distinct from the 'error' event
+    // handled below, which fires async) happens AFTER res.json() above has
+    // already sent the response -- left uncaught, it used to fall into the
+    // outer catch, which called res.status(500)... a second time, throwing
+    // ERR_HTTP_HEADERS_SENT with nothing to catch it (an unhandled
+    // exception that takes the whole process down), and also wrongly
+    // released a usage slot for an analysis that had already succeeded.
+    try {
+      if (persistedOk && contactTime !== undefined && contactTime !== '') {
+        const bgProc = spawn(PYTHON, [CONTACT_FRAME_LOGGER, originalPath, String(parseFloat(contactTime))], {
+          detached: true, stdio: 'ignore',
+        });
+        // Without this, a spawn failure (e.g. ENOENT on the script path, or
+        // EMFILE under load) fires Node's 'error' event with no listener,
+        // which throws and crashes the ENTIRE server process for every
+        // concurrent user -- not just this request, since this spawn happens
+        // fire-and-forget after the response was already sent. Same shape of
+        // bug runPythonJson.js's header comment describes fixing for
+        // foreground calls; this detached call bypasses that helper entirely.
+        bgProc.on('error', (err) => {
+          console.error('[analyse] contact-frame logger failed to start:', err.message);
+        });
+        bgProc.unref();
+      }
+    } catch (err) {
+      console.error('[analyse] contact-frame logger failed to start:', err.message);
     }
   } catch (err) {
+    // The Python matcher already produced a real result by this point --
+    // this catch only covers post-processing (persisting/cropping the
+    // user's own clip, resolving the pro clip URL). Unlike the block above,
+    // this must NOT release the usage slot: doing the real, expensive work
+    // successfully and then hitting e.g. a full disk on the cheap local
+    // file-copy step is not a failed analysis, and refunding the slot here
+    // would let a persistent local infra issue (USER_CLIPS_DIR filling up)
+    // silently give every free user unlimited real analyses for as long as
+    // it lasts.
     cleanup();
-    releaseUsageSlot(db, usageRowId);
-    console.error(`[analyse] ${err.message}`, err.stderr?.slice(-2000));
-    const messages = {
-      spawn_failed: 'Failed to start analysis process',
-      invalid_json: 'Analysis produced invalid output',
-      nonzero_exit: (() => {
-        try { return JSON.parse(err.stdout).error; } catch { return 'Analysis failed'; }
-      })(),
-    };
-    res.status(500).json({ error: messages[err.kind] || 'Analysis failed' });
+    console.error(`[analyse] post-processing failed after a successful analysis: ${err.message}`);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Analysis succeeded but the response could not be completed' });
+    }
   }
 });
 

@@ -87,12 +87,22 @@ async function croppedProClipPath(clipPath, shotType) {
   }
   try {
     fs.renameSync(tmpPath, outPath);
-  } catch {
+  } catch (err) {
     // A concurrent request already finished and renamed into place first
     // (Windows' rename throws EEXIST here; POSIX rename would have silently
     // overwritten) -- either way, that other result is equally valid, so
-    // just clean up ours and use it.
+    // just clean up ours and use it. But that's not the only way rename()
+    // can throw (e.g. a permissions/disk error) -- this used to assume any
+    // failure meant "someone else already has it" and returned outPath
+    // regardless, which handed back a URL to a file that in a genuine
+    // failure case doesn't exist (a 404 for the caller, not a graceful
+    // fallback to the uncropped original the way every other failure path
+    // in this function behaves).
     fs.unlink(tmpPath, () => {});
+    if (!fs.existsSync(outPath)) {
+      console.error('[videoCrop] failed to move cropped pro clip into place:', err.message);
+      return null;
+    }
   }
   return outPath;
 }
