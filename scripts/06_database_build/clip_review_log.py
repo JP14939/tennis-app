@@ -80,6 +80,23 @@ def get_latest_verdicts():
     return verdicts
 
 
+def latest_verdict_notes():
+    """{entry_id: (verdict, note)} from each id's most recent logged line.
+    Lets a caller tell a human contact correction (note 'a -> b') apart from a
+    machine audio fill (note ends '(audio)') without re-parsing the jsonl."""
+    if not os.path.exists(LOG_PATH):
+        return {}
+    out = {}
+    with open(LOG_PATH) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            r = json.loads(line)
+            out[r['entry_id']] = (r['verdict'], r.get('note'))
+    return out
+
+
 def original_shot_type_for(entry_id):
     """If this entry was ever shot-type-corrected, return the shot type it
     STARTED as (the left side of the earliest 'shot_type_corrected' note,

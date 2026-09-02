@@ -910,6 +910,11 @@ export default function DevProClipReviewScreen({ navigation }) {
                   {progress.label_reviewed} of {progress.live_total} verified for label accuracy
                 </Text>
               )}
+              {progress?.contact_fill_pending > 0 && (
+                <Text style={s.doneCountText}>
+                  {progress.contact_fill_pending} with an audio-guessed contact time to check
+                </Text>
+              )}
             </View>
           )}
         </View>

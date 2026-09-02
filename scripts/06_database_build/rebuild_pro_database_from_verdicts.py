@@ -32,9 +32,16 @@ dropped ids simply never re-match.
                              idempotent. Non-confident entries are listed for
                              a targeted human contact-mark pass.
 
+  --apply-all-audio       -> apply EVERY audio pick (confident or not), re-anchor,
+                             and log NO verdict -- so every filled entry stays in
+                             the Pro Clip Review queue with its audio-guessed
+                             contact frame pre-loaded for Jack to approve or
+                             adjust. Use with --contact-predictions.
+
 Usage:
   python rebuild_pro_database_from_verdicts.py [--dry-run] [--drop-ball-invisible]
       [--contact-predictions data/06_pro_database/pro_clip_contact_predictions.json]
+      [--apply-all-audio]
 """
 import argparse
 import json
@@ -91,23 +98,27 @@ def _ball_invisible_ids():
     return {r['id'] for r in rows if not r.get('ball_visible', True)}
 
 
-def _load_contact_predictions(path):
+def _load_contact_predictions(path, all_picks=False):
+    """Predictions to actually apply. Default: confident picks only. all_picks:
+    every ok pick regardless of confidence (--apply-all-audio)."""
     if not path:
         return {}
     with open(path) as f:
         preds = json.load(f)
     return {eid: p for eid, p in preds.items()
-            if p.get('status') == 'ok' and p.get('confident') and p.get('contact_time_sec') is not None}
+            if p.get('status') == 'ok' and p.get('contact_time_sec') is not None
+            and (all_picks or p.get('confident'))}
 
 
-def rebuild(dry_run=False, drop_ball_invisible=False, contact_predictions_path=None):
+def rebuild(dry_run=False, drop_ball_invisible=False, contact_predictions_path=None,
+            apply_all_audio=False):
     with open(PRO_DB_PATH) as f:
         db = json.load(f)
     overlays, overlays_usable = _load_overlays()
 
     verdicts = clip_review_log.get_latest_verdicts()
     ball_invisible = _ball_invisible_ids() if drop_ball_invisible else set()
-    confident_preds = _load_contact_predictions(contact_predictions_path)
+    audio_preds = _load_contact_predictions(contact_predictions_path, all_picks=apply_all_audio)
 
     all_preds = {}
     if contact_predictions_path:
@@ -144,12 +155,14 @@ def rebuild(dry_run=False, drop_ball_invisible=False, contact_predictions_path=N
                 reextracted.append(eid)
             else:
                 skipped.append((eid, res['status']))
-        elif eid in confident_preds:
-            # Audio onset detector's confident contact time -- set the scalar,
-            # re-anchor exactly as a hand correction would, and log a verdict
-            # so a re-run treats it as a normal contact_time_corrected entry.
+        elif eid in audio_preds:
+            # Audio onset detector's contact time -- set the scalar and re-anchor
+            # exactly as a hand correction would. Default: only confident picks,
+            # logged as a contact_time_corrected verdict (idempotent re-runs).
+            # --apply-all-audio: every pick, NO verdict -- so the entry stays in
+            # the Pro Clip Review queue for Jack to approve/adjust.
             old = entry.get('clip_contact_time_sec')
-            new = round(confident_preds[eid]['contact_time_sec'], 4)
+            new = round(audio_preds[eid]['contact_time_sec'], 4)
             entry['clip_contact_time_sec'] = new
             res = reextract_for_entry(entry, lookup=lookup, original_shot_type=orig_st)
             if res['status'] == 'ok':
@@ -157,7 +170,7 @@ def rebuild(dry_run=False, drop_ball_invisible=False, contact_predictions_path=N
                 entry['peak_time'] = res['new_peak_time']
                 overlays[eid] = res['overlay']
                 audio_filled.append(eid)
-                if not dry_run:
+                if not dry_run and not apply_all_audio:
                     clip_review_log.log_verdict(
                         eid, 'contact_time_corrected', note=f'{old} -> {new} (audio)')
             else:
@@ -179,8 +192,10 @@ def rebuild(dry_run=False, drop_ball_invisible=False, contact_predictions_path=N
     # ── Summary ──────────────────────────────────────────────────────────
     print()
     if contact_predictions_path:
-        print(f'  audio contact fill (confident)    : {len(audio_filled)} applied')
-        print(f'  audio contact flagged (uncertain) : {len(audio_flagged)} -- need a human contact-mark pass')
+        label = 'all picks, no verdict' if apply_all_audio else 'confident, verdict logged'
+        print(f'  audio contact fill ({label}) : {len(audio_filled)} applied')
+        print(f'  audio contact flagged (uncertain) : {len(audio_flagged)} -- '
+              f'{"queued for review" if apply_all_audio else "need a human contact-mark pass"}')
     print(f'  re-extracted trajectory + overlay : {len(reextracted)}')
     missing = [s for s in skipped if s[1] == 'missing_lookup']
     sparse = [s for s in skipped if s[1] == 'too_few_points']
@@ -236,9 +251,13 @@ def main():
                     help='also drop entries flagged not ball_visible in the 07_audits audit')
     ap.add_argument('--contact-predictions', default=None,
                     help='pro_clip_contact_predictions.json -- apply confident audio contact times')
+    ap.add_argument('--apply-all-audio', action='store_true',
+                    help='apply EVERY audio pick (not just confident), log no verdict -- keeps '
+                         'them all in the Pro Clip Review queue')
     args = ap.parse_args()
     rebuild(dry_run=args.dry_run, drop_ball_invisible=args.drop_ball_invisible,
-            contact_predictions_path=args.contact_predictions)
+            contact_predictions_path=args.contact_predictions,
+            apply_all_audio=args.apply_all_audio)
 
 
 if __name__ == '__main__':

@@ -23,7 +23,9 @@ sys.path.insert(0, os.path.join(SCRIPTS_DIR, '00_utils'))
 
 from paths import DATA_DIR  # noqa: E402
 from clip_urls import to_url, PRO_CLIPS_DIR  # noqa: E402
-from clip_review_log import get_reviewed_set, get_label_reviewed_ids  # noqa: E402
+from clip_review_log import (  # noqa: E402
+    get_reviewed_set, get_label_reviewed_ids, latest_verdict_notes,
+)
 from source_footage_lookup import source_video_for, SOURCE_VIDEOS_DIR  # noqa: E402
 from clip_trim import get_fps  # noqa: E402
 
@@ -31,6 +33,22 @@ PRO_DB_PATH = os.path.join(DATA_DIR, '06_pro_database', 'pro_database.json')
 AUDIT_PATH = os.path.join(DATA_DIR, '07_audits', 'ball_visibility_audit.json')
 
 DEFAULT_LIMIT = 20
+
+
+def _is_machine_contact_fill(verdict, note):
+    """True when the only thing logged for an entry is a machine audio contact
+    fill (predict_pro_clip_contact_from_audio.py -> rebuild). Its note ends
+    '(audio)'; a real human contact correction's note is a plain 'a -> b'."""
+    return verdict == 'contact_time_corrected' and bool(note) and note.rstrip().endswith('(audio)')
+
+
+def _still_needs_review(eid, verdict_notes):
+    """An entry is still a review candidate if it has no verdict at all, or its
+    latest verdict is a machine audio contact fill (Jack hasn't eyeballed it)."""
+    if eid not in verdict_notes:
+        return True
+    verdict, note = verdict_notes[eid]
+    return _is_machine_contact_fill(verdict, note)
 
 
 def _live_entry_ids():
@@ -53,17 +71,20 @@ def _progress(db):
     live_ids = live_ids & all_ids if live_ids is not None else all_ids
     reviewed = get_reviewed_set()
     label_reviewed = get_label_reviewed_ids()
+    verdict_notes = latest_verdict_notes()
+    machine_fill = {eid for eid, (v, n) in verdict_notes.items() if _is_machine_contact_fill(v, n)}
     return {
         'live_total': len(live_ids),
-        'boundary_reviewed': len(live_ids & reviewed),
-        'label_reviewed': len(live_ids & label_reviewed),
+        'boundary_reviewed': len(live_ids & reviewed - machine_fill),
+        'label_reviewed': len(live_ids & label_reviewed - machine_fill),
+        'contact_fill_pending': len(live_ids & machine_fill),
     }
 
 
 def main():
     limit = int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_LIMIT
 
-    reviewed = get_reviewed_set()
+    verdict_notes = latest_verdict_notes()
     with open(PRO_DB_PATH) as f:
         db = json.load(f)
 
@@ -71,7 +92,7 @@ def main():
     for entry in db['entries']:
         if len(candidates) >= limit:
             break
-        if entry['id'] in reviewed:
+        if not _still_needs_review(entry['id'], verdict_notes):
             continue
         clip_abs_path = os.path.join(PRO_CLIPS_DIR, entry['clip_path'])
         if not os.path.exists(clip_abs_path):
