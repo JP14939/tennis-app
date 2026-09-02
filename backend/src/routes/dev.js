@@ -67,10 +67,26 @@ const LOG_TIP_REVIEW_TIMEOUT_MS = 15 * 1000; // just appends a line to two JSONL
 
 const LIST_PRO_CLIP_REVIEW_CANDIDATES = path.join(SCRIPTS_DIR, '06_database_build', 'list_pro_clip_review_candidates.py');
 const LOG_PRO_CLIP_REVIEW = path.join(SCRIPTS_DIR, '06_database_build', 'log_pro_clip_review.py');
+const CUT_PRO_CLIP = path.join(SCRIPTS_DIR, '06_database_build', 'cut_pro_clip.py');
+const CORRECT_SHOT_TYPE = path.join(SCRIPTS_DIR, '06_database_build', 'correct_shot_type.py');
+const CORRECT_CONTACT_TIME = path.join(SCRIPTS_DIR, '06_database_build', 'correct_contact_time.py');
+const SPLIT_PRO_CLIP = path.join(SCRIPTS_DIR, '06_database_build', 'split_pro_clip.py');
 // Just reads pro_database.json + the review log, no pose extraction --
 // near-instant, but generous ceiling matches the other list routes' style.
 const PRO_CLIP_REVIEW_CANDIDATES_TIMEOUT_MS = 30 * 1000;
 const LOG_PRO_CLIP_REVIEW_TIMEOUT_MS = 15 * 1000; // just appends a line to one JSONL file
+const CUT_PRO_CLIP_TIMEOUT_MS = 60 * 1000; // re-encodes up to two clip files with ffmpeg
+const CORRECT_SHOT_TYPE_TIMEOUT_MS = 15 * 1000; // just moves file(s) + rewrites pro_database.json
+// Rewrites the scalar AND re-extracts entry['trajectory'] + overlay around the
+// corrected contact frame -- that loads a full job's pose-extraction JSON (tens
+// of MB), same class of work as split_pro_clip.py, so share its budget.
+const CORRECT_CONTACT_TIME_TIMEOUT_MS = 120 * 1000;
+// Loads a full job's pose-extraction JSON (can be tens of MB), runs a local
+// wrist-velocity argmax search, re-extracts a trajectory, and does up to 4
+// ffmpeg re-encodes (main clip x2 halves + cropped x2 halves, vs. cut's 2)
+// -- budget generously beyond CUT_PRO_CLIP_TIMEOUT_MS's 60s ffmpeg-only
+// ceiling to cover the extra pose-loading/extraction work.
+const SPLIT_PRO_CLIP_TIMEOUT_MS = 120 * 1000;
 
 const LIST_BALL_LABEL_CANDIDATES = path.join(SCRIPTS_DIR, '07_ball_racket_tracking', 'list_ball_label_candidates.py');
 const LOG_MANUAL_BALL_LABEL = path.join(SCRIPTS_DIR, '07_ball_racket_tracking', 'log_manual_ball_label.py');
@@ -205,7 +221,11 @@ router.get('/dev/pro-clip-review-candidates', requireAuth, requireAdmin, (req, r
 });
 
 // Logs Jack's manual data-quality verdict on one pro-database clip. Body
-// is {id, verdict, note}, verdict one of 'ok'|'mismatched'|'slow_motion'|'wrong_boundary'.
+// is {id, verdict, note}, verdict one of 'ok'|'mismatched'|'slow_motion'|
+// 'wrong_boundary'|'excluded'|'label_confirmed' (contact time + shot type
+// both checked and correct this pass -- see clip_review_log.py's
+// LABEL_REVIEW_VERDICTS). 'cut'/'shot_type_corrected'/'contact_time_corrected'
+// are logged automatically by their own routes below, not posted here.
 router.post('/dev/pro-clip-review/label', requireAuth, requireAdmin, (req, res) => {
   sendPythonJson(res, [LOG_PRO_CLIP_REVIEW], {
     timeoutMs: LOG_PRO_CLIP_REVIEW_TIMEOUT_MS,
@@ -216,6 +236,78 @@ router.post('/dev/pro-clip-review/label', requireAuth, requireAdmin, (req, res) 
       nonzero_exit: 'Failed to log pro clip review',
       invalid_json: 'Log pro clip review produced invalid output',
       spawn_failed: 'Failed to start pro clip review logging',
+    },
+  });
+});
+
+// Trims a pro-database clip in place (DevProClipReviewScreen.js's "Cut"
+// mode). Body is {id, start_sec, end_sec, name}.
+router.post('/dev/pro-clip-review/cut', requireAuth, requireAdmin, (req, res) => {
+  sendPythonJson(res, [CUT_PRO_CLIP], {
+    timeoutMs: CUT_PRO_CLIP_TIMEOUT_MS,
+    stdinBody: req.body,
+    label: 'cut_pro_clip.py',
+    logTag: 'cut_pro_clip.py failed',
+    messages: {
+      nonzero_exit: 'Failed to cut clip',
+      invalid_json: 'Cut clip produced invalid output',
+      spawn_failed: 'Failed to start clip cutting',
+    },
+  });
+});
+
+// Corrects a mislabeled shot type on a pro-database entry
+// (DevProClipReviewScreen.js's "Wrong shot type?"). Body is
+// {id, new_shot_type, name}, new_shot_type one of 'forehand'|'backhand'|'serve'.
+router.post('/dev/pro-clip-review/correct-shot-type', requireAuth, requireAdmin, (req, res) => {
+  sendPythonJson(res, [CORRECT_SHOT_TYPE], {
+    timeoutMs: CORRECT_SHOT_TYPE_TIMEOUT_MS,
+    stdinBody: req.body,
+    label: 'correct_shot_type.py',
+    logTag: 'correct_shot_type.py failed',
+    messages: {
+      nonzero_exit: 'Failed to correct shot type',
+      invalid_json: 'Correct shot type produced invalid output',
+      spawn_failed: 'Failed to start shot type correction',
+    },
+  });
+});
+
+// Corrects a wrong contact time on a pro-database entry
+// (DevProClipReviewScreen.js's "Fix contact time"). Body is
+// {id, new_contact_time_sec, name}.
+router.post('/dev/pro-clip-review/correct-contact-time', requireAuth, requireAdmin, (req, res) => {
+  sendPythonJson(res, [CORRECT_CONTACT_TIME], {
+    timeoutMs: CORRECT_CONTACT_TIME_TIMEOUT_MS,
+    stdinBody: req.body,
+    label: 'correct_contact_time.py',
+    logTag: 'correct_contact_time.py failed',
+    messages: {
+      nonzero_exit: 'Failed to correct contact time',
+      invalid_json: 'Correct contact time produced invalid output',
+      spawn_failed: 'Failed to start contact time correction',
+    },
+  });
+});
+
+// Splits a pro-database clip that actually contains two swings into two
+// separate database entries (DevProClipReviewScreen.js's "Split into 2
+// shots"). Body is {id, start_sec, split_sec, end_sec, name},
+// start_sec < split_sec < end_sec (clip-relative seconds). The half
+// containing the entry's already-known contact time keeps the original
+// id/trajectory (re-trimmed only); the other half becomes a brand-new
+// entry with its own auto-detected contact frame and trajectory, logged
+// unreviewed so it surfaces in a future review pass.
+router.post('/dev/pro-clip-review/split', requireAuth, requireAdmin, (req, res) => {
+  sendPythonJson(res, [SPLIT_PRO_CLIP], {
+    timeoutMs: SPLIT_PRO_CLIP_TIMEOUT_MS,
+    stdinBody: req.body,
+    label: 'split_pro_clip.py',
+    logTag: 'split_pro_clip.py failed',
+    messages: {
+      nonzero_exit: 'Failed to split clip',
+      invalid_json: 'Split clip produced invalid output',
+      spawn_failed: 'Failed to start clip splitting',
     },
   });
 });

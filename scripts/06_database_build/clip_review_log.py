@@ -25,8 +25,19 @@ LOG_PATH = os.path.join(DATA_DIR, '06_pro_database', 'clip_review_log.jsonl')
 # it means the clip was fixed by trimming rather than flagged for exclusion.
 # 'shot_type_corrected' is likewise logged automatically, by
 # correct_shot_type.py -- the clip was fixed by relabeling/moving it to the
-# right shot type, not excluded.
-VERDICTS = ('ok', 'mismatched', 'slow_motion', 'wrong_boundary', 'excluded', 'cut', 'shot_type_corrected')
+# right shot type, not excluded. 'contact_time_corrected' is the same pattern
+# for correct_contact_time.py. 'label_confirmed' is chosen directly in the
+# review UI when Jack explicitly checked contact time + shot type this pass
+# and found both correct -- distinct from 'ok', which historically only ever
+# meant "boundary/footage looks fine," not "the labels are correct." 'split'
+# is logged automatically by split_pro_clip.py, against the ORIGINAL entry's
+# id only, when a clip turned out to contain two real swings and got divided
+# into two separate database entries instead of one trimmed one -- the new
+# entry gets no verdict of its own, so it surfaces as unreviewed later.
+VERDICTS = (
+    'ok', 'mismatched', 'slow_motion', 'wrong_boundary', 'excluded', 'cut',
+    'shot_type_corrected', 'contact_time_corrected', 'label_confirmed', 'split',
+)
 
 
 def log_verdict(entry_id, verdict, note=None, name=None):
@@ -67,3 +78,36 @@ def get_latest_verdicts():
             r = json.loads(line)
             verdicts[r['entry_id']] = r['verdict']
     return verdicts
+
+
+def original_shot_type_for(entry_id):
+    """If this entry was ever shot-type-corrected, return the shot type it
+    STARTED as (the left side of the earliest 'shot_type_corrected' note,
+    e.g. 'forehand' from 'forehand -> backhand'). Returns None if it was
+    never relabelled. Used by the trajectory rebuild to find the entry's
+    original pose/swings file -- swing_id // 1000 job bucketing is keyed on
+    the ORIGINAL shot type, not the current (relabelled) one."""
+    if not os.path.exists(LOG_PATH):
+        return None
+    with open(LOG_PATH) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            r = json.loads(line)
+            if r['entry_id'] == entry_id and r['verdict'] == 'shot_type_corrected' and r.get('note'):
+                left = r['note'].split('->')[0].strip()
+                if left:
+                    return left
+    return None
+
+
+LABEL_REVIEW_VERDICTS = {'label_confirmed', 'contact_time_corrected', 'shot_type_corrected'}
+
+
+def get_label_reviewed_ids():
+    """Ids whose most recent verdict means contact time + shot type were both
+    actually checked this pass (confirmed correct, or corrected) -- stricter
+    than get_reviewed_set(), which also counts pre-sprint boundary-only
+    verdicts like 'ok'/'mismatched' that never checked label accuracy."""
+    return {eid for eid, v in get_latest_verdicts().items() if v in LABEL_REVIEW_VERDICTS}
