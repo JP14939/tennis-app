@@ -54,7 +54,7 @@ def evaluate_image(path):
                 'message': "Couldn't find the net in your video — try the fence-mount guide for a clearer shot."}
 
     (net_width, net_center_x, net_y, player_x, player_vis, post_height_frac, ankle_y,
-     used_keypoints, height_ratio, stance_width_ratio, shoulder_tilt_deg) = result
+     used_keypoints, height_ratio, stance_width_ratio, shoulder_tilt_deg, _net_roll) = result
 
     apparent_ratio = min(net_width / FULL_NET_FRACTION, 1.0)
     net_angle = math.degrees(math.acos(max(apparent_ratio, 0.001)))

@@ -17,7 +17,17 @@ LANDMARK_NAMES = [
     "right_heel","left_foot_index","right_foot_index"
 ]
 
-def extract_poses(video_path, output_path, sample_every=3):
+def extract_poses(video_path, output_path, sample_every=3, start_frame=0, end_frame=None):
+    """
+    start_frame/end_frame (inclusive-exclusive, in raw video frame indices):
+    restricts extraction to that range instead of the whole file -- for a
+    caller that only needs poses near one known frame (e.g. a swing's
+    contact_frame) in an otherwise huge source video, walking every frame
+    of the full file is enormously wasteful. Defaults preserve the original
+    whole-video behavior for every existing caller. `total_frames`/`fps` in
+    the saved output still reflect the real full video (read from the
+    file's own metadata), only which frames get sampled changes.
+    """
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         # Was sys.exit(1) -- raises SystemExit, which callers' "except
@@ -29,12 +39,19 @@ def extract_poses(video_path, output_path, sample_every=3):
 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS)
+    if end_frame is None:
+        end_frame = total_frames
     print(f"Video: {os.path.basename(video_path)}")
     if fps > 0:
         print(f"Frames: {total_frames}, FPS: {fps:.1f}, Duration: {total_frames/fps:.1f}s")
     else:
         print(f"Frames: {total_frames}, FPS: unknown (reported 0)")
+    if start_frame > 0 or end_frame < total_frames:
+        print(f"Restricting to frames [{start_frame}, {end_frame})")
     print(f"Sampling every {sample_every} frames...")
+
+    if start_frame > 0:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
     base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
     options = vision.PoseLandmarkerOptions(
@@ -44,11 +61,11 @@ def extract_poses(video_path, output_path, sample_every=3):
     )
 
     results = []
-    frame_idx = 0
+    frame_idx = start_frame
     processed = 0
 
     with vision.PoseLandmarker.create_from_options(options) as landmarker:
-        while cap.isOpened():
+        while cap.isOpened() and frame_idx < end_frame:
             ret, frame = cap.read()
             if not ret:
                 break
