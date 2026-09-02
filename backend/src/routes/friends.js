@@ -7,6 +7,7 @@ const {
   MAX_LENGTHS, MAX_SETS_IN_A_MATCH, isSetCount, isIsoDateTime, isOptionalText, isPositiveIntegerId,
 } = require('../domain/invariants');
 const { validate } = require('../validation/validateBody');
+const { safeJsonParse } = require('../utils/safeJsonParse');
 
 const router = express.Router();
 
@@ -307,7 +308,9 @@ router.get('/friends/shared/:analysisId', requireAuth, (req, res) => {
     shot_type: analysis.shot_type,
     similarity: analysis.similarity,
     created_at: analysis.created_at,
-    result: JSON.parse(analysis.result_json),
+    // See history.js's serializeRow -- a corrupted row now comes back as
+    // result: null instead of throwing an unhandled exception.
+    result: safeJsonParse(analysis.result_json, `analysis ${analysis.id}`),
     owner_name: owner?.username ? `@${owner.username}` : owner?.name,
   });
 });

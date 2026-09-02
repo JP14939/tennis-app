@@ -118,3 +118,44 @@ describe('POST /history rejects non-string pro_id/angle_label/tip_text', () => {
     expect(res.status).toBe(201);
   });
 });
+
+// Regression test: result_json is a TEXT column with no application-level
+// guarantee it's always well-formed (a partial write from a prior crash, a
+// manual DB edit) -- serializeRow() used to JSON.parse() it with no
+// try/catch, so a single corrupted row threw and crashed GET /history for
+// every row belonging to that user, not just the bad one, and GET
+// /history/:id 500'd outright for that specific row.
+describe('corrupted result_json does not crash the list or the single-item route', () => {
+  test('GET /history returns result: null for the bad row and real data for the rest', async () => {
+    const { id: userId, token } = makeUser('history8@test.com');
+    const good = await saveShot(token);
+    expect(good.status).toBe(201);
+
+    db.prepare(
+      `INSERT INTO analyses (user_id, shot_type, similarity, result_json) VALUES (?, 'forehand', 50, ?)`
+    ).run(userId, '{not valid json');
+
+    const res = await request(app)
+      .get('/api/history')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(2);
+    const corrupted = res.body.analyses.find((a) => a.id !== good.body.id);
+    expect(corrupted.result).toBeNull();
+    const healthy = res.body.analyses.find((a) => a.id === good.body.id);
+    expect(healthy.result).toBeTruthy();
+  });
+
+  test('GET /history/:id returns result: null for a corrupted row instead of a 500', async () => {
+    const { id: userId, token } = makeUser('history9@test.com');
+    const badId = db.prepare(
+      `INSERT INTO analyses (user_id, shot_type, similarity, result_json) VALUES (?, 'forehand', 50, ?)`
+    ).run(userId, '{not valid json').lastInsertRowid;
+
+    const res = await request(app)
+      .get(`/api/history/${badId}`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.result).toBeNull();
+  });
+});

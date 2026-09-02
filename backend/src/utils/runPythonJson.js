@@ -32,13 +32,28 @@ function runPythonJson(pythonBin, args, { timeoutMs, stdinBody, label = 'python 
     let stdout = '';
     let stderr = '';
     let settled = false;
+    let timedOut = false;
 
-    const timeout = timeoutMs ? setTimeout(() => proc.kill(), timeoutMs) : null;
+    // A plain proc.kill() sends SIGTERM, which a child stuck in a blocking
+    // native call (MediaPipe/OpenCV doing work that doesn't return control
+    // to the Python interpreter to handle the signal) can outlive
+    // indefinitely -- 'close' then never fires, so this promise never
+    // settles: the awaiting Express handler hangs on that request forever
+    // and the orphaned process leaks. Escalate to SIGKILL after a grace
+    // period if the process hasn't actually exited by then.
+    const SIGKILL_GRACE_MS = 5000;
+    let killTimeout = null;
+    const timeout = timeoutMs ? setTimeout(() => {
+      timedOut = true;
+      proc.kill();
+      killTimeout = setTimeout(() => proc.kill('SIGKILL'), SIGKILL_GRACE_MS);
+    }, timeoutMs) : null;
 
     const finish = (fn, value) => {
       if (settled) return;
       settled = true;
       if (timeout) clearTimeout(timeout);
+      if (killTimeout) clearTimeout(killTimeout);
       fn(value);
     };
 
@@ -51,6 +66,10 @@ function runPythonJson(pythonBin, args, { timeoutMs, stdinBody, label = 'python 
     proc.stdin.on('error', () => {});
 
     proc.on('close', (code) => {
+      if (timedOut) {
+        finish(reject, new PythonProcessError(`${label} timed out after ${timeoutMs}ms`, { kind: 'timeout', stdout, stderr, code }));
+        return;
+      }
       if (code !== 0) {
         finish(reject, new PythonProcessError(`${label} exited with code ${code}`, { kind: 'nonzero_exit', stdout, stderr, code }));
         return;

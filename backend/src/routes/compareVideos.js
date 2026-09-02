@@ -85,10 +85,25 @@ router.post('/compare-videos', requireAuth, requirePremium, compareLimiter, uplo
       // and crop each for the sync-compare screen. Cropping failure is
       // non-fatal per video; the screen falls back to the original.
       const jobId = `${Date.now()}_${Math.round(Math.random() * 1e6)}`;
-      const [ref, yours] = await Promise.all([
+      const [refOutcome, yoursOutcome] = await Promise.allSettled([
         persistAndCrop(referenceFile.path, path.join(COMPARISON_CLIPS_DIR, jobId, 'reference')),
         persistAndCrop(yoursFile.path, path.join(COMPARISON_CLIPS_DIR, jobId, 'yours')),
       ]);
+
+      if (refOutcome.status === 'rejected' || yoursOutcome.status === 'rejected') {
+        // One of the two copies can already have landed in
+        // COMPARISON_CLIPS_DIR/<jobId> before the other failed (e.g. disk
+        // full partway through) -- Promise.all used to reject as soon as
+        // either promise rejected, leaving that successfully-copied file
+        // behind with no path back to it (jobId was never logged), a slow
+        // leak on the single-box host. Remove the whole job directory so a
+        // partial failure never leaves an orphan.
+        fs.rmSync(path.join(COMPARISON_CLIPS_DIR, jobId), { recursive: true, force: true });
+        throw (refOutcome.status === 'rejected' ? refOutcome.reason : yoursOutcome.reason);
+      }
+
+      const ref = refOutcome.value;
+      const yours = yoursOutcome.value;
       result.reference_clip_url = toUrl('/comparison-clips', COMPARISON_CLIPS_DIR, ref.originalPath);
       result.reference_clip_cropped_url = toUrl('/comparison-clips', COMPARISON_CLIPS_DIR, ref.croppedPath);
       result.your_clip_url = toUrl('/comparison-clips', COMPARISON_CLIPS_DIR, yours.originalPath);

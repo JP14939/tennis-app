@@ -131,6 +131,13 @@ router.post('/auth/forgot-password', forgotPasswordLimiter, async (req, res) => 
     return res.status(204).end();
   }
 
+  // Invalidate any still-unused reset tokens already issued to this user
+  // (e.g. a prior "forgot password?" request, or a "resend" click) before
+  // issuing a new one -- otherwise every reset link ever emailed stays
+  // usable for its own full TTL, so an intercepted/leaked older link kept
+  // working even after the user believed they'd moved on to a fresh one.
+  db.prepare('UPDATE password_resets SET used_at = datetime(\'now\') WHERE user_id = ? AND used_at IS NULL').run(user.id);
+
   const rawToken = crypto.randomBytes(32).toString('hex');
   const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
   const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS).toISOString();
@@ -210,7 +217,11 @@ router.post('/auth/reset-password', async (req, res) => {
     // password may be compromised) left any already-issued token working
     // for up to 30 more days regardless. See db.js's token_version comment.
     db.prepare('UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?').run(passwordHash, reset.user_id);
-    db.prepare('UPDATE password_resets SET used_at = datetime(\'now\') WHERE id = ?').run(reset.id);
+    // Invalidate every still-unused token for this user, not just the one
+    // that was actually used -- otherwise a second outstanding reset link
+    // (e.g. from an earlier "forgot password?" request) kept working for
+    // its own full TTL even after the password had already been changed.
+    db.prepare('UPDATE password_resets SET used_at = datetime(\'now\') WHERE user_id = ? AND used_at IS NULL').run(reset.user_id);
     return reset.user_id;
   });
 

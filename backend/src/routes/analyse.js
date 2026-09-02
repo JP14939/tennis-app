@@ -177,8 +177,24 @@ router.post('/analyse', requireAuth, analyseLimiter, upload.single('video'), asy
       // right where it's actually used.
       const proClipAbsPath = path.join(PRO_CLIPS_DIR, top.clip_path);
       const proCroppedPath = await croppedProClipPath(proClipAbsPath, top.shot_type || shotType);
-      top.pro_clip_url = toUrl('/pro-clips', PRO_CLIPS_DIR, proClipAbsPath);
-      top.pro_clip_cropped_url = toUrl('/pro-clips-cropped', PRO_CLIPS_CROPPED_DIR, proCroppedPath);
+
+      // Same defensive check as the user clip above -- pro_database.json
+      // entries can outlive the actual clip file on disk (e.g. data/ not
+      // fully copied over during a manual deploy, see HANDOVER.md's
+      // deployment gotcha). Without this, a missing pro clip silently
+      // produced a 200 response whose pro_clip_url 404s client-side.
+      let proClipOk = false;
+      try {
+        proClipOk = fs.statSync(proClipAbsPath).size > 0;
+      } catch { /* file missing */ }
+      if (!proClipOk) {
+        console.error('[analyse] matched pro clip missing or empty:', proClipAbsPath);
+      }
+
+      top.pro_clip_url = proClipOk ? toUrl('/pro-clips', PRO_CLIPS_DIR, proClipAbsPath) : null;
+      top.pro_clip_cropped_url = proClipOk
+        ? toUrl('/pro-clips-cropped', PRO_CLIPS_CROPPED_DIR, proCroppedPath)
+        : null;
     }
 
     res.json(result);
