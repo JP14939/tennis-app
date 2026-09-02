@@ -15,11 +15,44 @@ gets resolved.
 
 ---
 
+## New from the 2026-09-02 evening session (commit + detect_rallies + Phase B.2)
+
+Full detail: `HANDOVER.md` "Session 2026-09-02 (later still)".
+
+1. **Push the 16 local commits.** `master` is 16 commits ahead of `origin`
+   (`a694e37..343f4a1`) — the whole session, committed thematically. The
+   sandbox blocks `git push` to `master`; Jack runs it. Touches `backend/**`
+   and `scripts/**` → will trigger one auto-deploy.
+2. **Copy the rebuilt pro-DB data files to the server** (gitignored, CD never
+   touches `data/`): `data/06_pro_database/pro_database.json`,
+   `overlay_trajectories.json`, and the new `pro_clip_contact_predictions.json`.
+   The DB went 796 → 415 entries this session with audio-anchored contact times.
+   Without the copy the live server keeps the old 796-entry DB.
+3. **~111 flagged pro clips need a quick human contact-mark pass.** The audio
+   detector wasn't confident on them (`pro_clip_contact_predictions.json`,
+   `confident: false`). They keep their placeholder contact time until marked
+   in the Dev tool's "Fix contact time".
+4. **Run `detect_rallies.py` on a real match clip with audio** to confirm the
+   fix: the serve share in `swings_verified` should drop and `rallies_detected`
+   should go above 0 on footage that genuinely has rallies (IMG_5755 was the
+   canonical failing case).
+5. **Review the uncommitted camera-roll work.**
+   `scripts/05_angle_detection/review_camera_roll.py` (new) + a
+   `compare_swing.py` `--camera-roll` / `camera_roll_override` change appeared
+   in the working tree mid-session (a routine or another Claude session), left
+   uncommitted. Coherent follow-up to the committed camera-roll feature —
+   review and commit or discard.
+6. **Dev task, not manual:** `scripts/15_batch_analysis/analyze_rallies_parallel.py`
+   still feeds the verifier the wrist peak — it runs on the audio-less cut
+   clips so it can't use audio; needs its own contact fix (e.g. the visual
+   student model, Phase C.4).
+
 ## New from the 2026-09-02 session (contact detection + shot classifier)
 
 Full technical detail: `HANDOVER.md` "Session 2026-09-02 (later)". Working
 plan: `C:\Users\jackp\.claude\plans\okay-where-do-things-woolly-pond.md`.
-**None of this session's code is committed.**
+~~None of this session's code is committed.~~ **Committed 2026-09-02 evening**
+(see the block above).
 
 1. **Source more footage — this is now the single highest-leverage manual
    task.**
@@ -41,14 +74,11 @@ plan: `C:\Users\jackp\.claude\plans\okay-where-do-things-woolly-pond.md`.
    that couldn't be verified locally (no phone-recorded clip with audio on
    disk).
 
-3. **Decision — run the pro-DB contact-time fill (Phase B.2)?** The review is
-   done, so this is unblocked. It would: run the audio detector over all 359
-   kept clips, auto-fill `clip_contact_time_sec` for the confident majority,
-   flag the rest for a quick human pass, then
-   `rebuild_pro_database_from_verdicts.py` re-anchors every trajectory. Right
-   now `pro_database.json` is still half-hand-corrected (196 real contact
-   times, the rest placeholder). ~1 h of compute + a short human pass. Say the
-   word.
+3. ~~**Decision — run the pro-DB contact-time fill (Phase B.2)?**~~ **DONE
+   2026-09-02 evening.** Audio detector ran over the kept clips, 108 confident
+   fills applied + re-anchored, 111 flagged for a human pass (see the evening
+   block above), DB rebuilt 796 → 415. Validation vs the 196 hand marks:
+   confident picks median 13 ms / 96% within 50 ms.
 
 4. **Decision — the shot classifier.** Retraining is coded and ready but the
    results need Jack's call:

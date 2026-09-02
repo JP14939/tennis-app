@@ -2022,3 +2022,69 @@ Modified (also untracked/uncommitted): `compare_swing.py`,
 `train_contact_frame_model.py`, `contact_frame_training_log.py`,
 `racket_tracker.py`, `14_shot_classifier/{extract_training_features,
 classify_shot,train_shot_classifier_model}.py` + its pytest.
+
+## Session 2026-09-02 (later still) — committed the session, wired contact into detect_rallies, ran Phase B.2
+
+The whole uncommitted surface above is now **committed** (16 local commits on
+`master`, `a694e37..343f4a1`, not yet pushed — pushing is Jack's step). Thematic
+grouping: left-handed support, ball-speed-at-net, audio-onset contact detection,
+`compare_swing` pipeline wire-in, pro clip review tooling, shot classifier
+body-norm, shot-contact verification ML, dev screens, SyncCompare fixes, misc
+pipeline, email stopgap, gitignore hygiene, docs. `backend/data/` + `scripts/data/`
++ `scripts/_baseline4_out.json` added to gitignore (user data / stray dumps).
+Full suites green after: **519 backend jest, 170 `pytest`**. One stale test fixed
+(`test_train_contact_frame_model_pytest.py` still referenced the removed
+`pro_clip_review` source one-hot) and `train_contact_frame_model.main()` made
+`argv`-testable.
+
+### detect_rallies contact wire-in (`90d4e62`)
+
+`detect_rallies.py` fed the Claude shot verifier the swing-detector wrist peak
+(~13f into the follow-through) — a groundstroke frame that late reads as a serve,
+which is most of the "everything is a serve" mis-classification behind
+`rallies_detected: 0`. New `refine_contact_times(video_path, swings, fps)`: the
+match video has audio, so per swing it runs `audio_contact.detect_contact()`
+(±0.5 s of the wrist peak) and, when confident, sets `sw['contact_time_sec']` /
+`sw['contact_frame']`. `get_verified_shot_type`, the classifier-logging call, and
+`apply_serve_gate`'s point boundaries now use that time; `get_verified_shot_contact`
+samples its Claude window around `sw['contact_frame']` when present
+(`verify_shot_contact_verified.py`). Falls back to the wrist peak on no audio / no
+model / not confident / any error. New `test_detect_rallies_contact_pytest.py`.
+**`scripts/15_batch_analysis/analyze_rallies_parallel.py` still needs the same fix**
+— it runs on the audio-less cut clips, so it can't use audio and keeps
+`contact_rel_sec = peak_time - start_sec` (the wrist peak). Tracked in TODO_MANUAL.
+
+### Phase B.2 — pro DB audio contact fill + rebuild (`343f4a1`, applied this session)
+
+- **`predict_pro_clip_contact_from_audio.py`** (new) runs the audio onset fusion
+  model over the source-compilation audio for every kept, non-hand-marked entry.
+  `--validate` mode measured it against the 196 hand marks: **confident picks
+  (56% of clips) land median 13 ms / 96% within 50 ms of the human mark.**
+  Output: `data/06_pro_database/pro_clip_contact_predictions.json` (219 picks,
+  108 confident, 111 flagged for a human contact-mark pass).
+- **`rebuild_pro_database_from_verdicts.py --contact-predictions`** applies the
+  confident ones: sets `clip_contact_time_sec`, re-anchors trajectory + overlay
+  via `reextract_for_entry`, logs a `contact_time_corrected` verdict (idempotent
+  re-runs). A real hand mark always wins.
+- **`enrich_view_direction.py`** — fixed clip-path resolution (entries store a
+  path relative to `PRO_CLIPS_DIR`; it was `os.path.exists()`-ing the bare
+  relative path and marking everything `unknown`). Re-adds the front/back tag a
+  past rebuild dropped, which `compare_swing.py` needs to bucket the front-view
+  `swing_id ~2015` clips.
+- **Applied run (data/ is gitignored — Jack hand-copies to the server):**
+  `pro_database.json` **796 → 415 entries** (forehand 234 / backhand 154 /
+  serve 27), 108 audio contact fills, 111 flagged, **all 415 tagged with
+  `view_direction`** (37 front / 319 back / 59 unknown). Timestamped backups
+  written (`pro_database_backup_pre_verdict_rebuild_20260902_215727.json`).
+  `npm run verify:db` green; a real `compare_swing` smoke run resolves a match
+  with a real `pro_contact_time_sec` (1.215 s, not the old 1.001 placeholder).
+- The 415 (vs. STATUS's ~359 "kept") includes ~56 never-reviewed entries the
+  rebuild keeps by design (only `DROP_VERDICTS` are dropped).
+
+### Not mine — appeared mid-session, left uncommitted
+
+`scripts/05_angle_detection/review_camera_roll.py` (new) and a `compare_swing.py`
+change adding a `camera_roll_override` / `--camera-roll` param showed up in the
+working tree during this session without my action (a routine or another
+session). Coherent follow-up to the camera-roll feature, **left uncommitted** for
+Jack to review.

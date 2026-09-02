@@ -6,7 +6,7 @@ where things stand in under 2 minutes. For the full detailed history, see
 `HANDOVER.md` (dated build log) and `TODO_MANUAL.md` (full backlog, also
 chronological) — this file is a filter on top of those, not a replacement.
 
-**Last updated:** 2026-09-02
+**Last updated:** 2026-09-02 (evening — session committed, detect_rallies + Phase B.2 done)
 
 ---
 
@@ -23,26 +23,28 @@ the live product yet.
 
 Curated, not exhaustive — the full backlog lives in `TODO_MANUAL.md`.
 
-1. **Contact-frame detection was rebuilt this session (2026-09-02) —
-   9 frames → <1 frame.** The old pose/ball pipeline was ~9f off (25% within
-   ±3f); a new **audio-onset classifier** (the ball-strike "pock") picks
-   contact at **median 0.75f / 89% within ±3f**
-   (`data/07_ball_racket_tracking/onset_classifier.pkl`). It's **wired into the
-   live `compare_swing.py` auto-detect path** (used only when the user didn't
-   mark a contact frame, confident-picks-only, fully guarded). **Nothing
-   committed yet.** Still open: verify on a real phone upload; run the pro-DB
-   contact-time fill (Phase B.2 — unblocked now the review is done); the
-   audio-teacher → visual-only student for audioless uploads (Phase C, ~half
-   done). Full detail: `HANDOVER.md` "Session 2026-09-02 (later)".
-2. **The `detect_rallies.py` serve-gate bug — still open, and there's a new
-   theory.** `apply_serve_gate()` treats >6s since the last *detected* swing as
-   a point boundary, but the swing detector misses most rally shots
-   (`rallies_detected: 0` on IMG_5755 despite real rallies). **New this
-   session:** the "everything is a serve" mis-classification feeding it is
-   probably a *contact-frame* problem — `detect_rallies` sends the Claude shot
-   verifier a frame ~13f off (the swing-detector wrist-peak), and a
-   groundstroke mid-swing looks like a serve. Wire the new accurate contact
-   detection into `detect_rallies` before touching `apply_serve_gate()`.
+1. **Contact-frame detection rebuilt (2026-09-02) — 9 frames → <1 frame — now
+   committed and applied.** A new **audio-onset classifier** (the ball-strike
+   "pock", `data/07_ball_racket_tracking/onset_classifier.pkl`) picks contact at
+   **median 0.75f / 89% within ±3f** vs. the old pose pipeline's ~9f/25%. Wired
+   into the live `compare_swing.py` auto-detect path (no manual mark,
+   confident-only, guarded). **All session work is now committed** (16 local
+   commits, not yet pushed — Jack's step). **Phase B.2 done:** the pro DB's
+   placeholder contact times were audio-filled and the DB rebuilt
+   (796 → 415 entries, 108 audio fills, 111 flagged for a human pass, all 415
+   re-tagged with `view_direction`). Still open: verify the live path on a real
+   phone upload; the audio-teacher → visual-only student for audioless uploads
+   (Phase C, ~half done). Detail: `HANDOVER.md` "Session 2026-09-02 (later still)".
+2. **`detect_rallies.py`: accurate contact frame now wired in (2026-09-02).**
+   The verifier was fed the swing-detector wrist-peak (~13f late), which made
+   groundstrokes read as serves — most of the "everything is a serve" problem
+   behind `rallies_detected: 0`. `refine_contact_times()` now uses the audio
+   onset detector (the match video has audio) as the contact frame for shot
+   verification and serve-gate boundaries, guarded/fallback to the wrist peak.
+   **Still to do:** run it on a real match clip to confirm the serve share drops
+   and rallies appear; `apply_serve_gate()`'s detection-gap-vs-point-boundary
+   conflation is a separate open bug; `analyze_rallies_parallel.py` needs the
+   same fix (it runs on audio-less clips).
 3. **Shot-type classifier retrain — investigated 2026-09-02, not shipped.**
    Body-normalised the pose features (framing-invariant now;
    `FEATURE_VERSION` guarded). Jack's ~400 Pro Clip Review shot labels (151
@@ -51,12 +53,15 @@ Curated, not exhaustive — the full backlog lives in `TODO_MANUAL.md`.
    model for the rally-detection pipeline. **Real bottleneck: only 10 amateur
    backhand training examples** — needs more phone-style backhand footage.
    No model retrained/saved. Decisions in `TODO_MANUAL.md` 2026-09-02 item 4.
-4. **Pro Clip Review (Sprint 0) is DONE.** Jack finished the quality-only pass
-   over the whole live pool — **359 clips kept** (forehand 215, backhand 123,
-   serve 21), 199 excluded, 36 shot-type relabels. Serve is thin (77%
-   excluded). The full-pool rebuild (`rebuild_pro_database_from_verdicts.py`)
-   has **not been run** — `pro_database.json` is still half-corrected. Jack
-   will source more footage to grow the DB.
+4. **Pro Clip Review (Sprint 0) DONE and the DB rebuilt (2026-09-02).**
+   `rebuild_pro_database_from_verdicts.py --contact-predictions` ran:
+   `pro_database.json` **796 → 415 entries** (forehand 234, backhand 154,
+   serve 27), excluded entries dropped, contact times audio-filled where
+   confident + re-anchored, `view_direction` re-added. **The rebuilt
+   `pro_database.json` / `overlay_trajectories.json` are gitignored — Jack must
+   copy them (+ the new `pro_clip_contact_predictions.json`) to the server.**
+   Serve is thin (27). ~111 kept entries are flagged for a quick human
+   contact-mark pass in the Dev tool. Jack will source more footage to grow it.
 5. **Off-box database backups are set up but the end-to-end check is still
    open.** B2 bucket `rallymax-db-backups`, `rclone` remote `b2remote` on
    the VPS (auth verified live), cron in `root`'s crontab (3am daily). Open
@@ -87,8 +92,8 @@ Curated, not exhaustive — the full backlog lives in `TODO_MANUAL.md`.
 ## What's live
 
 - Core analysis loop: MediaPipe pose extraction + DTW vs. the pro clip database
-  (631 built; ~359 will survive the Sprint-0 review once rebuilt),
-  camera-angle inference, 216-tip coaching database
+  (rebuilt 2026-09-02 to **415 reviewed entries** with audio-anchored contact
+  times + view-direction tags), camera-angle inference, 216-tip coaching database
 - **Audio-onset contact detection** wired into `compare_swing.py`'s auto-detect
   path (2026-09-02, uncommitted) — when the user doesn't mark a contact frame
   and the upload has audio, the ball-strike sound pins contact to <1 frame
