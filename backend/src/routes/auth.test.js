@@ -200,3 +200,44 @@ describe('token_version revocation', () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe('DELETE /auth/me', () => {
+  // Regression test for a logic-review fix: drill_practice_attempts.analysis_id
+  // references analyses(id). db.js never enables PRAGMA foreign_keys, so with
+  // enforcement OFF the old (analyses-first) order silently left the
+  // drill_practice_attempts rows to be cleared by their own user_id delete
+  // rather than throwing -- but child-before-parent is still the correct
+  // order and becomes load-bearing the moment FK enforcement is turned on,
+  // so the transaction now deletes drill_practice_attempts before analyses.
+  test('deletes an account that has a drill practice attempt linked to its own analysis', async () => {
+    const email = 'deleteme-drills@test.com';
+    const password = 'password123';
+    const passwordHash = await bcrypt.hash(password, 10);
+    const userId = db.prepare('INSERT INTO users (email, password_hash, name, username, notifications_enabled) VALUES (?, ?, ?, ?, ?)')
+      .run(email, passwordHash, 'Delete Me', `user_${Date.now()}_${Math.floor(Math.random() * 1e6)}`, 1)
+      .lastInsertRowid;
+    const token = jwt.sign({ id: userId }, process.env.JWT_SECRET);
+
+    const analysisId = db.prepare(
+      "INSERT INTO analyses (user_id, shot_type, similarity, result_json) VALUES (?, 'forehand', 80, '{}')"
+    ).run(userId).lastInsertRowid;
+    const drillItemId = db.prepare(
+      "INSERT INTO drill_items (kind, shot_type, title, explanation) VALUES ('drill', 'forehand', 'T', 'E')"
+    ).run().lastInsertRowid;
+    const stepId = db.prepare(
+      'INSERT INTO drill_routine_steps (drill_item_id, step_order, label) VALUES (?, 0, ?)'
+    ).run(drillItemId, 'Step').lastInsertRowid;
+    db.prepare(
+      'INSERT INTO drill_practice_attempts (user_id, step_id, analysis_id) VALUES (?, ?, ?)'
+    ).run(userId, stepId, analysisId);
+
+    const res = await request(app)
+      .delete('/api/auth/me')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ password });
+
+    expect(res.status).toBe(204);
+    expect(db.prepare('SELECT * FROM analyses WHERE user_id = ?').get(userId)).toBeUndefined();
+    expect(db.prepare('SELECT * FROM drill_practice_attempts WHERE user_id = ?').get(userId)).toBeUndefined();
+  });
+});
