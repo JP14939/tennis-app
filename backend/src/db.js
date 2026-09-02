@@ -454,6 +454,23 @@ if (!hasUsernameCol) {
 }
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)');
 
+// token_version: bumped whenever a user's password changes (self-service
+// PATCH /auth/password, or a successful /auth/reset-password) or their
+// account is deleted (auth.js anonymizes the row rather than removing it,
+// so a stolen pre-deletion token would otherwise keep working). requireAuth
+// and optionalAuth embed the value active at signing time in each JWT (see
+// issueToken() in routes/auth.js) and compare it against this column on
+// every request -- unlike tier, which was already re-read from the DB per
+// request for exactly this staleness reason (see utils/tier.js's comment),
+// this JWT claim had no equivalent freshness check at all: a 30-day token
+// kept working through a password change or account deletion with no way
+// to revoke it short of rotating JWT_SECRET for every user at once.
+const hasTokenVersionCol = db.prepare("PRAGMA table_info(users)").all()
+  .some((c) => c.name === 'token_version');
+if (!hasTokenVersionCol) {
+  db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0');
+}
+
 // verified: OSM-seeded courts are trusted immediately (default 1); a
 // user-dropped pin starts at 0 and only flips to 1 once routes/courts.js
 // sees enough independent court_confirmations rows for it.

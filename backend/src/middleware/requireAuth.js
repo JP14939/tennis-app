@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const db = require('../db');
 
 function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
@@ -16,7 +17,24 @@ function requireAuth(req, res, next) {
     // rather than succeeding), but pinning is free, standard JWT hardening
     // (OWASP JWT cheat sheet) and removes the algorithm-confusion class of
     // bug entirely rather than relying on the library's current defaults.
-    req.user = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+
+    // A valid signature alone doesn't mean this token is still supposed to
+    // work -- tokens live up to 30 days (routes/auth.js's TOKEN_TTL), and
+    // until this check existed there was no way to revoke one short of
+    // rotating JWT_SECRET for every user at once. Compare against the
+    // version active at signing time (see db.js's token_version comment):
+    // a password change or account deletion bumps the DB column, which
+    // immediately invalidates every token minted before that point.
+    // `?? 0` on both sides so a token signed before this column existed
+    // (no `tv` claim) still matches a freshly-migrated row (default 0)
+    // instead of every existing session being logged out on deploy.
+    const row = db.prepare('SELECT token_version FROM users WHERE id = ?').get(decoded.id);
+    if (!row || (decoded.tv ?? 0) !== (row.token_version ?? 0)) {
+      return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+
+    req.user = decoded;
     next();
   } catch (err) {
     return res.status(401).json({ error: 'Invalid or expired token' });
