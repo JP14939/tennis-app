@@ -28,7 +28,11 @@ KEY_LANDMARKS = [
     'left_hip',      'right_hip',
 ]
 
-PHASE_TARGET_T = {'backswing': -0.5, 'contact': 0.0, 'followthrough': 1.0}
+# Reuse tip_selector's copy rather than redeclaring it -- the two used to be
+# independent identical dicts with nothing but a comment tying them together,
+# so a future edit to one could silently desync the tip picked here from the
+# tip picked by tip_selector.score_issues() for the same phase.
+PHASE_TARGET_T = tip_selector.PHASE_TARGET_T
 PHASE_OUTPUT_KEY = {'backswing': 'backswing', 'contact': 'contact', 'followthrough': 'follow_through'}
 PHASE_WINDOW = 0.15
 # Same exp-decay shape as compare_swing.similarity_score, but that scale=0.4
