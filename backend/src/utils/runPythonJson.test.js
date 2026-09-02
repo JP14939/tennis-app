@@ -23,12 +23,18 @@ describe('runPythonJson', () => {
 
   test('escalates to SIGKILL and settles when the child ignores SIGTERM', async () => {
     const start = Date.now();
+    // A Node child (not `bash -c sleep`) so no orphaned grandchild process
+    // keeps a stdio pipe open after the parent is killed -- on Windows,
+    // killing bash leaves its `sleep` running and 'close' never fires.
+    // This child installs a no-op SIGTERM handler and stays alive on a
+    // long timer, so on a real POSIX box the plain proc.kill() (SIGTERM)
+    // is genuinely ignored and only the SIGKILL escalation ends it.
     await expect(
-      runPythonJson('bash', ['-c', 'trap "" TERM; sleep 30'], { timeoutMs: 200, label: 'stubborn process' })
+      runPythonJson(process.execPath, ['-e', "process.on('SIGTERM',()=>{}); setTimeout(()=>{}, 30000);"], { timeoutMs: 200, label: 'stubborn process' })
     ).rejects.toMatchObject({ kind: 'timeout' });
     // Should settle at roughly timeoutMs (200ms) plus the SIGKILL grace
     // period (5s, hardcoded in runPythonJson.js) -- not hang indefinitely,
-    // and nowhere near the child's full 30s sleep.
+    // and nowhere near the child's full 30s timer.
     expect(Date.now() - start).toBeLessThan(8000);
-  }, 10000);
+  }, 12000);
 });
