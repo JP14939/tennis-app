@@ -34,14 +34,24 @@ async function sendEmail({ to, subject, html }) {
   }
 }
 
+// Stopgap until a real domain is verified in Resend (see STATUS.md /
+// TODO_MANUAL.md): the shared sandbox sender can only deliver to the
+// account owner's own verified address, so a reset link sent straight to
+// toEmail would silently fail to arrive for anyone but Jack. Redirect the
+// actual send to Jack's inbox instead, with the real requester's address in
+// the subject/body so he can forward the link by hand -- the caller (the
+// /auth/forgot-password route) still responds 204 either way, so the
+// requesting user never sees anything different. Remove this redirect once
+// a verified sending domain makes direct delivery to toEmail work.
+const PASSWORD_RESET_REDIRECT_EMAIL = 'jack.p14370@gmail.com';
+
 function sendPasswordResetEmail(toEmail, resetUrl) {
   return sendEmail({
-    to: toEmail,
-    subject: 'Reset your RallyMax password',
+    to: PASSWORD_RESET_REDIRECT_EMAIL,
+    subject: `[RallyMax password reset] for ${toEmail}`,
     html: `
-      <p>We got a request to reset your RallyMax password.</p>
-      <p><a href="${resetUrl}">Click here to set a new password</a> (link expires in 1 hour).</p>
-      <p>If you didn't request this, you can safely ignore this email.</p>
+      <p>Password reset requested for <strong>${toEmail}</strong> (redirected here -- no verified sending domain yet).</p>
+      <p><a href="${resetUrl}">Reset link</a> (expires in 1 hour). Forward it to them if needed.</p>
     `,
   });
 }
