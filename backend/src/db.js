@@ -471,6 +471,16 @@ if (!hasTokenVersionCol) {
   db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0');
 }
 
+// handed: the player's dominant hand ('right' | 'left'), set once in
+// Settings. Read server-side in /api/analyse to decide whether to mirror the
+// uploaded swing before comparing it against the (all right-handed) pro
+// database -- see scripts/08_comparison_engine/compare_swing.py.
+const hasHandedCol = db.prepare("PRAGMA table_info(users)").all()
+  .some((c) => c.name === 'handed');
+if (!hasHandedCol) {
+  db.exec("ALTER TABLE users ADD COLUMN handed TEXT NOT NULL DEFAULT 'right'");
+}
+
 // verified: OSM-seeded courts are trusted immediately (default 1); a
 // user-dropped pin starts at 0 and only flips to 1 once routes/courts.js
 // sees enough independent court_confirmations rows for it.

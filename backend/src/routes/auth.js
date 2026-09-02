@@ -49,6 +49,7 @@ function publicUser(user) {
     username: user.username,
     tier: user.tier,
     notifications_enabled: !!user.notifications_enabled,
+    handed: user.handed || 'right',
   };
 }
 
@@ -242,7 +243,7 @@ router.get('/auth/me', requireAuth, (req, res) => {
 });
 
 router.patch('/auth/me', requireAuth, (req, res) => {
-  const { name, notifications_enabled, username } = req.body || {};
+  const { name, notifications_enabled, username, handed } = req.body || {};
 
   if (name !== undefined && typeof name !== 'string') {
     return res.status(400).json({ error: 'Name must be a string' });
@@ -252,6 +253,9 @@ router.patch('/auth/me', requireAuth, (req, res) => {
   }
   if (username !== undefined && typeof username !== 'string') {
     return res.status(400).json({ error: 'Username must be a string' });
+  }
+  if (handed !== undefined && handed !== 'left' && handed !== 'right') {
+    return res.status(400).json({ error: "handed must be 'left' or 'right'" });
   }
 
   let normalisedUsername;
@@ -281,12 +285,14 @@ router.patch('/auth/me', requireAuth, (req, res) => {
       UPDATE users
       SET name = COALESCE(?, name),
           notifications_enabled = COALESCE(?, notifications_enabled),
-          username = COALESCE(?, username)
+          username = COALESCE(?, username),
+          handed = COALESCE(?, handed)
       WHERE id = ?
     `).run(
       name !== undefined ? name.trim() : null,
       notifications_enabled !== undefined ? (notifications_enabled ? 1 : 0) : null,
       normalisedUsername !== undefined ? normalisedUsername : null,
+      handed !== undefined ? handed : null,
       user.id
     );
   } catch (err) {

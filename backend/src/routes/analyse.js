@@ -124,12 +124,20 @@ router.post('/analyse', requireAuth, analyseLimiter, upload.single('video'), asy
     usageRowId = reserved;
   }
 
+  // Left-handed players' swings are the mirror image of the (all right-handed)
+  // pro database -- compare_swing.py flips the uploaded trajectory before the
+  // DTW match when told to. Read server-side rather than trusting the client.
+  const handed = db.prepare('SELECT handed FROM users WHERE id = ?').get(req.user.id)?.handed;
+
   const args = [MATCHER, req.file.path, shotType, '--top', '3'];
   if (parsedContactTime !== undefined) {
     args.push('--contact-time', String(parsedContactTime));
   }
   if (viewDirectionHint === 'front' || viewDirectionHint === 'back') {
     args.push('--view-direction-hint', viewDirectionHint);
+  }
+  if (handed === 'left') {
+    args.push('--handedness', 'left');
   }
 
   let result;

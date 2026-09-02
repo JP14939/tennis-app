@@ -141,6 +141,39 @@ describe('PATCH /auth/me partial updates', () => {
     expect(after.name).toBe(before.name);
     expect(after.username).toBe(before.username);
   });
+
+  test('new users default to right-handed', async () => {
+    const { id } = makeUser('handdefault@test.com');
+    const row = db.prepare('SELECT handed FROM users WHERE id = ?').get(id);
+    expect(row.handed).toBe('right');
+  });
+
+  test('updating only handed leaves name/username/notifications untouched', async () => {
+    const { id, token } = makeUser('patchhand@test.com');
+    const before = db.prepare('SELECT name, username, notifications_enabled FROM users WHERE id = ?').get(id);
+
+    const res = await request(app)
+      .patch('/api/auth/me')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ handed: 'left' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.user.handed).toBe('left');
+
+    const after = db.prepare('SELECT name, username, notifications_enabled FROM users WHERE id = ?').get(id);
+    expect(after.name).toBe(before.name);
+    expect(after.username).toBe(before.username);
+    expect(after.notifications_enabled).toBe(before.notifications_enabled);
+  });
+
+  test('rejects an invalid handed value with 400', async () => {
+    const { token } = makeUser('badhand@test.com');
+    const res = await request(app)
+      .patch('/api/auth/me')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ handed: 'sideways' });
+    expect(res.status).toBe(400);
+  });
 });
 
 // Regression tests for the token_version fix: a JWT issued before a
