@@ -37,7 +37,16 @@ def main():
         result = detect_rallies(args.video, args.output_dir)
         print(json.dumps(result))
     except Exception as e:
-        print(json.dumps({'error': str(e)}))
+        # Same reasoning as pro_matcher.py's except block: some underlying
+        # failures echo this process's own argv (the server-side upload path
+        # or the runtime output directory) straight into the message, which
+        # then flows unmodified into highlight_jobs.error and back to the
+        # authenticated job owner via GET /api/highlights/jobs. Redact both
+        # known argv paths to their basenames before the message leaves this
+        # process.
+        message = str(e).replace(args.video, os.path.basename(args.video))
+        message = message.replace(args.output_dir, os.path.basename(args.output_dir))
+        print(json.dumps({'error': message}))
         sys.exit(1)
 
 

@@ -41,7 +41,15 @@ def main():
                                  contact_a=args.contact_a, contact_b=args.contact_b)
         print(json.dumps(result))
     except Exception as e:
-        print(json.dumps({'error': str(e)}))
+        # Same reasoning as pro_matcher.py's except block: some underlying
+        # failures echo this process's own argv (the full server-side upload
+        # path for either video) straight into the message, which then flows
+        # unmodified back to the authenticated caller of POST
+        # /api/compare-videos. Redact both known argv paths to their
+        # basenames before the message leaves this process.
+        message = str(e).replace(args.reference_video, os.path.basename(args.reference_video))
+        message = message.replace(args.your_video, os.path.basename(args.your_video))
+        print(json.dumps({'error': message}))
         sys.exit(1)
 
 

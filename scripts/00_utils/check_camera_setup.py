@@ -95,5 +95,12 @@ if __name__ == '__main__':
     try:
         print(json.dumps(check_camera_setup(video_path)))
     except Exception as e:
-        print(json.dumps({'ok': False, 'angle': None, 'confidence': 0.0, 'height_ratio': None, 'elevation_status': 'unknown', 'framing_status': 'unknown', 'message': str(e)}))
+        # Some underlying failures (e.g. "Cannot open video: <path>") echo
+        # this process's own argv -- the full server-side upload path --
+        # straight into the exception message, which then flows unmodified
+        # through routes/calibration.js's nonzero_exit branch back to any
+        # authenticated caller of POST /api/check-setup. Redact the known
+        # argv path down to its basename before it leaves this process.
+        message = str(e).replace(video_path, os.path.basename(video_path))
+        print(json.dumps({'ok': False, 'angle': None, 'confidence': 0.0, 'height_ratio': None, 'elevation_status': 'unknown', 'framing_status': 'unknown', 'message': message}))
         sys.exit(1)
