@@ -8,6 +8,8 @@ RallyMax: an AI-powered tennis swing analysis app (Expo — iOS/Android/web). Co
 
 **Before doing anything else, read `HANDOVER.md`** (the "Quick status" line near the top and "⚠️ Read This First") and `TODO_MANUAL.md` (things only a human can do — struck-through items are resolved). Both are actively maintained, append-only project logs with the real current state, known gaps, and in-flight work. This file documents structure and commands; it does not duplicate that narrative and will not be kept in sync with it session-to-session.
 
+**If you're a human catching up, not a Claude session picking up work:** read `STATUS.md` instead first. It's a short, hand-curated, actively-overwritten snapshot (not a log) — the other two docs above are comprehensive but long (1000+ lines each of chronological history), and `STATUS.md` exists specifically to answer "where do things stand?" in under 2 minutes.
+
 ## Commands
 
 ### Backend (`backend/`)
@@ -31,7 +33,7 @@ npm run web         # expo start --web
 npm run android
 npm run ios
 ```
-**`frontend/AGENTS.md` is a standing instruction, not optional context: Expo has changed significantly — read the versioned docs at https://docs.expo.dev/versions/v54.0.0/ before writing any frontend code.** `frontend/CLAUDE.md` just points here (`@AGENTS.md`).
+**`frontend/AGENTS.md` is a standing instruction, not optional context: Expo has changed significantly — read the versioned docs at https://docs.expo.dev/versions/v54.0.0/ before writing any frontend code.** `frontend/CLAUDE.md` just points here (`@AGENTS.md`). One specific trap it flags: `expo-av` is deprecated on SDK 54 (removed in 55) but is still used deliberately (`components/PlatformVideo.native.js`, `utils/sounds.js`) — don't "helpfully" migrate it to `expo-video`/`expo-audio`; that's a deferred item tracked in `TODO_MANUAL.md` for the SDK 55 upgrade.
 
 ### Python ML pipeline (`scripts/`)
 ```powershell
@@ -68,6 +70,6 @@ The backend **never runs ML code in-process** — it always shells out to a Pyth
 
 SQLite via `better-sqlite3`, at `backend/data/app.db` — **not** the Postgres implied by `DATABASE_URL` in `backend/.env`. Postgres was never installed; SQLite was chosen for zero-install dev velocity, with Postgres as the intended eventual production target. `pg`, `redis`, and `bull` are installed backend dependencies but unused (`require()`'d nowhere) — leftovers from initial scaffolding.
 
-## Deployment gotcha
+## Deployment
 
-The hosted backend does **not** auto-deploy. A `git push` does not reach it. Going live requires SSH'ing into the server, `git pull`, then `docker compose up --build app` — and if `data/` gained new files, those need a manual copy over too (see `DEPLOY.md` and `HANDOVER.md` item #41 for the full mechanics and past gotchas encountered doing this).
+Since 2026-08-25 the hosted backend **does** auto-deploy: a `git push` to `master` that touches `backend/**`, `scripts/**`, `Dockerfile`, `docker-compose.yml`, or `Caddyfile` triggers `.github/workflows/deploy.yml`, which SSHes in, runs `git pull && docker compose up --build -d app`, and polls `/health`. Doc-only commits don't trigger it; it can also be run manually from the Actions tab. What's still manual: transferring new files under `data/` to the server (gitignored, never touched by CD) and editing `backend/.env` on the server directly. See `DEPLOY.md`'s "Continuous deployment" section for the full mechanics.

@@ -6,7 +6,7 @@ where things stand in under 2 minutes. For the full detailed history, see
 `HANDOVER.md` (dated build log) and `TODO_MANUAL.md` (full backlog, also
 chronological) — this file is a filter on top of those, not a replacement.
 
-**Last updated:** 2026-09-01
+**Last updated:** 2026-09-02
 
 ---
 
@@ -23,38 +23,53 @@ the live product yet.
 
 Curated, not exhaustive — the full backlog lives in `TODO_MANUAL.md`.
 
-1. **The `detect_rallies.py` serve-gate bug — needs Jack's call.**
-   `scripts/11_highlight_clipping/detect_rallies.py`'s `apply_serve_gate()`
-   treats >6s since the last *detected* swing as a point boundary, but the
-   swing detector misses most real rally shots, so **100% of confirmed real
-   forehands (12/12) in IMG_5755 were discarded** — the actual reason
-   `rallies_detected: 0` despite real rallies. Blocks the rally-grouping /
-   highlight-clip feature and skews the shot-classifier training data
-   serve-heavy. Found 2026-08-26, not started — decide how to fix (decouple
-   the point-boundary gap from detection reliability). See `TODO_MANUAL.md`
-   2026-08-26 item 5.
-2. **Shot-type classifier retrain is pending.** The log-derived feature
-   extraction bug was found and fixed 2026-08-26 (now 102 real training
-   rows, was 5 wrongly); `train_shot_classifier_model.py` has **not yet been
-   re-run** on the corrected dataset. See `TODO_MANUAL.md` 2026-08-26 item 4.
-3. **Off-box database backups are set up but the end-to-end check is still
+1. **Contact-frame detection was rebuilt this session (2026-09-02) —
+   9 frames → <1 frame.** The old pose/ball pipeline was ~9f off (25% within
+   ±3f); a new **audio-onset classifier** (the ball-strike "pock") picks
+   contact at **median 0.75f / 89% within ±3f**
+   (`data/07_ball_racket_tracking/onset_classifier.pkl`). It's **wired into the
+   live `compare_swing.py` auto-detect path** (used only when the user didn't
+   mark a contact frame, confident-picks-only, fully guarded). **Nothing
+   committed yet.** Still open: verify on a real phone upload; run the pro-DB
+   contact-time fill (Phase B.2 — unblocked now the review is done); the
+   audio-teacher → visual-only student for audioless uploads (Phase C, ~half
+   done). Full detail: `HANDOVER.md` "Session 2026-09-02 (later)".
+2. **The `detect_rallies.py` serve-gate bug — still open, and there's a new
+   theory.** `apply_serve_gate()` treats >6s since the last *detected* swing as
+   a point boundary, but the swing detector misses most rally shots
+   (`rallies_detected: 0` on IMG_5755 despite real rallies). **New this
+   session:** the "everything is a serve" mis-classification feeding it is
+   probably a *contact-frame* problem — `detect_rallies` sends the Claude shot
+   verifier a frame ~13f off (the swing-detector wrist-peak), and a
+   groundstroke mid-swing looks like a serve. Wire the new accurate contact
+   detection into `detect_rallies` before touching `apply_serve_gate()`.
+3. **Shot-type classifier retrain — investigated 2026-09-02, not shipped.**
+   Body-normalised the pose features (framing-invariant now;
+   `FEATURE_VERSION` guarded). Jack's ~400 Pro Clip Review shot labels (151
+   backhand) **still don't help the live/amateur model** — negative transfer
+   from broadcast footage, confirmed again. They *do* make a good separate
+   model for the rally-detection pipeline. **Real bottleneck: only 10 amateur
+   backhand training examples** — needs more phone-style backhand footage.
+   No model retrained/saved. Decisions in `TODO_MANUAL.md` 2026-09-02 item 4.
+4. **Pro Clip Review (Sprint 0) is DONE.** Jack finished the quality-only pass
+   over the whole live pool — **359 clips kept** (forehand 215, backhand 123,
+   serve 21), 199 excluded, 36 shot-type relabels. Serve is thin (77%
+   excluded). The full-pool rebuild (`rebuild_pro_database_from_verdicts.py`)
+   has **not been run** — `pro_database.json` is still half-corrected. Jack
+   will source more footage to grow the DB.
+5. **Off-box database backups are set up but the end-to-end check is still
    open.** B2 bucket `rallymax-db-backups`, `rclone` remote `b2remote` on
    the VPS (auth verified live), cron in `root`'s crontab (3am daily). Open
    since 2026-08-25: just needs someone to eyeball the bucket once for a
    real file landing after a 3am run to close it.
-5. **A real beta launch hasn't happened.** The product is feature-complete
+6. **A real beta launch hasn't happened.** The product is feature-complete
    well past the original MVP scope but has never been tested by real
    external users — biggest open strategic question.
-6. **Three backend-architecture decisions need Jack's call**, not urgent but
+7. **Three backend-architecture decisions need Jack's call**, not urgent but
    flagged: SQLite foreign-key enforcement (currently off, root cause of
    several fixed orphaned-row bugs), the Postgres migration timing, and
    whether to add a route-level auth-convention check. See `TODO_MANUAL.md`'s
    "Backend architecture backlog" section.
-7. **IMG_5755.MOV Claude verification is done.** Ran against 290 raw swing
-   candidates — **54 confirmed real**. Job #9 is ready in Dev Page → Swing
-   Review (cache pre-warmed, 7 rally clips + full video as an 8th
-   candidate). Output in `data/runtime/highlight_clips/verify_5755/`,
-   separate from the database.
 8. **Resend sender domain still not set up, but a stopgap is live.**
    Password reset emails now redirect to Jack's own inbox (with the real
    requester's address + reset link in the body) instead of silently
@@ -71,8 +86,12 @@ Curated, not exhaustive — the full backlog lives in `TODO_MANUAL.md`.
 
 ## What's live
 
-- Core analysis loop: MediaPipe pose extraction + DTW vs. 631 pro clips,
+- Core analysis loop: MediaPipe pose extraction + DTW vs. the pro clip database
+  (631 built; ~359 will survive the Sprint-0 review once rebuilt),
   camera-angle inference, 216-tip coaching database
+- **Audio-onset contact detection** wired into `compare_swing.py`'s auto-detect
+  path (2026-09-02, uncommitted) — when the user doesn't mark a contact frame
+  and the upload has audio, the ball-strike sound pins contact to <1 frame
 - Ball detector Phase 3: fine-tuned YOLO model
   (`data/10b_ball_detection/yolo_ball_run_v1/`) wired into
   `racket_tracker.py` + `verify_shot_contact.py` — 95% detection /
