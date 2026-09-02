@@ -32,6 +32,12 @@ const GOLD  = colors.gold;
 const T_MIN = -1.0;
 const T_MAX = 1.5;
 
+// Drift-correction tuning for the two-video sync during playback -- see the
+// effect that uses these below. Not frame-perfect, just enough to keep a
+// typical short swing comparison from visibly diverging by its end.
+const DRIFT_THRESHOLD_MS = 120;
+const DRIFT_CHECK_INTERVAL_MS = 500;
+
 // Falls back to phase_breakdown.py's own PHASE_TARGET_T constants
 // (backswing -0.5, contact 0.0, followthrough 1.0) if the backend response
 // didn't include phase_markers (e.g. an older cached result) -- keeps this
@@ -449,6 +455,16 @@ export default function SyncCompareScreen({ route, navigation }) {
   const annotationARef = useRef(null);
   const annotationBRef = useRef(null);
 
+  // Readiness gating: playAsync()/setPositionAsync() can throw or silently
+  // no-op on native if called before a video's source has finished loading,
+  // and pane A (reference) / pane B (user) load independently at different
+  // speeds. Without this, togglePlay() firing on a not-yet-ready pane is
+  // exactly what produced "only one video plays" / "play does nothing".
+  const videoAReadyRef = useRef(false);
+  const videoBReadyRef = useRef(false);
+  const posARef = useRef(0); // latest positionMillis reported by pane A
+  const posBRef = useRef(0); // latest positionMillis reported by pane B
+
   const [showSkeleton, setShowSkeleton] = useState(true);
   const [showRacketPath, setShowRacketPath] = useState(true);
   const [annotateActive, setAnnotateActive] = useState(false);
@@ -622,13 +638,23 @@ export default function SyncCompareScreen({ route, navigation }) {
     tRef.current = clamped;
     setT(clamped);
     setHandleFromT(clamped);
-    await Promise.all([
-      videoARef.current?.setPositionAsync(Math.max(0, (contactASec + clamped) * 1000)),
-      videoBRef.current?.setPositionAsync(Math.max(0, (contactBSec + clamped) * 1000)),
-    ]);
+    try {
+      await Promise.all([
+        videoARef.current?.setPositionAsync(Math.max(0, (contactASec + clamped) * 1000)),
+        videoBRef.current?.setPositionAsync(Math.max(0, (contactBSec + clamped) * 1000)),
+      ]);
+    } catch (err) {
+      console.warn('[SyncCompare] seek failed', err);
+    }
   }, [contactASec, contactBSec, setHandleFromT]);
 
   useEffect(() => {
+    // A source swap invalidates whatever readiness/position either pane
+    // reported before -- both must report loaded again before play/seek are
+    // trusted, otherwise a stale "ready" flag from the previous clip lets
+    // togglePlay() race the new source exactly like the un-gated version did.
+    videoAReadyRef.current = false;
+    videoBReadyRef.current = false;
     seekBoth(0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uriA, uriB]);
@@ -700,16 +726,38 @@ export default function SyncCompareScreen({ route, navigation }) {
   const togglePlay = useCallback(async () => {
     if (isPlayingRef.current) {
       await pauseBoth();
-    } else {
-      setPlaying(true);
+      return;
+    }
+    if (!videoAReadyRef.current || !videoBReadyRef.current) {
+      // One source hasn't finished loading yet -- calling playAsync() here
+      // is exactly what produced "only one video plays" / "play does
+      // nothing" before, so ignore the tap rather than race it.
+      return;
+    }
+    setPlaying(true);
+    try {
       await Promise.all([videoARef.current?.playAsync(), videoBRef.current?.playAsync()]);
+    } catch (err) {
+      console.warn('[SyncCompare] play failed', err);
+      setPlaying(false);
+      Alert.alert('Playback error', 'Could not start playback. Try again.');
     }
   }, [pauseBoth, setPlaying]);
 
-  // Pane A needs no parent-side status handling at all -- it owns its own
-  // playhead for its overlays. Only B drives the shared scrubber, because
-  // one of the two has to and they are seek-aligned at contact anyway.
-  //
+  // Pane A previously had no parent-side status handling at all -- it still
+  // owns its own playhead for its overlays and doesn't drive the shared
+  // scrubber (B does, since one of the two has to and they're seek-aligned
+  // at contact anyway), but it does need to report readiness/position so
+  // togglePlay() and drift-correction below can trust it's actually loaded.
+  const onAStatusUpdate = useCallback((status) => {
+    if (!status.isLoaded) return;
+    posARef.current = status.positionMillis;
+    if (!videoAReadyRef.current) {
+      videoAReadyRef.current = true;
+      if (videoBReadyRef.current) seekBoth(tRef.current);
+    }
+  }, [seekBoth]);
+
   // A momentary `status.isPlaying === false` here can just mean B is
   // mid-buffer-stall, not actually stopped -- expo-av reports that
   // distinctly from a genuine finish, and flipping the shared isPlaying
@@ -717,7 +765,16 @@ export default function SyncCompareScreen({ route, navigation }) {
   // producing "only one of the two videos plays". Only treat this as
   // stopped on a real end-of-clip, not any transient isPlaying:false.
   const onBStatusUpdate = useCallback((status) => {
-    if (!isPlayingRef.current || !status.isLoaded) return;
+    if (!status.isLoaded) return;
+    posBRef.current = status.positionMillis;
+    if (!videoBReadyRef.current) {
+      videoBReadyRef.current = true;
+      // Whichever pane becomes ready second triggers the one authoritative
+      // re-seek -- setPositionAsync() called too early (e.g. the mount-time
+      // seekBoth(0)) can silently no-op/throw on native before load.
+      if (videoAReadyRef.current) seekBoth(tRef.current);
+    }
+    if (!isPlayingRef.current) return;
     const finished = status.didJustFinish
       || (status.durationMillis > 0 && status.positionMillis >= status.durationMillis - 50);
     if (finished) {
@@ -729,7 +786,32 @@ export default function SyncCompareScreen({ route, navigation }) {
     tRef.current = newT;
     setT(newT);
     setHandleFromT(newT);
-  }, [contactBSec, setHandleFromT, setPlaying]);
+  }, [contactBSec, setHandleFromT, setPlaying, seekBoth]);
+
+  // Play starts both together, but two clips of a swing rarely have
+  // identical real-world duration, so without periodic correction they
+  // visibly drift apart within seconds (this was the "pose interpolation
+  // isn't smooth" symptom -- there was never any continuous sync, only the
+  // one-time contact-aligned seek above). Lightweight (2Hz), not
+  // frame-perfect -- just enough to keep a ~5-10s comparison from visibly
+  // diverging by the end.
+  useEffect(() => {
+    if (!isPlaying) return;
+    const id = setInterval(() => {
+      if (!videoAReadyRef.current || !videoBReadyRef.current) return;
+      const tA = posARef.current - contactASec * 1000;
+      const tB = posBRef.current - contactBSec * 1000;
+      const drift = tA - tB; // positive => A is ahead of B
+      if (Math.abs(drift) <= DRIFT_THRESHOLD_MS) return;
+      const targetMs = Math.max(tA, tB);
+      const laggingRef = drift > 0 ? videoBRef : videoARef;
+      const laggingContactSec = drift > 0 ? contactBSec : contactASec;
+      laggingRef.current
+        ?.setPositionAsync(Math.max(0, laggingContactSec * 1000 + targetMs))
+        .catch((err) => console.warn('[SyncCompare] drift correction failed', err));
+    }, DRIFT_CHECK_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [isPlaying, contactASec, contactBSec]);
 
   const onTrackLayout = useCallback((e) => {
     trackWidth.current = e.nativeEvent.layout.width;
@@ -756,7 +838,7 @@ export default function SyncCompareScreen({ route, navigation }) {
   // written out twice.
   const paneA = (
     <VideoPane
-      label={labelA} uri={uriA} videoRef={videoARef}
+      label={labelA} uri={uriA} videoRef={videoARef} onStatusUpdate={onAStatusUpdate}
       overlayTrajectory={overlayA} overlayColor={GOLD} showOverlay={showOverlay}
       racketTrajectory={racketPathA} racketColor={GOLD} showRacketPath={showRacket}
       isPlaying={isPlaying} paneWidth={paneWidth} paneHeight={paneHeight}
@@ -887,87 +969,87 @@ export default function SyncCompareScreen({ route, navigation }) {
     );
   }
 
+  // Narrow/mobile layout: mirrors the wide branch's "stage + floating
+  // overlay" structure instead of stacking controls below the videos in
+  // normal ScrollView flow -- that flow used to push the videos up and eat
+  // most of the visible screen. No side rail at this width, so the speed
+  // buttons and toggle chips that live in the rail on wide fold into the
+  // bottom overlay here instead.
   return (
-    <SafeAreaView style={s.safe}>
-      <View style={s.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Text style={s.backText}>‹ Back</Text>
-        </TouchableOpacity>
-        <Text style={s.title}>Side-by-side</Text>
-        <View style={{ width: 60 }} />
-      </View>
-
-      <ScrollView contentContainerStyle={s.scrollContent} scrollEnabled={scrollEnabled}>
-        <View style={s.videosRow}>
+    <SafeAreaView style={s.safeWide}>
+      <View style={s.wideStage}>
+        <View style={s.videosRowWide}>
           {paneA}
           {paneB}
         </View>
 
-        <ZoomSlider
-          containerStyle={s.zoomRow} labelStyle={s.zoomLabel}
-          zoom={zoom} zoomHandleX={zoomHandleX}
-          onLayout={onZoomTrackLayout} panHandlers={zoomResponder.panHandlers}
-        />
-
-        <View style={s.toolsRow}>
-          <ToggleChips
-            chipStyle={s.toggleChip} chipTextStyle={s.toggleChipText}
-            hasOverlayData={hasOverlayData} showSkeleton={showSkeleton} onToggleSkeleton={toggleSkeleton}
-            hasRacketData={hasRacketData} showRacketPath={showRacketPath} onToggleRacketPath={toggleRacketPath}
-            annotateActive={annotateActive} onToggleAnnotate={handleToggleAnnotate}
-          />
+        <View style={s.overlayTop} pointerEvents="box-none">
+          <TouchableOpacity style={s.overlayBackBtn} onPress={() => navigation.goBack()}>
+            <Text style={s.backTextOverlay}>‹ Back</Text>
+          </TouchableOpacity>
+          <Text style={s.titleOverlay}>Side-by-side</Text>
+          {annotationSets.length > 1 ? (
+            <View style={s.annotatorRowOverlay}>
+              <AnnotatorChips sets={annotationSets} viewerId={user?.id} onSelect={handleSelectAnnotationSet} />
+            </View>
+          ) : (
+            <View style={{ width: 60 }} />
+          )}
         </View>
 
         {annotateActive && (
           <AnnotateToolbar
-            containerStyle={s.annotateToolbar}
+            containerStyle={s.annotateToolbarOverlayNarrow}
             tool={tool} onToolChange={setTool}
             annColor={annColor} onColorChange={setAnnColor}
             canSave={!!analysisId} saving={savingAnnotation} onSave={handleSaveAnnotation}
           />
         )}
 
-        {/* Lets a viewer switch whose saved annotations are displayed --
-            shown even outside annotate mode so someone can just look without
-            needing to be in drawing mode themselves. */}
-        {annotationSets.length > 1 && (
-          <View style={s.annotatorRow}>
-            <Text style={s.annotatorLabel}>Viewing:</Text>
-            <AnnotatorChips sets={annotationSets} viewerId={user?.id} onSelect={handleSelectAnnotationSet} />
-          </View>
+        {showNoteComposer && (
+          <NoteComposer
+            containerStyle={s.noteComposerOverlayNarrow}
+            value={noteText} onChangeText={setNoteText}
+            onCancel={cancelNote} onSubmit={submitTimeNote}
+          />
         )}
 
-        <Text style={s.tHint}>{tHintText}</Text>
-        {scrubber}
-        <Text style={s.phaseLegend}>{phaseLegendText}</Text>
+        <View style={s.overlayBottom} pointerEvents="box-none">
+          <ZoomSlider
+            containerStyle={s.zoomRowOverlay} labelStyle={s.zoomLabelOverlay}
+            zoom={zoom} zoomHandleX={zoomHandleX}
+            onLayout={onZoomTrackLayout} panHandlers={zoomResponder.panHandlers}
+          />
 
-        <View style={s.speedRow}>
-          <SpeedButtons buttonStyle={s.speedBtn} speed={speed} onChange={changeSpeed} />
-        </View>
-
-        <TouchableOpacity style={s.playBtn} onPress={handlePlayPress}>
-          <Text style={s.playBtnText}>{isPlaying ? '⏸ Pause' : '▶ Play both'}</Text>
-        </TouchableOpacity>
-        <Text style={s.playNote}>
-          Drag the scrubber to compare frame-by-frame — dragging keeps both swings' contact
-          moments exactly aligned. Play starts both together but they may drift apart if the
-          clips differ in length.
-        </Text>
-
-        {canAddNotes && analysisId && (
-          addingNote ? (
-            <NoteComposer
-              containerStyle={s.noteComposer}
-              value={noteText} onChangeText={setNoteText}
-              onCancel={cancelNote} onSubmit={submitTimeNote}
+          <View style={s.toolsRowOverlay}>
+            <ToggleChips
+              chipStyle={s.railChip} chipTextStyle={s.railChipText}
+              hasOverlayData={hasOverlayData} showSkeleton={showSkeleton} onToggleSkeleton={toggleSkeleton}
+              hasRacketData={hasRacketData} showRacketPath={showRacketPath} onToggleRacketPath={toggleRacketPath}
+              annotateActive={annotateActive} onToggleAnnotate={handleToggleAnnotate}
             />
-          ) : (
-            <TouchableOpacity style={s.addNoteBtn} onPress={openNote}>
-              <Text style={s.addNoteBtnText}>+ Add note at current time</Text>
+          </View>
+
+          <Text style={s.tHintOverlay}>{tHintText}</Text>
+          {scrubber}
+          <Text style={s.phaseLegendOverlay}>{phaseLegendText}</Text>
+
+          <View style={s.speedRowOverlay}>
+            <SpeedButtons buttonStyle={s.railSpeedBtn} speed={speed} onChange={changeSpeed} />
+          </View>
+
+          <View style={s.bottomRowOverlay}>
+            <TouchableOpacity style={s.playBtnOverlay} onPress={handlePlayPress}>
+              <Text style={s.playBtnText}>{isPlaying ? '⏸ Pause' : '▶ Play both'}</Text>
             </TouchableOpacity>
-          )
-        )}
-      </ScrollView>
+            {canAddNotes && analysisId && !addingNote && (
+              <TouchableOpacity style={s.addNoteBtnOverlay} onPress={openNote}>
+                <Text style={s.addNoteBtnText}>+ Add note</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </View>
     </SafeAreaView>
   );
 }
@@ -1015,6 +1097,22 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(20,20,20,0.9)', borderRadius: radius.md,
     borderWidth: 1, borderColor: colors.border, padding: 12,
   },
+  // Narrow's bottom overlay is taller than wide's (it folds in the toggle
+  // chips + speed row that wide keeps in a side rail instead), so these
+  // need a bigger bottom offset to clear it rather than sharing wide's
+  // hardcoded value.
+  annotateToolbarOverlayNarrow: {
+    position: 'absolute', bottom: 290, alignSelf: 'center', width: 320, maxWidth: '92%',
+    backgroundColor: 'rgba(20,20,20,0.85)', borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.border, padding: 12,
+  },
+  noteComposerOverlayNarrow: {
+    position: 'absolute', bottom: 290, alignSelf: 'center', width: 340, maxWidth: '92%',
+    backgroundColor: 'rgba(20,20,20,0.9)', borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.border, padding: 12,
+  },
+  toolsRowOverlay: { flexDirection: 'row', justifyContent: 'center', gap: 10, marginBottom: 10 },
+  speedRowOverlay: { flexDirection: 'row', justifyContent: 'center', gap: 10, marginTop: 10, marginBottom: 4 },
 
   overlayBottom: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
