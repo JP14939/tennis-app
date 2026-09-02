@@ -24,10 +24,12 @@ sys.path.insert(0, os.path.join(SCRIPTS_DIR, '06_database_build'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '07_ball_racket_tracking'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '09_coaching_ai'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '00_utils'))
-from infer_angle import infer_camera_angle, angle_label, detect_view_direction, extract_frame, create_landmarker
+from infer_angle import infer_camera_angle, angle_label, detect_view_direction, extract_frame, create_landmarker, usable_roll
 from build_pro_database import normalise_landmarks, trajectory_scale, PRE_SEC, POST_SEC, MIN_TRAJECTORY_POINTS
+from trajectory_extraction import mirror_trajectory, rotate_trajectory
 from trajectory_compare import dtw_distance
 from track_racket_in_clip import track_racket_body, avg_racket_body_distance, track_racket_path
+from ball_speed import estimate_net_crossing_ball_speed_kmh
 from select_coaching_tips import get_coaching_tips
 from paths import DATA_DIR
 import phase_breakdown
@@ -236,7 +238,7 @@ def build_user_trajectory(frames, fps, contact_time_sec=None):
 
 # ── Main comparison ───────────────────────────────────────────────────────────
 
-def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=None, view_direction_hint=None, frames_fps=None):
+def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=None, view_direction_hint=None, frames_fps=None, handedness='right'):
     """
     frames_fps: optional pre-extracted (frames, fps) tuple (same shape
     extract_user_poses returns) to skip re-running pose extraction when the
@@ -259,6 +261,34 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         # of a clear error. Happens on a corrupt/undecodable upload where
         # cv2 opens the file but every single cap.read() fails.
         raise RuntimeError('No frames could be decoded from the uploaded video')
+
+    # Auto-detect path only: the user's manual mark is ground truth and is
+    # never second-guessed (see build_user_trajectory). When there's no mark,
+    # try the audio onset detector (racket-ball impact is a sharp transient --
+    # ~1 frame median error vs. find_peak_wrist_frame's ~9) before falling back
+    # to the wrist-velocity peak. Restricted to +-0.5s of the wrist peak so a
+    # loud non-ball sound elsewhere in the clip can't run away with it, and
+    # only used when the classifier is confident -- so this can only improve
+    # the auto-detect, never make it worse. Fully guarded: no audio stream /
+    # no model / any error -> unchanged behaviour.
+    if contact_time_sec is None:
+        try:
+            from audio_contact import detect_contact  # noqa: PLC0415
+            wrist_peak_sec = frames[find_peak_wrist_frame(frames, fps)]['frame'] / fps
+            ac = detect_contact(
+                video_path, anchor_time_sec=wrist_peak_sec, search_window_sec=0.5,
+                video_hints={'wrist_peak_sec': wrist_peak_sec, 'pose_pred_sec': wrist_peak_sec},
+            )
+            if ac and ac['confident']:
+                contact_time_sec = ac['contact_time_sec']
+                print(f"  Contact auto-detected via AUDIO onset at {contact_time_sec:.3f}s "
+                      f"(confidence {ac['confidence']:.2f}, margin {ac['margin']:.2f})", file=sys.stderr)
+            elif ac:
+                print(f"  Audio onset found but not confident enough "
+                      f"(conf {ac['confidence']:.2f}) -- using wrist-velocity peak", file=sys.stderr)
+        except Exception as e:  # noqa: BLE001
+            print(f'  [audio-contact] skipped: {e}', file=sys.stderr)
+
     user_trajectory, peak_frame = build_user_trajectory(frames, fps, contact_time_sec)
     if not user_trajectory:
         # Same guard compare_videos.py already has for the equivalent case --
@@ -288,7 +318,11 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
     # down their own model instance.
     shared_landmarker = create_landmarker()
 
-    # Infer user camera angle at the contact frame
+    # Infer user camera angle at the contact frame. Done here (before the
+    # left-handed mirror below) because the same pass yields the in-plane
+    # camera roll, and rotating the trajectory level must happen BEFORE
+    # mirroring -- a reflection conjugates a rotation to its inverse, so
+    # mirror-then-rotate would apply the correction with the wrong sign.
     print('  Inferring camera angle...', file=sys.stderr)
     user_angle, angle_conf, angle_debug = infer_camera_angle(
         video_path, peak_frame, landmarker=shared_landmarker, view_direction_hint=view_direction_hint)
@@ -296,6 +330,15 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         print(f'  Camera angle: {user_angle}° ({angle_label(user_angle)}) — confidence: {angle_conf}', file=sys.stderr)
     else:
         print(f'  Camera angle: could not infer ({angle_debug})', file=sys.stderr)
+
+    user_roll = usable_roll(angle_debug.get('camera_roll_deg')) if isinstance(angle_debug, dict) else None
+    if user_roll is not None:
+        print(f'  Roll-correcting user trajectory: camera tilt {user_roll:.1f}° from net-cord slope', file=sys.stderr)
+        user_trajectory = rotate_trajectory(user_trajectory, user_roll)
+
+    if handedness == 'left':
+        print('  Left-handed: mirroring user trajectory for comparison against right-handed pros', file=sys.stderr)
+        user_trajectory = mirror_trajectory(user_trajectory)
 
     # View direction (front = camera at the net facing you, back = camera
     # behind the baseline) -- a separate signal from the angle above, since
@@ -314,6 +357,17 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         print(f'  View direction: could not detect, using stated hint "{view_direction_hint}"', file=sys.stderr)
     else:
         print(f'  View direction: {user_view_direction}', file=sys.stderr)
+
+    # Ball speed at the net crossing -- see ball_speed.py's module docstring
+    # for why "at the net" rather than off the racket at contact, and why a
+    # low/unknown camera angle just silently disables the stat rather than
+    # reporting an unreliable number.
+    ball_speed_kmh = None
+    try:
+        ball_speed_kmh = estimate_net_crossing_ball_speed_kmh(
+            video_path, peak_frame, fps, camera_angle_deg=user_angle)
+    except Exception as e:
+        print(f'  Ball speed estimation failed (non-fatal): {e}', file=sys.stderr)
 
     # Done with the shared landmarker -- release it now rather than at
     # function end, since there's real work below (DTW over hundreds of
@@ -494,7 +548,10 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         'user_angle':   user_angle,
         'angle_label':  angle_label(user_angle) if user_angle is not None else None,
         'angle_conf':   angle_conf if user_angle is not None else None,
+        'user_camera_roll_deg': angle_debug.get('camera_roll_deg') if isinstance(angle_debug, dict) else None,
+        'roll_corrected': user_roll is not None,
         'contact_time_sec': round(peak_frame / fps, 3),
+        'ball_speed_kmh': ball_speed_kmh,
         'user_view_direction': user_view_direction,
         'user_overlay_trajectory': build_overlay_trajectory(frames),
         'racket_overlay_trajectory': user_racket_overlay_trajectory,
