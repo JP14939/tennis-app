@@ -251,13 +251,13 @@ router.patch('/history/:id', requireAuth, (req, res) => {
   res.json(serializeRow(updated));
 });
 
-// better-sqlite3 opens every connection with `PRAGMA foreign_keys = ON`, so
-// a bare DELETE FROM analyses does NOT silently orphan its children -- it
-// throws SQLITE_CONSTRAINT_FOREIGNKEY and the delete fails outright while
+// db.js never sets `PRAGMA foreign_keys = ON` (it's off by default), so a
+// bare DELETE FROM analyses would silently orphan its children --
 // coach_notes/shared_analyses/swing_annotations/drill_practice_attempts rows
-// still reference the analysis. Clearing them first is what makes the delete
-// possible at all. The account-deletion path in auth.js does the same thing
-// for the "delete everything" case; this mirrors it for one swing.
+// would keep referencing an analysis_id that no longer exists, with no
+// error to catch it. Clearing them first is what avoids that. The
+// account-deletion path in auth.js does the same thing for the
+// "delete everything" case; this mirrors it for one swing.
 const deleteAnalysisAndChildren = db.transaction((analysisId, userId) => {
   const owned = db.prepare('SELECT id FROM analyses WHERE id = ? AND user_id = ?').get(analysisId, userId);
   if (!owned) return 0;

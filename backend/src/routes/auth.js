@@ -380,6 +380,7 @@ router.delete('/auth/me', requireAuth, async (req, res) => {
     db.prepare('DELETE FROM highlight_jobs WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM push_tokens WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM court_watches WHERE user_id = ?').run(userId);
+    db.prepare('DELETE FROM club_watches WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM court_confirmations WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM availability_posts WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM friend_codes WHERE user_id = ?').run(userId);

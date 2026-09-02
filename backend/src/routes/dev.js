@@ -409,10 +409,10 @@ router.post('/dev/drills', requireAuth, requireAdmin, uploadDrillVideo.single('v
     // this deletion is a real edit, not the old delete-everything-then-
     // reinsert artifact that used to orphan every step's practice history.
     // A genuinely removed step still needs its own practice_attempts rows
-    // cleaned up first: better-sqlite3 opens connections with
-    // `PRAGMA foreign_keys = ON`, so deleting a step that still has attempts
-    // pointing at it throws SQLITE_CONSTRAINT_FOREIGNKEY and rolls the whole
-    // save back -- same failure shape the id-reconciliation above avoids.
+    // cleaned up first: db.js never sets `PRAGMA foreign_keys = ON` (it's
+    // off by default), so deleting a step that still has attempts pointing
+    // at it would silently orphan those rows rather than fail loudly --
+    // same failure shape the id-reconciliation above avoids.
     const removedStepIds = [...existingStepIds].filter((sid) => !keptStepIds.has(sid));
     if (removedStepIds.length) {
       const placeholders = removedStepIds.map(() => '?').join(',');
