@@ -86,13 +86,22 @@ def _wilson_lower_bound(successes, n, z=1.96):
     return (center - adjustment) / denom
 
 
-def log_example(student_pick, teacher_pick, agreed, source='claude', student_meta=None, lock=None):
+def log_example(student_pick, teacher_pick, agreed, source='claude', student_meta=None, lock=None,
+                 clip_path=None, contact_frame=None):
     """
     Append one training example. `student_pick`/`teacher_pick` are booleans
     (True = real shot). `student_meta` is the student's full
     contact_confidence/contact_method dict -- the input a future trained
     model would learn from. `source`: 'claude' or 'user_flag' (see module
     docstring).
+
+    clip_path/contact_frame: optional, same reasoning as
+    shot_classifier_training_log.py's identical fields -- lets this record
+    be traced back to its source clip later (debugging, or a future
+    from-scratch feature re-extraction), even though train_shot_contact_model.py
+    doesn't need them itself (it trains on student_meta's already-computed
+    signals directly, no re-extraction required). Defaulted to None so
+    every existing caller/record is unaffected.
 
     lock: optional multiprocessing.Lock (or any context-manager-compatible
     lock) -- same reasoning as shot_classifier_training_log.py's: needed
@@ -109,6 +118,8 @@ def log_example(student_pick, teacher_pick, agreed, source='claude', student_met
         'agreed': agreed,
         'source': source,
         'student_meta': student_meta,
+        'clip_path': clip_path,
+        'contact_frame': contact_frame,
     }
     os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
 

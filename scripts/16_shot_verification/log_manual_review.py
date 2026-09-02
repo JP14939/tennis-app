@@ -68,6 +68,14 @@ def main():
     logged_contact_frame = False
     student_contact_frame_guess = payload.get('student_contact_frame_guess')
     if is_real_shot and payload.get('contact_frame') is not None and student_contact_frame_guess is not None:
+        # student_meta is sparse here -- this process has no racket/ball
+        # `detections` object (unlike log_user_contact_frame.py), so the
+        # detection-count features stay missing and get median-imputed by
+        # train_contact_frame_model.py.
+        meta = {
+            'contact_method': payload.get('student_contact_method'),
+            'contact_confidence': payload.get('student_contact_confidence'),
+        }
         frame_log.log_example(
             student_contact_frame_guess,
             payload.get('student_contact_confidence'),
@@ -75,8 +83,26 @@ def main():
             payload['contact_frame'],
             payload.get('fps'),
             source='manual_review',
+            student_meta=meta,
         )
         logged_contact_frame = True
+
+        try:
+            from train_contact_frame_model import predict_contact_offset
+            import contact_frame_ml_training_log as ml_log
+
+            offset, available = predict_contact_offset({
+                'student_method': payload.get('student_contact_method'),
+                'student_confidence': payload.get('student_contact_confidence'),
+                'fps': payload.get('fps'), 'student_meta': meta, 'source': 'manual_review',
+            })
+            if available:
+                ml_log.log_example(
+                    student_contact_frame_guess + offset, student_contact_frame_guess,
+                    payload['contact_frame'], payload.get('fps'), source='manual_review',
+                )
+        except Exception as e:
+            print(f'  [contact-frame-ml] skipped: {e}', file=sys.stderr)
 
     print(json.dumps({
         'logged_contact': True, 'logged_classifier': logged_classifier, 'logged_contact_frame': logged_contact_frame,
