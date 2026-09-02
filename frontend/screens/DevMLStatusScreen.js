@@ -81,7 +81,10 @@ export default function DevMLStatusScreen({ navigation }) {
       </View>
     );
   } else {
-    const { shot_contact: contact, shot_classifier: classifier, tip_selector: tips, contact_frame: contactFrame } = data;
+    const {
+      shot_contact: contact, shot_classifier: classifier, tip_selector: tips,
+      contact_frame: contactFrame, contact_frame_ml: contactFrameMl,
+    } = data;
     content = (
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
         <Text style={s.h1}>ML Reliability</Text>
@@ -124,13 +127,17 @@ export default function DevMLStatusScreen({ navigation }) {
             value={contactFrame.overall.n === 0 ? 'No data yet' : `±${contactFrame.overall.mean_abs_error}f avg, ${pct(contactFrame.overall.within_tolerance_rate)} within ${contactFrame.thresholds.tolerance_frames}f`}
             trusted={contactFrame.overall.n > 0 ? contactFrame.overall.trusted : undefined}
           />
-          {['manual_review', 'user_submitted'].map((src) => {
+          {[
+            ['manual_review', 'Manual (Dev Page)'],
+            ['user_submitted', 'Real users'],
+            ['pro_clip_review', 'Pro clip corrections'],
+          ].map(([src, label]) => {
             const s2 = contactFrame.by_source[src];
             return (
               <StatRow
                 key={src}
-                label={src === 'manual_review' ? 'Manual (Dev Page)' : 'Real users'}
-                value={s2.n === 0 ? `0 examples` : `N=${s2.n}, ±${s2.mean_abs_error}f avg (bias ${s2.mean_signed_error >= 0 ? '+' : ''}${s2.mean_signed_error}f)`}
+                label={label}
+                value={!s2 || s2.n === 0 ? `0 examples` : `N=${s2.n}, ±${s2.mean_abs_error}f avg (bias ${s2.mean_signed_error >= 0 ? '+' : ''}${s2.mean_signed_error}f)`}
               />
             );
           })}
@@ -138,6 +145,31 @@ export default function DevMLStatusScreen({ navigation }) {
             Needs {contactFrame.thresholds.min_examples_before_trust}+ examples and {pct(contactFrame.thresholds.within_tolerance_threshold)} within ±{contactFrame.thresholds.tolerance_frames} frames to trust. Signed bias shows systematic early(-)/late(+) error, not just averaged-away noise.
           </Text>
         </StatusCard>
+
+        {contactFrameMl && (
+          <StatusCard title={`Contact Frame Corrector — ML (${contactFrameMl.total_examples} examples)`}>
+            <StatRow
+              label="Model"
+              value={contactFrameMl.model_present ? 'trained' : 'not trained yet'}
+            />
+            {contactFrameMl.model_meta && (
+              <StatRow
+                label="Cross-val (within ±f)"
+                value={`${pct(contactFrameMl.model_meta.cv_within_tolerance_before)} → ${pct(contactFrameMl.model_meta.cv_within_tolerance_after)}  (MAE ${contactFrameMl.model_meta.cv_mae_frames}f)`}
+              />
+            )}
+            <StatRow
+              label="Live vs heuristic"
+              value={contactFrameMl.trust_log.n === 0
+                ? 'No data yet'
+                : `${pct(contactFrameMl.trust_log.ml_within_tolerance_rate)} vs ${pct(contactFrameMl.trust_log.student_within_tolerance_rate)} within ±${contactFrameMl.thresholds.tolerance_frames}f (N=${contactFrameMl.trust_log.n})`}
+              trusted={contactFrameMl.trust_log.n > 0 ? contactFrameMl.trust_log.trusted : undefined}
+            />
+            <Text style={s.thresholdNote}>
+              The corrector only adjusts contact frames in the batch rally pipeline once it independently beats the heuristic: {contactFrameMl.thresholds.min_examples_before_trust}+ live comparisons and {pct(contactFrameMl.thresholds.within_tolerance_threshold)} within ±{contactFrameMl.thresholds.tolerance_frames} frames.
+            </Text>
+          </StatusCard>
+        )}
       </ScrollView>
     );
   }
