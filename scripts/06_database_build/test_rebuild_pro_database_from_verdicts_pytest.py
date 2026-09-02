@@ -150,6 +150,62 @@ def test_idempotent(tmp_path, monkeypatch):
     assert after_first == after_second
 
 
+def _preds_file(tmp_path, preds):
+    p = tmp_path / 'preds.json'
+    p.write_text(json.dumps(preds))
+    return str(p)
+
+
+def test_confident_audio_prediction_applied_and_logged(tmp_path, monkeypatch):
+    db_path, overlay_path = _env(
+        tmp_path, monkeypatch,
+        [_entry('forehand_0001'), _entry('forehand_0002', swing_id=2)],
+        {'forehand_0001': 'label_confirmed', 'forehand_0002': 'label_confirmed'},
+    )
+    preds = _preds_file(tmp_path, {
+        'forehand_0001': {'status': 'ok', 'confident': True, 'contact_time_sec': 1.31},
+        'forehand_0002': {'status': 'ok', 'confident': False, 'contact_time_sec': 0.4},
+    })
+    rpd.rebuild(contact_predictions_path=preds)
+
+    entries = {e['id']: e for e in json.loads(db_path.read_text())['entries']}
+    assert entries['forehand_0001']['clip_contact_time_sec'] == 1.31
+    assert entries['forehand_0001']['trajectory'] == [{'t': -0.5, 'landmarks': {}}]
+    assert entries['forehand_0002']['clip_contact_time_sec'] == 1.0  # flagged, untouched
+
+    log = [json.loads(x) for x in open(clip_review_log.LOG_PATH) if x.strip()]
+    audio_rows = [r for r in log if r['verdict'] == 'contact_time_corrected'
+                  and (r.get('note') or '').endswith('(audio)')]
+    assert [r['entry_id'] for r in audio_rows] == ['forehand_0001']
+
+
+def test_audio_fill_is_idempotent(tmp_path, monkeypatch):
+    db_path, _ = _env(
+        tmp_path, monkeypatch, [_entry('forehand_0001')],
+        {'forehand_0001': 'label_confirmed'},
+    )
+    preds = _preds_file(tmp_path, {
+        'forehand_0001': {'status': 'ok', 'confident': True, 'contact_time_sec': 1.31},
+    })
+    rpd.rebuild(contact_predictions_path=preds)
+    first = json.loads(db_path.read_text())
+    rpd.rebuild(contact_predictions_path=preds)   # 2nd run sees the logged verdict
+    assert json.loads(db_path.read_text()) == first
+
+
+def test_hand_mark_wins_over_audio_prediction(tmp_path, monkeypatch):
+    db_path, _ = _env(
+        tmp_path, monkeypatch, [_entry('forehand_0001', swing_id=1)],
+        {'forehand_0001': 'contact_time_corrected'},
+    )
+    preds = _preds_file(tmp_path, {
+        'forehand_0001': {'status': 'ok', 'confident': True, 'contact_time_sec': 9.9},
+    })
+    rpd.rebuild(contact_predictions_path=preds)
+    entry = json.loads(db_path.read_text())['entries'][0]
+    assert entry['clip_contact_time_sec'] == 1.0  # audio 9.9 never applied
+
+
 def test_corrupt_overlay_file_leaves_it_untouched(tmp_path, monkeypatch):
     db_path, overlay_path = _env(tmp_path, monkeypatch, [_entry('forehand_0001')],
                                  {'forehand_0001': 'contact_time_corrected'})

@@ -27,8 +27,21 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '00_utils'))
 from infer_angle import detect_view_direction, create_landmarker  # noqa: E402
 from paths import DATA_DIR  # noqa: E402
+from clip_urls import PRO_CLIPS_DIR  # noqa: E402
 
 DB_PATH = os.path.join(DATA_DIR, '06_pro_database', 'pro_database.json')
+
+
+def _resolve_clip(clip_path):
+    """Entries store clip_path relative to PRO_CLIPS_DIR (e.g.
+    'forehand/forehand_swing_0006_conf75.mp4'); older entries may hold an
+    absolute path. Return whichever actually exists, or None."""
+    if not clip_path:
+        return None
+    if os.path.isabs(clip_path) and os.path.exists(clip_path):
+        return clip_path
+    cand = os.path.join(PRO_CLIPS_DIR, clip_path)
+    return cand if os.path.exists(cand) else None
 
 
 def main():
@@ -43,9 +56,9 @@ def main():
     counts = {'front': 0, 'back': 0, 'unknown': 0, 'missing_clip': 0}
 
     for i, entry in enumerate(todo, 1):
-        clip_path = entry.get('clip_path')
+        clip_path = _resolve_clip(entry.get('clip_path'))
         contact_t = entry.get('clip_contact_time_sec')
-        if not clip_path or not os.path.exists(clip_path) or contact_t is None:
+        if not clip_path or contact_t is None:
             entry['view_direction'] = 'unknown'
             counts['missing_clip'] += 1
             continue
