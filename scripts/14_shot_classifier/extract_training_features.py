@@ -29,6 +29,7 @@ Output: data/14_shot_classifier/training_features.json --
   [{video_id, swing_id, label, features: {...}}, ...]
 """
 import json
+import math
 import os
 import sys
 
@@ -50,13 +51,23 @@ SERVE_WINDOW_PRE_SEC = 1.0
 SERVE_WINDOW_POST_SEC = 0.5
 SERVE_WINDOW_STEP_FRAMES = 3
 
+# Bump whenever the SEMANTICS of any feature change (not just adding one) --
+# train_shot_classifier_model.py writes this into the model meta and
+# classify_shot._get_ml_model() refuses a model whose version doesn't match,
+# falling back to the rule scorers instead of silently feeding it
+# differently-scaled inputs.
+#   v1        : raw MediaPipe image-space magnitudes (framing-dependent)
+#   v2-bodynorm: magnitude features divided by torso length -> comparable
+#               across phone-selfie vs. broadcast framing (2026-09-02)
+FEATURE_VERSION = 'v2-bodynorm'
+
 # Every feature this function can produce, in a fixed order -- callers
 # (the trainer, the ML classify() at inference time) build their input
 # vector by reading these keys in this order, so a mismatch would be
 # caught immediately rather than silently misaligning columns.
 FEATURE_NAMES = [
     'rw_y_rel_shoulder', 'lw_y_rel_shoulder', 'rw_x_rel_midline', 'lw_x_rel_midline',
-    'wrist_separation', 'rw_velocity', 'lw_velocity', 'rh_y',
+    'wrist_separation', 'rw_velocity', 'lw_velocity', 'rh_y_rel_shoulder',
     'best_overhead_margin', 'elbow_elevated', 'wrist_above_nose',
 ]
 
@@ -74,22 +85,44 @@ def extract_features(peak_lm, prev_lm, window_lms):
     rs = get_lm(peak_lm, 'right_shoulder')
     ls = get_lm(peak_lm, 'left_shoulder')
     rh = get_lm(peak_lm, 'right_hip')
+    lh = get_lm(peak_lm, 'left_hip')
     rw_prev = get_lm(prev_lm, 'right_wrist') if prev_lm else None
     lw_prev = get_lm(prev_lm, 'left_wrist') if prev_lm else None
 
+    # body_scale = torso length (shoulder-mid -> hip-mid), fallback shoulder
+    # width. Every magnitude feature below is divided by it so a phone selfie
+    # (player fills the frame) and a broadcast clip (player small) produce
+    # comparable numbers -- see train_shot_classifier_model.py's 2026-08-27
+    # note on why raw magnitudes blocked the pro-review clips. None when the
+    # torso isn't visible -> the magnitude features become None (imputed).
+    body_scale = None
+    if visible(rs) and visible(ls):
+        sh_mid = ((rs['x'] + ls['x']) / 2, (rs['y'] + ls['y']) / 2)
+        if visible(rh) and visible(lh):
+            hip_mid = ((rh['x'] + lh['x']) / 2, (rh['y'] + lh['y']) / 2)
+            body_scale = math.hypot(sh_mid[0] - hip_mid[0], sh_mid[1] - hip_mid[1])
+        if not body_scale:
+            body_scale = abs(rs['x'] - ls['x'])
+    if body_scale is not None and body_scale < 1e-4:
+        body_scale = None
+
+    def _n(v):
+        return round(v / body_scale, 4) if (v is not None and body_scale) else None
+
     features = {}
 
-    features['rw_y_rel_shoulder'] = round(rs['y'] - rw['y'], 4) if visible(rw) and visible(rs) else None
-    features['lw_y_rel_shoulder'] = round(ls['y'] - lw['y'], 4) if visible(lw) and visible(ls) else None
+    features['rw_y_rel_shoulder'] = _n(rs['y'] - rw['y']) if visible(rw) and visible(rs) else None
+    features['lw_y_rel_shoulder'] = _n(ls['y'] - lw['y']) if visible(lw) and visible(ls) else None
 
     mid_x = (rs['x'] + ls['x']) / 2 if visible(rs) and visible(ls) else None
-    features['rw_x_rel_midline'] = round(rw['x'] - mid_x, 4) if visible(rw) and mid_x is not None else None
-    features['lw_x_rel_midline'] = round(lw['x'] - mid_x, 4) if visible(lw) and mid_x is not None else None
+    features['rw_x_rel_midline'] = _n(rw['x'] - mid_x) if visible(rw) and mid_x is not None else None
+    features['lw_x_rel_midline'] = _n(lw['x'] - mid_x) if visible(lw) and mid_x is not None else None
 
-    features['wrist_separation'] = round(abs(rw['x'] - lw['x']), 4) if visible(rw) and visible(lw) else None
-    features['rw_velocity'] = round(dist2d(rw, rw_prev), 4) if visible(rw) and visible(rw_prev) else None
-    features['lw_velocity'] = round(dist2d(lw, lw_prev), 4) if visible(lw) and visible(lw_prev) else None
-    features['rh_y'] = round(rh['y'], 4) if visible(rh) else None
+    features['wrist_separation'] = _n(abs(rw['x'] - lw['x'])) if visible(rw) and visible(lw) else None
+    features['rw_velocity'] = _n(dist2d(rw, rw_prev)) if visible(rw) and visible(rw_prev) else None
+    features['lw_velocity'] = _n(dist2d(lw, lw_prev)) if visible(lw) and visible(lw_prev) else None
+    features['rh_y_rel_shoulder'] = _n(rh['y'] - (rs['y'] + ls['y']) / 2) \
+        if visible(rh) and visible(rs) and visible(ls) else None
 
     # Serve-window scan, matching score_serve()'s best-overhead search
     # across the whole window rather than just the peak frame.
@@ -112,10 +145,11 @@ def extract_features(peak_lm, prev_lm, window_lms):
                 best_overhead = overhead
         if visible(f_re) and f_re['y'] < f_rs['y']:
             elbow_elevated = True
-        if visible(f_nose) and visible(f_rw) and f_rw['y'] < f_nose['y'] - 0.05:
+        nose_margin = 0.05 * body_scale if body_scale else 0.05
+        if visible(f_nose) and visible(f_rw) and f_rw['y'] < f_nose['y'] - nose_margin:
             wrist_above_nose = True
 
-    features['best_overhead_margin'] = round(best_overhead, 4) if best_overhead is not None else None
+    features['best_overhead_margin'] = _n(best_overhead) if best_overhead is not None else None
     features['elbow_elevated'] = elbow_elevated
     features['wrist_above_nose'] = wrist_above_nose
 

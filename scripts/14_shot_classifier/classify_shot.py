@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.join(SCRIPTS_DIR, '04_clip_extraction'))
 from paths import DATA_DIR  # noqa: E402
 from compare_swing import extract_user_poses  # noqa: E402
 from extract_clips import SCORERS, nearest_pose  # noqa: E402
-from extract_training_features import extract_features, FEATURE_NAMES  # noqa: E402
+from extract_training_features import extract_features, FEATURE_NAMES, FEATURE_VERSION  # noqa: E402
 
 # Same window shape extract_clips.py's process_job() already uses for serve:
 # -1s to +0.5s around contact, sampled every 3 frames.
@@ -32,8 +32,10 @@ SERVE_WINDOW_POST_SEC = 0.5
 SERVE_WINDOW_STEP_FRAMES = 3
 
 ML_MODEL_PATH = os.path.join(DATA_DIR, '14_shot_classifier', 'shot_classifier_model.pkl')
+ML_META_PATH = os.path.join(DATA_DIR, '14_shot_classifier', 'shot_classifier_model_meta.json')
 _ml_model = None
 _ml_model_missing_logged = False
+_ml_version_warned = False
 
 
 def _build_swing_frames(video_path, contact_time_sec, frames_fps):
@@ -88,13 +90,27 @@ def classify(video_path, contact_time_sec, frames_fps=None):
 
 
 def _get_ml_model():
-    global _ml_model, _ml_model_missing_logged
+    global _ml_model, _ml_model_missing_logged, _ml_version_warned
     if _ml_model is None:
         if not os.path.exists(ML_MODEL_PATH):
             if not _ml_model_missing_logged:
                 print(f'[classify_shot] no trained model at {ML_MODEL_PATH} -- '
                       'run train_shot_classifier_model.py first', file=sys.stderr)
                 _ml_model_missing_logged = True
+            return None
+        # Refuse a model trained on a different feature version -- feeding it
+        # differently-scaled inputs would corrupt predictions silently. Caller
+        # falls back to the rule scorers.
+        try:
+            with open(ML_META_PATH) as f:
+                mv = json.load(f).get('feature_version', 'v1')
+        except FileNotFoundError:
+            mv = 'v1'
+        if mv != FEATURE_VERSION:
+            if not _ml_version_warned:
+                print(f'[classify_shot] model feature_version {mv!r} != code '
+                      f'{FEATURE_VERSION!r} -- using rule scorers until retrained', file=sys.stderr)
+                _ml_version_warned = True
             return None
         import joblib
         _ml_model = joblib.load(ML_MODEL_PATH)
