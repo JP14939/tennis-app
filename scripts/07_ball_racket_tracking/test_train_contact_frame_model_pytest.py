@@ -25,7 +25,7 @@ def test_features_full_meta():
     assert f['method_gap'] == 1.0 and f['method_proximity'] == 0.0
     assert f['occlusion_gap_frames'] == 3.0  # parsed from the method string
     assert f['n_both_present'] == 6
-    assert f['source_pro_clip_review'] == 0.0
+    assert f['source_audio_teacher'] == 0.0
 
 
 def test_features_empty_meta_is_all_none_except_flags():
@@ -36,10 +36,10 @@ def test_features_empty_meta_is_all_none_except_flags():
     assert f['method_gap'] == 0.0 and f['method_fallback'] == 0.0
 
 
-def test_features_pro_clip_review_source_flag():
-    f = tcm.features_from_record({'student_method': 'swing_detector_wrist_peak', 'source': 'pro_clip_review'})
+def test_features_audio_teacher_source_flag():
+    f = tcm.features_from_record({'student_method': 'swing_detector_wrist_peak', 'source': 'audio_teacher'})
     assert f['method_wrist_peak'] == 1.0
-    assert f['source_pro_clip_review'] == 1.0
+    assert f['source_audio_teacher'] == 1.0
 
 
 def test_to_matrix_shape_and_signed_target():
@@ -83,7 +83,7 @@ def test_main_trains_on_synthetic_rows(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(tcm, 'MODEL_PATH', str(tmp_path / 'contact_frame_model.pkl'))
     monkeypatch.setattr(tcm, 'META_PATH', str(tmp_path / 'contact_frame_model_meta.json'))
 
-    tcm.main()
+    tcm.main([])
 
     assert os.path.exists(tcm.MODEL_PATH)
     meta = json.loads(open(tcm.META_PATH).read())

@@ -155,10 +155,10 @@ def _dist(errors, label):
           f'<=3f={_within(errors,3):.0%}  <=5f={_within(errors,5):.0%}')
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument('--reg', choices=['gb', 'huber'], default='gb')
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     if not os.path.exists(LOG_PATH):
         print(f'No log at {LOG_PATH} -- nothing to train on yet.')
