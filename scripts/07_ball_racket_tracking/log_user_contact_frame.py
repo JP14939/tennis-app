@@ -27,7 +27,7 @@ def log_if_possible(video_path, frames, fps, user_frame):
     """frames: the same per-frame pose list extract_user_poses() already
     produced for this request (reused, no extra pose extraction)."""
     try:
-        from racket_tracker import find_contact_frame
+        from racket_tracker import find_contact_frame, contact_frame_meta
         from verify_shot_contact import track_racket_and_ball_cropped
         import contact_frame_training_log as frame_log
 
@@ -48,8 +48,27 @@ def log_if_possible(video_path, frames, fps, user_frame):
             print('  [contact-frame-training] skipped: no racket/ball evidence found', file=sys.stderr)
             return
 
+        meta = contact_frame_meta(detections, user_frame, fps, search_window_sec=SEARCH_WINDOW_SEC)
         frame_log.log_example(
             student_frame, confidence, method, user_frame, fps, source='user_submitted',
+            student_meta=meta,
         )
+
+        # Ride along: if a trained contact-frame model exists, log its
+        # corrected frame vs the same human mark so it earns trust
+        # independently (contact_frame_ml_training_log). Zero extra cost.
+        try:
+            from train_contact_frame_model import predict_contact_offset
+            import contact_frame_ml_training_log as ml_log
+
+            offset, available = predict_contact_offset({
+                'student_method': method, 'student_confidence': confidence,
+                'fps': fps, 'student_meta': meta, 'source': 'user_submitted',
+            })
+            if available:
+                ml_log.log_example(student_frame + offset, student_frame, user_frame, fps,
+                                   source='user_submitted', clip_path=video_path)
+        except Exception as e:
+            print(f'  [contact-frame-ml] skipped: {e}', file=sys.stderr)
     except Exception as e:
         print(f'  [contact-frame-training] skipped: {e}', file=sys.stderr)

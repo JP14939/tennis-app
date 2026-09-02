@@ -10,6 +10,7 @@ Provides:
   racket_path(detections)            -> list of {frame, x, y, conf} centroids
 """
 import math
+import os
 import sys
 
 import cv2
@@ -33,12 +34,70 @@ def get_model(model_name='yolo11n.pt'):
     return _model
 
 
+# Phase 3 fine-tuned, single-class (ball only) -- see
+# scripts/07_ball_racket_tracking/train_ball_detector.py. Measured 93.3%
+# detection / 0.557 avg confidence at contact on 60 real saved swings vs.
+# the generic COCO model's 50.0%/0.41 (audit_finetuned_ball_confidence.py).
+# Kept as a SEPARATE model from get_model() rather than replacing it -- the
+# generic model still does racket detection (COCO class 38, no fine-tuned
+# racket-bbox model exists) and every ball-detecting call site needs both.
+BALL_MODEL_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), '..', '..',
+    'data', '10b_ball_detection', 'yolo_ball_run_v1', 'weights', 'best.pt',
+)
+
+_ball_model = None
+_ball_model_missing_logged = False
+
+
+def get_ball_model():
+    """Returns the fine-tuned ball model, or None if the weights file isn't
+    there (e.g. a dev machine that hasn't run train_ball_detector.py) --
+    callers fall back to the generic COCO model's own BALL_CLASS in that
+    case, so ball detection degrades gracefully rather than breaking."""
+    global _ball_model, _ball_model_missing_logged
+    if _ball_model is None:
+        if not os.path.exists(BALL_MODEL_PATH):
+            if not _ball_model_missing_logged:
+                print(f'[racket_tracker] no fine-tuned ball model at {BALL_MODEL_PATH} -- '
+                      'falling back to the generic COCO ball class', file=sys.stderr)
+                _ball_model_missing_logged = True
+            return None
+        _ball_model = YOLO(BALL_MODEL_PATH)
+    return _ball_model
+
+
+def detect_ball(image, conf_threshold=CONF_THRESHOLD):
+    """Runs the fine-tuned single-class ball model (get_ball_model()) on a
+    frame or crop -- no `classes=` filter needed, it only knows one class.
+    Returns (ball_box, ball_conf), both None if no ball model is available
+    or none was found above threshold. Shared by every ball-detecting call
+    site (track_racket_and_ball, track_racket_and_ball_cropped,
+    track_racket_tip_and_ball_cropped) so the fallback logic lives once."""
+    ball_model = get_ball_model()
+    if ball_model is None:
+        return None, None
+    results = ball_model.predict(image, conf=conf_threshold, verbose=False)
+    ball_box = ball_conf = None
+    for box in results[0].boxes:
+        conf = float(box.conf[0])
+        if ball_conf is None or conf > ball_conf:
+            ball_box, ball_conf = box.xyxy[0].tolist(), conf
+    return ball_box, ball_conf
+
+
 def track_racket_and_ball(video_path, model=None, frame_range=None):
     """Run detection on every frame, or only frame_range=(start, end) if given
     (much faster when only a small window around a known contact point matters,
     e.g. auditing pro clips rather than processing a whole clip). Returns
     (detections, fps)."""
     model = model or get_model()
+    ball_model = get_ball_model()
+    # Only ask the generic model for the ball class when there's no
+    # fine-tuned one to defer to -- avoids a redundant (and less accurate)
+    # second opinion when the real ball model is available.
+    racket_classes = [RACKET_CLASS] if ball_model is not None else [RACKET_CLASS, BALL_CLASS]
+
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f'Cannot open video: {video_path}')
@@ -60,7 +119,7 @@ def track_racket_and_ball(video_path, model=None, frame_range=None):
         ret, frame = cap.read()
         if not ret:
             break
-        results = model.predict(frame, classes=[RACKET_CLASS, BALL_CLASS],
+        results = model.predict(frame, classes=racket_classes,
                                  conf=CONF_THRESHOLD, verbose=False)
         racket_box = racket_conf = ball_box = ball_conf = None
         for box in results[0].boxes:
@@ -69,8 +128,10 @@ def track_racket_and_ball(video_path, model=None, frame_range=None):
             xyxy = box.xyxy[0].tolist()
             if cls == RACKET_CLASS and (racket_conf is None or conf > racket_conf):
                 racket_box, racket_conf = xyxy, conf
-            if cls == BALL_CLASS and (ball_conf is None or conf > ball_conf):
+            if ball_model is None and cls == BALL_CLASS and (ball_conf is None or conf > ball_conf):
                 ball_box, ball_conf = xyxy, conf
+        if ball_model is not None:
+            ball_box, ball_conf = detect_ball(frame)
 
         detections.append({
             'frame': idx,
@@ -134,8 +195,7 @@ def find_contact_frame(detections, fallback_frame, fps, search_window_sec=0.3):
 
     Returns (frame_idx, confidence, method).
     """
-    window = int(search_window_sec * fps)
-    window_dets = [d for d in detections if abs(d['frame'] - fallback_frame) <= window]
+    window_dets = _window_dets(detections, fallback_frame, fps, search_window_sec)
 
     gap_result = _find_gap_contact(window_dets)
     if gap_result:
@@ -149,6 +209,32 @@ def find_contact_frame(detections, fallback_frame, fps, search_window_sec=0.3):
         return best['frame'], conf, 'ball_racket_proximity'
 
     return fallback_frame, 0.3, 'wrist_velocity_fallback'
+
+
+def _window_dets(detections, fallback_frame, fps, search_window_sec):
+    window = int(search_window_sec * fps)
+    return [d for d in detections if abs(d['frame'] - fallback_frame) <= window]
+
+
+def contact_frame_meta(detections, fallback_frame, fps, search_window_sec=0.3):
+    """Geometric signals about the racket/ball evidence in the same window
+    find_contact_frame() searches -- fed into train_contact_frame_model.py as
+    features so a learned model can predict how far off the heuristic's
+    guess is. Returns None values where the evidence doesn't exist rather
+    than 0 (the trainer's imputer fills them)."""
+    wd = _window_dets(detections, fallback_frame, fps, search_window_sec)
+    both = [d for d in wd if d['racket_box'] and d['ball_box']]
+    gap = _find_gap_contact(wd)
+    return {
+        'n_ball_detections_in_window': sum(1 for d in wd if d['ball_box']),
+        'n_racket_detections_in_window': sum(1 for d in wd if d['racket_box']),
+        'n_both_present': len(both),
+        'occlusion_gap_frames': gap[2] if gap else None,
+        'min_ball_racket_dist': (
+            round(min(_dist(d['racket_box'], d['ball_box']) for d in both), 2) if both else None
+        ),
+        'window_dets_total': len(wd),
+    }
 
 
 def _center_in_original_space(box, det):
