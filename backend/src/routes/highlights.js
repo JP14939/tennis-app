@@ -13,8 +13,15 @@ const {
   OUTCOME_TAGS, MAX_LENGTHS, isOutcomeTag, isBoundaryNote, isText,
 } = require('../domain/invariants');
 const { validate, optional, oneOfMessage } = require('../validation/validateBody');
+const { rateLimit } = require('../middleware/rateLimit');
 
 const router = express.Router();
+
+// Same resource-exhaustion reasoning as analyse.js's analyseLimiter -- a full
+// match video (up to 2GB) runs pose extraction for up to JOB_TIMEOUT_MS (1
+// hour) per request, and requirePremium alone doesn't cap how many of these
+// a premium account can queue. Keyed by user id.
+const highlightsUploadLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 5, keyPrefix: 'highlights-upload', keyGenerator: (req) => req.user?.id ?? req.ip });
 
 const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads');
 // Persistent -- unlike uploads/, rally clips must outlive the request that
@@ -149,7 +156,7 @@ function runJob(jobId, videoPath, userId) {
   });
 }
 
-router.post('/highlights/upload', requireAuth, requirePremium, upload.single('video'), (req, res) => {
+router.post('/highlights/upload', requireAuth, requirePremium, highlightsUploadLimiter, upload.single('video'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No video file uploaded (expected field "video")' });
   }

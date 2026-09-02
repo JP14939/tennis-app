@@ -13,8 +13,23 @@ const { reserveDailyUsageSlot, releaseUsageSlot, LIMIT_EXCEEDED } = require('../
 const { runPythonJson } = require('../utils/runPythonJson');
 const { safeVideoExt, videoFileFilter } = require('../utils/videoUpload');
 const { isTimestampSec } = require('../domain/invariants');
+const { rateLimit } = require('../middleware/rateLimit');
 
 const router = express.Router();
+
+// FREE_DAILY_LIMIT below only caps SUCCESSFUL saved-to-usage analyses --
+// releaseUsageSlot() un-reserves a failed one, by design, so a legitimate
+// user isn't charged for a request that errored through no fault of their
+// own. That means nothing was capping the number of *attempts*: a free
+// account submitting a video engineered to fail pose extraction (or a
+// premium account with no daily cap at all) could spawn the real
+// MediaPipe subprocess an unlimited number of times, exhausting the
+// single-box hosted deploy's CPU/memory -- the same resource-exhaustion
+// shape that already motivated requiring auth on calibration.js's
+// /check-setup. Keyed by user id (not IP) so it can't be sidestepped by
+// rotating accounts behind the same connection the way an IP-keyed limit
+// could be; generous enough that no real usage pattern should ever hit it.
+const analyseLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 30, keyPrefix: 'analyse', keyGenerator: (req) => req.user?.id ?? req.ip });
 
 const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads');
 const MATCHER = path.join(__dirname, '..', 'services', 'pro_matcher.py');
@@ -45,7 +60,7 @@ const upload = multer({
   limits: { fileSize: 200 * 1024 * 1024 }, // 200MB
 });
 
-router.post('/analyse', requireAuth, upload.single('video'), async (req, res) => {
+router.post('/analyse', requireAuth, analyseLimiter, upload.single('video'), async (req, res) => {
   const cleanup = () => {
     if (req.file) fs.unlink(req.file.path, () => {});
   };

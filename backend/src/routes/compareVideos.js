@@ -10,8 +10,14 @@ const { persistAndCrop, toUrl } = require('../utils/videoCrop');
 const { runPythonJson } = require('../utils/runPythonJson');
 const { safeVideoExt, videoFileFilter } = require('../utils/videoUpload');
 const { isTimestampSec } = require('../domain/invariants');
+const { rateLimit } = require('../middleware/rateLimit');
 
 const router = express.Router();
+
+// Same resource-exhaustion reasoning as analyse.js's analyseLimiter -- two
+// full videos processed sequentially per request, requirePremium doesn't cap
+// how many times a premium account can trigger it. Keyed by user id.
+const compareLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 15, keyPrefix: 'compare-videos', keyGenerator: (req) => req.user?.id ?? req.ip });
 
 const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads');
 const MATCHER = path.join(__dirname, '..', 'services', 'video_matcher.py');
@@ -34,7 +40,7 @@ const upload = multer({
   limits: { fileSize: 200 * 1024 * 1024 }, // 200MB per file
 });
 
-router.post('/compare-videos', requireAuth, requirePremium, upload.fields([
+router.post('/compare-videos', requireAuth, requirePremium, compareLimiter, upload.fields([
   { name: 'reference', maxCount: 1 },
   { name: 'yours', maxCount: 1 },
 ]), (req, res) => {

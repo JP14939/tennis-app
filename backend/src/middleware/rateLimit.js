@@ -23,12 +23,15 @@ setInterval(() => {
 }, SWEEP_INTERVAL_MS).unref();
 
 // windowMs/max define the limit; keyPrefix namespaces this limiter's buckets
-// from any other limiter keyed by the same IP. Keyed by req.ip -- requires
-// `app.set('trust proxy', ...)` upstream (see server.js) to reflect the real
-// client address rather than the Caddy reverse-proxy container's own IP.
-function rateLimit({ windowMs, max, keyPrefix }) {
+// from any other limiter keyed by the same value. Keyed by req.ip by default
+// -- requires `app.set('trust proxy', ...)` upstream (see server.js) to
+// reflect the real client address rather than the Caddy reverse-proxy
+// container's own IP. `keyGenerator` lets a route key by something else
+// instead (e.g. the authenticated user id, for a limiter that must survive
+// the caller rotating IPs/accounts less easily than an IP-only key would).
+function rateLimit({ windowMs, max, keyPrefix, keyGenerator = (req) => req.ip }) {
   return (req, res, next) => {
-    const key = `${keyPrefix}:${req.ip}`;
+    const key = `${keyPrefix}:${keyGenerator(req)}`;
     const now = Date.now();
     let bucket = buckets.get(key);
     if (!bucket || now - bucket.windowStart > windowMs) {
