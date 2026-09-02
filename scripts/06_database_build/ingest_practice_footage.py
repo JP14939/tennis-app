@@ -10,15 +10,22 @@ real strike, classify each one's shot type, and build a pro-DB entry per
 survivor.
 
 MVP scope (2026-09-02): SINGLE-PERSON only -- no multi-person pose work.
-MediaPipe picks one player per frame; the trajectory/visibility gates below
-drop most far-player and mid-rally-ambiguous swings, and Jack's Pro Clip
-Review pass is the real quality backstop. New entries go live in the match
-pool immediately (unreviewed), same as the existing never-reviewed entries.
+MediaPipe picks one player per frame; the gates below drop most far-player and
+mid-rally-ambiguous swings, and Jack's Pro Clip Review pass is the real quality
+backstop. New entries go live in the match pool immediately (unreviewed), same
+as the existing never-reviewed entries.
+
+NO Claude by default (Jack's call 2026-09-02): the "is this a real strike?"
+filter is the free geometric one (filter_verified_swings -- keeps a swing only
+if find_contact_frame found real racket/ball evidence, drops bare
+wrist-velocity peaks), and the shot type is the free rule-based classify().
+Pass --use-claude to gate each candidate through the Claude teacher instead
+(cleaner input to review, ~$0.5/video).
 
 Reuses, unchanged:
   extract_poses, compute_wrist_velocity/find_swing_peaks              (02, 03)
-  verify_swings + get_verified_shot_contact ("real strike?" + type)  (16)
-  get_verified_shot_type (per-swing shot type)                       (14)
+  verify_swings + filter_verified_swings ("real strike?" geometric)  (16)
+  classify() rule scorers / get_verified_shot_type (--use-claude)    (14)
   detect_rallies.refine_contact_times (audio "pock" contact frame)   (11)
   trajectory_extraction.extract_swing_trajectory / build_swing_overlay (06)
   infer_camera_angle / infer_angle_from_source                       (05)
@@ -30,15 +37,11 @@ per-swing sidecar data/03_swing_detection/<name>_swings_validated.json
 carrying shot_type / contact_method / verify_source / classifier_source so
 the new entries are heavily filterable later.
 
-Env:
-  RALLYMAX_SKIP_CONTACT_VERIFIER=1   skip the Claude "is this a real shot" call
-  RALLYMAX_SKIP_CLASSIFIER_VERIFIER=1 skip the Claude shot-type call
-  (both off by default -> Claude is used; each is one API call per candidate)
-
 Usage:
   python ingest_practice_footage.py practice_02 [practice_03 ...]
   python ingest_practice_footage.py --all
   python ingest_practice_footage.py practice_02 --limit 20   # first 20 swings (a yield probe)
+  python ingest_practice_footage.py practice_02 --use-claude  # gate via Claude teacher
 """
 import argparse
 import contextlib
@@ -69,8 +72,9 @@ from detect_swings import (  # noqa: E402
 )
 from extract_clips import extract_clip  # noqa: E402
 from infer_angle import infer_camera_angle, infer_angle_from_source, create_landmarker  # noqa: E402
-from verify_shot_contact import verify_swings  # noqa: E402
+from verify_shot_contact import verify_swings, filter_verified_swings  # noqa: E402
 from verify_shot_contact_verified import get_verified_shot_contact  # noqa: E402
+from classify_shot import classify  # noqa: E402
 from classify_shot_verified import get_verified_shot_type  # noqa: E402
 from detect_rallies import refine_contact_times, _as_classify_frames  # noqa: E402
 from trajectory_extraction import build_pose_index, extract_swing_trajectory, build_swing_overlay  # noqa: E402
@@ -82,9 +86,6 @@ CLIPS_DIR = os.path.join(PRO_CLIPS_DIR, 'practice')
 PRO_DB_PATH = os.path.join(DATA_DIR, '06_pro_database', 'pro_database.json')
 OVERLAY_DB_PATH = os.path.join(DATA_DIR, '06_pro_database', 'overlay_trajectories.json')
 CHECKPOINT_PATH = os.path.join(DATA_DIR, '06_pro_database', '.practice_ingest_checkpoint.jsonl')
-
-SKIP_CONTACT_VERIFIER = os.environ.get('RALLYMAX_SKIP_CONTACT_VERIFIER') == '1'
-SKIP_CLASSIFIER_VERIFIER = os.environ.get('RALLYMAX_SKIP_CLASSIFIER_VERIFIER') == '1'
 
 # Per-video swing-id block. > 100000 is the sentinel for "this entry stores its
 # own source_video / poses_path / clip_start_frame and is NOT resolvable via
@@ -146,7 +147,33 @@ def _passes_quality_gate(sw, trajectory):
     return True, None
 
 
-def process_video(name, db_ids, checkpoint, limit=None):
+def _real_strike_and_type(video_path, sw, fps, classify_frames, use_claude):
+    """Returns (is_real_strike, shot_type_or_None, verify_source, classifier_source).
+    Default: free geometric strike filter + rule classifier. use_claude: the
+    Claude teacher for both."""
+    contact_t = sw.get('contact_time_sec', sw['peak_time'])
+    if use_claude:
+        is_real, vmeta = get_verified_shot_contact(video_path, sw, fps, use_verifier=True)
+        if not is_real:
+            return False, None, vmeta.get('source'), None
+        shot_type, csrc = vmeta.get('shot_type'), vmeta.get('source')
+        if shot_type not in VALID_SHOT_TYPES:
+            shot_type, cmeta = get_verified_shot_type(
+                video_path, contact_t, use_verifier=True, frames_fps=(classify_frames, fps))
+            csrc = cmeta.get('source')
+        return True, shot_type, vmeta.get('source'), csrc
+    # free path: filter_verified_swings keeps a swing only if find_contact_frame
+    # found real racket/ball evidence (drops bare wrist-velocity peaks).
+    if not filter_verified_swings([sw]):
+        return False, None, 'geometric', None
+    try:
+        res = classify(video_path, contact_t, frames_fps=(classify_frames, fps))
+        return True, res.get('shot_type'), 'geometric', 'rule'
+    except Exception:  # noqa: BLE001
+        return True, None, 'geometric', 'rule'
+
+
+def process_video(name, db_ids, checkpoint, limit=None, use_claude=False):
     video_path = os.path.join(SRC_DIR, f'{name}.mp4')
     if not os.path.exists(video_path):
         print(f'  MISSING: {video_path}', file=sys.stderr)
@@ -198,22 +225,13 @@ def process_video(name, db_ids, checkpoint, limit=None):
 
         rec = {'id': eid, 'video': name, 'swing_index': i, 'peak_frame': sw['peak_frame']}
         try:
-            is_real, vmeta = get_verified_shot_contact(
-                video_path, sw, fps, use_verifier=not SKIP_CONTACT_VERIFIER)
+            is_real, shot_type, verify_source, class_source = _real_strike_and_type(
+                video_path, sw, fps, classify_frames, use_claude)
             if not is_real:
                 tally['not_real_shot'] += 1
                 rec['result'] = 'not_real_shot'
                 _append_checkpoint(rec)
                 continue
-
-            shot_type = vmeta.get('shot_type')
-            class_source = vmeta.get('source')
-            if shot_type not in VALID_SHOT_TYPES:
-                shot_type, cmeta = get_verified_shot_type(
-                    video_path, sw.get('contact_time_sec', sw['peak_time']),
-                    use_verifier=not SKIP_CLASSIFIER_VERIFIER,
-                    frames_fps=(classify_frames, fps))
-                class_source = cmeta.get('source')
             if shot_type not in VALID_SHOT_TYPES:
                 tally['bad_shot_type'] += 1
                 rec['result'] = f'bad_shot_type:{shot_type}'
@@ -268,7 +286,7 @@ def process_video(name, db_ids, checkpoint, limit=None):
                 'clip_start_frame': clip_start_frame,
                 'ingest': 'practice_mvp',
                 'contact_method': sw.get('contact_method'),
-                'verify_source': vmeta.get('source'),
+                'verify_source': verify_source,
                 'classifier_source': class_source,
             }
             entries.append(entry)
@@ -278,7 +296,7 @@ def process_video(name, db_ids, checkpoint, limit=None):
                 'peak_frame': sw['peak_frame'], 'contact_frame': contact_frame,
                 'contact_method': sw.get('contact_method'),
                 'contact_confidence': sw.get('contact_confidence'),
-                'verify_source': vmeta.get('source'), 'classifier_source': class_source,
+                'verify_source': verify_source, 'classifier_source': class_source,
                 'clip_path': clip_rel, 'camera_angle': camera_angle,
             })
             tally['appended'] += 1
@@ -340,6 +358,9 @@ def main(argv=None):
     ap.add_argument('videos', nargs='*', help='practice_02 practice_03 ... (basename, no .mp4)')
     ap.add_argument('--all', action='store_true', help='every practice_*.mp4 in the source dir')
     ap.add_argument('--limit', type=int, help='only the first N detected swings per video (yield probe)')
+    ap.add_argument('--use-claude', action='store_true',
+                    help='gate each candidate through the Claude teacher (real-strike + shot type) '
+                         'instead of the free geometric filter + rule classifier')
     args = ap.parse_args(argv)
 
     names = args.videos
@@ -354,7 +375,8 @@ def main(argv=None):
 
     grand = {}
     for name in names:
-        entries, overlays, sidecar = process_video(name, db_ids, checkpoint, limit=args.limit)
+        entries, overlays, sidecar = process_video(
+            name, db_ids, checkpoint, limit=args.limit, use_claude=args.use_claude)
         if entries:
             _merge_into_db(entries, overlays)
             db_ids.update(e['id'] for e in entries)
