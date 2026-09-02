@@ -90,6 +90,31 @@ def test_missing_lookup_single_when_no_pose_file(monkeypatch):
     assert res['status'] == 'missing_lookup'
 
 
+def test_practice_entry_uses_its_own_poses_path_and_clip_start_frame(monkeypatch, tmp_path):
+    poses_file = tmp_path / 'practice_02_poses.json'
+    poses_file.write_text('{}')
+    monkeypatch.setattr(rh, '_load_pose_index', lambda path: (FPS, _pose_index()))
+    entry = _entry(shot_type='backhand', swing_id=200005, clip_contact_time_sec=1.1)
+    entry['id'] = 'practice_200005'
+    entry['poses_path'] = str(poses_file)      # absolute -> used directly
+    entry['clip_start_frame'] = 150
+
+    res = rh.reextract_for_entry(entry, lookup={})  # empty lookup -> would 'missing' without the branch
+
+    assert res['status'] == 'ok'
+    # new_peak_frame = clip_start_frame(150) + round(1.1 * 20) = 172
+    assert res['new_peak_frame'] == 172
+    assert entry['trajectory'] == [{'t': 0.0, 'landmarks': {}}]  # not mutated
+
+
+def test_practice_entry_missing_pose_file(monkeypatch):
+    entry = _entry(swing_id=200005)
+    entry['poses_path'] = '/no/such/practice_poses.json'
+    entry['clip_start_frame'] = 150
+    res = rh.reextract_for_entry(entry, lookup={})
+    assert res['status'] == 'missing_lookup'
+
+
 def test_too_few_points(monkeypatch):
     monkeypatch.setattr(rh, '_load_pose_index', lambda path: (FPS, _pose_index()))
     monkeypatch.setattr(rh, 'extract_swing_trajectory', lambda swing, idx, fps: None)

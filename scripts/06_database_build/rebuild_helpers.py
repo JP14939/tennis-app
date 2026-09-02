@@ -113,6 +113,28 @@ def reextract_for_entry(entry, lookup=None, single=False,
     swing_id = entry['swing_id']
     contact = entry['clip_contact_time_sec']
 
+    # Practice-footage entries (ingest_practice_footage.py) carry their own
+    # source pose file + clip frame-0 offset, because their swing_ids don't fit
+    # source_footage_lookup's per-shot-type // 1000 scheme. Use those directly.
+    if entry.get('poses_path') and entry.get('clip_start_frame') is not None:
+        poses_abs = entry['poses_path']
+        if not os.path.isabs(poses_abs):
+            from paths import DATA_DIR  # noqa: PLC0415
+            poses_abs = os.path.join(DATA_DIR, entry['poses_path'])
+        if not os.path.exists(poses_abs):
+            return {'status': 'missing_lookup', 'trajectory': None, 'overlay': None,
+                    'new_peak_frame': None, 'new_peak_time': None}
+        fps, pose_index = _load_pose_index(poses_abs)
+        clip_start_frame = entry['clip_start_frame']
+        new_peak_frame = clip_start_frame + round(contact * fps)
+        trajectory = extract_swing_trajectory({'peak_frame': new_peak_frame}, pose_index, fps)
+        if trajectory is None:
+            return {'status': 'too_few_points', 'trajectory': None, 'overlay': None,
+                    'new_peak_frame': new_peak_frame, 'new_peak_time': round(new_peak_frame / fps, 3)}
+        overlay = build_swing_overlay(pose_index, fps, new_peak_frame, clip_start_frame)
+        return {'status': 'ok', 'trajectory': trajectory, 'overlay': overlay,
+                'new_peak_frame': new_peak_frame, 'new_peak_time': round(new_peak_frame / fps, 3)}
+
     if single:
         poses_path = poses_path_for(shot_type, swing_id)
         if not poses_path or not os.path.exists(poses_path):

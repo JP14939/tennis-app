@@ -104,7 +104,12 @@ def main():
         # attached when the source file actually exists on disk, so a moved
         # or never-transferred source video degrades to no button rather
         # than a dead link.
-        source_abs_path = source_video_for(entry['shot_type'], entry['swing_id'])
+        # practice-footage entries store their own source path; the curated
+        # ones resolve it from the shot_type + swing_id // 1000 job bucket.
+        if entry.get('source_video'):
+            source_abs_path = os.path.join(SOURCE_VIDEOS_DIR, entry['source_video'])
+        else:
+            source_abs_path = source_video_for(entry['shot_type'], entry['swing_id'])
         source_video_url = None
         if source_abs_path and os.path.exists(source_abs_path):
             source_video_url = to_url('/source-footage', SOURCE_VIDEOS_DIR, source_abs_path)
