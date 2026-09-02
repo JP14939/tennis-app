@@ -142,7 +142,11 @@ def get_verified_shot_contact(video_path, swing, fps, use_verifier=True, log_loc
 
     try:
         window_frames = int((SEARCH_WINDOW_SEC + EXTRA_PAD_SEC) * fps)
-        frame_range = (swing['peak_frame'] - window_frames, swing['peak_frame'] + window_frames)
+        # Prefer an accurate contact frame when a caller set one (e.g.
+        # detect_rallies' audio-onset refinement); the wrist peak is ~13f
+        # late, which pushes the sampled window past impact.
+        anchor_frame = swing.get('contact_frame', swing['peak_frame'])
+        frame_range = (anchor_frame - window_frames, anchor_frame + window_frames)
         sampled = _sample_frames(video_path, frame_range)
         teacher_result = verify_shot_contact(sampled, student_is_shot)
     except Exception as e:

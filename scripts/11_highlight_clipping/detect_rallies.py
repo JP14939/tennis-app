@@ -39,6 +39,7 @@ SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '02_pose_extraction'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '03_swing_detection'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '04_clip_extraction'))
+sys.path.insert(0, os.path.join(SCRIPTS_DIR, '07_ball_racket_tracking'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '14_shot_classifier'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '16_shot_verification'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '00_utils'))
@@ -131,6 +132,50 @@ def _log_classifiers_against_known_teacher_pick(video_path, peak_time, teacher_p
         pass  # no trained model yet, or it failed on this swing -- not fatal, same as classify_shot_verified.py's own handling
 
 
+def refine_contact_times(video_path, swings, fps):
+    """
+    The wrist-velocity peak (`sw['peak_time']`) is a *swing* detector, not a
+    *contact* detector -- it lands ~13 frames into the follow-through, biased
+    late. A groundstroke frame that far past impact (racket up and behind the
+    head) reads as a serve to the Claude shot verifier, which is most of the
+    "everything is a serve" mis-classification blocking rally detection.
+
+    The match video carries audio, so the ball-strike "pock" pins contact to
+    ~1 frame. For each swing, set `sw['contact_time_sec']` / `sw['contact_frame']`
+    from the audio onset detector when it's confident, restricted to +-0.5s of
+    the wrist peak so a loud non-ball sound elsewhere can't run away with it.
+    Falls back to the wrist peak on no audio / no model / not confident / any
+    error -- behaviour is then identical to before this existed.
+    """
+    for sw in swings:
+        sw.setdefault('contact_time_sec', sw['peak_time'])
+    try:
+        from audio_contact import detect_contact  # noqa: PLC0415
+    except Exception as e:  # noqa: BLE001
+        print(f'  [audio-contact] rally refine unavailable: {e}', file=sys.stderr)
+        return
+    n_confident = 0
+    for sw in swings:
+        try:
+            guess = sw.get('contact_frame_guess')
+            pose_pred = (guess / fps) if guess is not None else sw['peak_time']
+            ac = detect_contact(
+                video_path, anchor_time_sec=sw['peak_time'], search_window_sec=0.5,
+                video_hints={'wrist_peak_sec': sw['peak_time'], 'pose_pred_sec': pose_pred},
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f'  [audio-contact] swing at {sw["peak_time"]:.1f}s skipped: {e}', file=sys.stderr)
+            continue
+        if ac and ac['confident']:
+            sw['contact_time_sec'] = ac['contact_time_sec']
+            sw['contact_frame'] = round(ac['contact_time_sec'] * fps)
+            sw['contact_method_audio'] = 'audio_onset'
+            n_confident += 1
+    if n_confident:
+        print(f'  Audio onset refined the contact frame for {n_confident}/{len(swings)} swings',
+              file=sys.stderr)
+
+
 def filter_to_real_rally_shots(video_path, swings, fps, frames, log_lock=None):
     """
     Runs every wrist-velocity candidate through the shot-contact verifier
@@ -142,6 +187,7 @@ def filter_to_real_rally_shots(video_path, swings, fps, frames, log_lock=None):
     here. Mutates nothing; returns a new filtered+annotated list.
     """
     verify_swings(video_path, swings, fps, frames=frames)
+    refine_contact_times(video_path, swings, fps)
     classify_frames = _as_classify_frames(frames)
 
     kept = []
@@ -162,7 +208,8 @@ def filter_to_real_rally_shots(video_path, swings, fps, frames, log_lock=None):
             # letting classify() re-extract from scratch -- see that
             # function's docstring for why that matters.
             shot_type, _classify_meta = get_verified_shot_type(
-                video_path, sw['peak_time'], use_verifier=not SKIP_CLASSIFIER_VERIFIER,
+                video_path, sw.get('contact_time_sec', sw['peak_time']),
+                use_verifier=not SKIP_CLASSIFIER_VERIFIER,
                 frames_fps=(classify_frames, fps), log_lock=log_lock)
         elif verify_meta.get('source') == 'claude_verified':
             # The contact verifier's combined call already answered
@@ -179,7 +226,8 @@ def filter_to_real_rally_shots(video_path, swings, fps, frames, log_lock=None):
             # 108 real Claude calls on IMG_5822.MOV only produced 1 logged
             # training example before this fix.)
             _log_classifiers_against_known_teacher_pick(
-                video_path, sw['peak_time'], shot_type, classify_frames, fps, log_lock)
+                video_path, sw.get('contact_time_sec', sw['peak_time']),
+                shot_type, classify_frames, fps, log_lock)
 
         sw['shot_type'] = shot_type
         sw['verify_source'] = verify_meta.get('source')
@@ -217,7 +265,9 @@ def apply_serve_gate(classified_swings, rally_gap_sec):
     last_time = None
 
     for sw in classified_swings:
-        peak_time = sw['peak_time']
+        # Prefer the audio-refined contact time (set in refine_contact_times);
+        # the wrist peak is ~13f late, enough to smear a point boundary.
+        peak_time = sw.get('contact_time_sec', sw['peak_time'])
         if last_time is not None and (peak_time - last_time) > rally_gap_sec:
             serve_open = False
         last_time = peak_time
