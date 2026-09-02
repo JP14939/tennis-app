@@ -17,6 +17,7 @@ import { playTapSound, playCompleteSound, playAchievementSound } from '../utils/
 import { BackChevronIcon, ShareIcon, CheckIcon, FlagIcon } from '../components/icons';
 import ScoreCard from '../components/ScoreCard';
 import AngleRow from '../components/AngleRow';
+import StatCard from '../components/StatCard';
 import PhaseBreakdown, { PHASE_LABELS, PHASE_ORDER, phaseColor } from '../components/PhaseBreakdown';
 import TipsSection from '../components/TipsSection';
 import FriendPickerModal from '../components/FriendPickerModal';
@@ -493,6 +494,13 @@ export default function ResultsScreen({ navigation, route }) {
                 <Text style={s.sectionTitle}>Coach notes</Text>
                 <NotesBlock notes={notes} phaseKey={null} canAddNotes={!!canAddNotes} onAdd={handleAddNote} />
               </View>
+            )}
+
+            {/* Ball speed at the net crossing -- absent (not dashed) when
+                unavailable, e.g. close-up framing or the net wasn't visible;
+                see scripts/07_ball_racket_tracking/ball_speed.py. */}
+            {result.ball_speed_kmh != null && (
+              <StatCard label="Ball speed at net" value={`${result.ball_speed_kmh} km/h`} />
             )}
 
             {/* Angle info */}
