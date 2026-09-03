@@ -66,6 +66,18 @@ def correct_shot_type(entry_id, new_shot_type, name=None):
     if new_shot_type == old_shot_type:
         raise ValueError(f'{entry_id} is already labeled {old_shot_type}')
 
+    # Practice-footage entries (ingest_practice_footage.py) keep their clip in
+    # the flat practice/ folder -- clip_path isn't <shot_type>/basename, so
+    # there's nothing to move; just relabel.
+    if str(entry.get('clip_path', '')).startswith('practice/'):
+        entry['shot_type'] = new_shot_type
+        with open(PRO_DB_PATH, 'w') as f:
+            json.dump(db, f)
+        clip_review_log.log_verdict(
+            entry_id, 'shot_type_corrected', note=f'{old_shot_type} -> {new_shot_type}', name=name)
+        return {'old_shot_type': old_shot_type, 'new_shot_type': new_shot_type,
+                'clip_path': entry['clip_path']}
+
     basename = os.path.basename(entry['clip_path'])
 
     old_main_path = os.path.join(PRO_CLIPS_DIR, entry['clip_path'])

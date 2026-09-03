@@ -238,7 +238,10 @@ def process_video(name, db_ids, checkpoint, limit=None, use_claude=False):
                 _append_checkpoint(rec)
                 continue
 
-            contact_frame = int(sw.get('contact_frame') or sw['peak_frame'])
+            # Best contact-frame anchor available: audio onset (if confident) >
+            # racket/ball find_contact_frame guess (~3-4f off) > wrist peak
+            # (~13f late). Jack fine-tunes in review either way.
+            contact_frame = int(sw.get('contact_frame') or sw.get('contact_frame_guess') or sw['peak_frame'])
             trajectory = extract_swing_trajectory({'peak_frame': contact_frame}, pose_index, fps)
             ok, why = _passes_quality_gate(sw, trajectory)
             if not ok:
