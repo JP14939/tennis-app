@@ -15,6 +15,29 @@ gets resolved.
 
 ---
 
+## New from the 2026-09-03 session (audio-review-all + practice footage)
+
+Full detail: `HANDOVER.md` "Session 2026-09-03".
+
+1. **Work the Pro Clip Review queue.** ~300 entries now carry a machine
+   audio-guessed contact time (verdict note ends `"(audio)"`, shown as
+   "N with an audio-guessed contact time to check" on the review screen). For
+   each: confirm the contact frame is right (adjust if not) and check quality /
+   shot type. Approving or adjusting logs a real verdict and clears it from the
+   queue.
+2. **Decide on the practice-footage ingest.** A `--use-claude` run over all 4
+   court-level videos is in progress. The probe (practice_02) suggests low
+   quality: shot types nearly all mislabelled "forehand", contact frames ~13f
+   late, small/off-centre/2-player framing. If the full run confirms that, this
+   footage isn't worth the per-entry relabel+recontact grind — pick single-shot
+   slow-mo compilations instead (one player, side-on; `process_new_videos.py`
+   handles them). If you keep the practice entries, `correct_shot_type.py` and
+   `correct_contact_time.py` both work on them.
+3. **yt-dlp** on this machine is now 2026.08.19 (the 07.04 build 403s). Future
+   `download_videos.py` runs merge DASH streams via the venv's bundled ffmpeg.
+4. **Copy `pro_database.json` + `overlay_trajectories.json` to the server**
+   after any review batch or ingest (gitignored, CD never touches `data/`).
+
 ## New from the 2026-09-02 evening session (commit + detect_rallies + Phase B.2)
 
 Full detail: `HANDOVER.md` "Session 2026-09-02 (later still)".

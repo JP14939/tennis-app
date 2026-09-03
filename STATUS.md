@@ -6,7 +6,7 @@ where things stand in under 2 minutes. For the full detailed history, see
 `HANDOVER.md` (dated build log) and `TODO_MANUAL.md` (full backlog, also
 chronological) — this file is a filter on top of those, not a replacement.
 
-**Last updated:** 2026-09-02 (evening — session committed, detect_rallies + Phase B.2 done)
+**Last updated:** 2026-09-03 — audio-review-all + practice-footage ingestion (in progress)
 
 ---
 
@@ -53,38 +53,47 @@ Curated, not exhaustive — the full backlog lives in `TODO_MANUAL.md`.
    model for the rally-detection pipeline. **Real bottleneck: only 10 amateur
    backhand training examples** — needs more phone-style backhand footage.
    No model retrained/saved. Decisions in `TODO_MANUAL.md` 2026-09-02 item 4.
-4. **Pro Clip Review (Sprint 0) DONE and the DB rebuilt (2026-09-02).**
-   `rebuild_pro_database_from_verdicts.py --contact-predictions` ran:
+4. **Pro DB rebuilt (2026-09-02) + all contact times audio-anchored (2026-09-03).**
    `pro_database.json` **796 → 415 entries** (forehand 234, backhand 154,
-   serve 27), excluded entries dropped, contact times audio-filled where
-   confident + re-anchored, `view_direction` re-added. **The rebuilt
-   `pro_database.json` / `overlay_trajectories.json` are gitignored — Jack must
-   copy them (+ the new `pro_clip_contact_predictions.json`) to the server.**
-   Serve is thin (27). ~111 kept entries are flagged for a quick human
-   contact-mark pass in the Dev tool. Jack will source more footage to grow it.
-5. **Off-box database backups are set up but the end-to-end check is still
+   serve 27), excluded dropped, `view_direction` re-added. 2026-09-03:
+   `--apply-all-audio` put an audio-derived contact time on **every** one of the
+   219 non-hand-marked entries (0 placeholders left); ~300 entries are queued in
+   the Dev Pro Clip Review tool for Jack to eyeball the contact frame + quality.
+   **The rebuilt `pro_database.json` / `overlay_trajectories.json` are gitignored
+   — Jack must copy them to the server.**
+5. **Growing the DB from footage (2026-09-03, in progress).** yt-dlp fixed
+   (was 403ing; now merges DASH via the bundled ffmpeg). New
+   `ingest_practice_footage.py` pulls per-swing pro entries from court-level
+   practice/points footage. **Probe result: this footage yields poorly** —
+   Claude's real-shot filter works (~27% cut) but shot types come out ~all
+   "forehand" (audio contact detection fails on broadcast audio → contact frame
+   13f late) and the player is small / off-centre / 2-in-frame. A `--use-claude`
+   run over all 4 videos is going; Jack accepted the manual relabel+recontact
+   load. If it's as rough as the probe, single-shot slow-mo compilations are the
+   better path.
+6. **Off-box database backups are set up but the end-to-end check is still
    open.** B2 bucket `rallymax-db-backups`, `rclone` remote `b2remote` on
    the VPS (auth verified live), cron in `root`'s crontab (3am daily). Open
    since 2026-08-25: just needs someone to eyeball the bucket once for a
    real file landing after a 3am run to close it.
-6. **A real beta launch hasn't happened.** The product is feature-complete
+7. **A real beta launch hasn't happened.** The product is feature-complete
    well past the original MVP scope but has never been tested by real
    external users — biggest open strategic question.
-7. **Three backend-architecture decisions need Jack's call**, not urgent but
+8. **Three backend-architecture decisions need Jack's call**, not urgent but
    flagged: SQLite foreign-key enforcement (currently off, root cause of
    several fixed orphaned-row bugs), the Postgres migration timing, and
    whether to add a route-level auth-convention check. See `TODO_MANUAL.md`'s
    "Backend architecture backlog" section.
-8. **Resend sender domain still not set up, but a stopgap is live.**
+9. **Resend sender domain still not set up, but a stopgap is live.**
    Password reset emails now redirect to Jack's own inbox (with the real
    requester's address + reset link in the body) instead of silently
    failing to send — see `backend/src/utils/email.js`. Real users still
    can't self-serve a reset without Jack manually forwarding the link;
    only fixed properly once a verified sending domain is set up.
-9. **RevenueCat's live price point isn't confirmed anywhere in the docs.**
+10. **RevenueCat's live price point isn't confirmed anywhere in the docs.**
    The entitlement/payment mechanism is real and wired; the actual £ number
    hasn't been stated to me directly.
-10. **"Record now" live camera calibration hasn't been tested on a real
+11. **"Record now" live camera calibration hasn't been tested on a real
     phone** — flagged as higher priority than it looks, since it's a live
     feedback loop that can feel fine in a single-request test but laggy in
     continuous real use.

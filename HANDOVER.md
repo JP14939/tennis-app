@@ -2088,3 +2088,62 @@ change adding a `camera_roll_override` / `--camera-roll` param showed up in the
 working tree during this session without my action (a routine or another
 session). Coherent follow-up to the camera-roll feature, **left uncommitted** for
 Jack to review.
+
+## Session 2026-09-03 — grow the pro DB: audio-review-all + practice-footage ingestion
+
+### Part 1 — audio-review every existing contact time (`708299e`, applied)
+
+`rebuild_pro_database_from_verdicts.py --apply-all-audio` applies **every** audio
+onset pick (not just the confident ~half), re-anchors the trajectory, and logs
+**no verdict** — so all 219 non-hand-marked entries stay in the Pro Clip Review
+queue with the audio-guessed contact frame pre-loaded in the scrubber for Jack
+to approve or adjust. `list_pro_clip_review_candidates.py` now treats a machine
+audio fill (verdict note ends `"(audio)"`) as still-needs-review, re-surfacing
+the 108 that last session's confident-only pass had hidden, and reports
+`contact_fill_pending` on the review screen (`clip_review_log.latest_verdict_notes()`).
+Applied: **0 placeholder contact times left**; 98 ball-visible entries queued.
+
+### yt-dlp was broken (`e1a8d53`)
+
+YouTube 403s the 2026.07.04 build and no longer serves progressive video+audio
+mp4. Fixed `download_videos.py`: bumped yt-dlp to 2026.08.19, point it at the
+venv's bundled `imageio_ffmpeg` binary to merge the DASH video+audio streams
+(no system ffmpeg on this box), skip files already on disk, don't abort the
+batch on one failure.
+
+### Part 2 — practice-footage ingestion MVP (`5917f07` + follow-ups)
+
+Jack picked 4 court-level practice/points videos (Federer+Berdych practice,
+Djokovic+Alcaraz practice, 2× Alcaraz points). These carry mixed shot types and
+2 players, so the curated `build_pro_database.py` (one shot type per video)
+can't ingest them. New **`ingest_practice_footage.py`**: per detected swing,
+verify it's a real strike + classify the shot type, single-person quality gate,
+`extract_clip` + `infer_camera_angle`, append a pro-DB entry. Reuses the whole
+detect/verify/classify stack. `practice_*` entries carry their own
+`source_video` / `poses_path` / `clip_start_frame` (an early-return path in
+`rebuild_helpers.reextract_for_entry` + the review lister, since their swing_ids
+don't fit the `// 1000` job scheme). `correct_shot_type.py` relabels a
+practice entry in place (clip stays in the flat `practice/` folder).
+
+**Yield probe (practice_02, Federer+Berdych IW practice):**
+- Free geometric real-strike filter (`filter_verified_swings`): **cut 0 of 158**
+  — a continuous rally has a ball near the racket at every wrist-velocity peak,
+  so `find_contact_frame` "confirms" camera pans / warm-ups / replays too.
+- Claude real-strike filter (`--use-claude`): 158 → **42 rejected → 116 appended**
+  (~27% cut). Works.
+- **But the entries are low quality:** shot types came out **114 forehand / 0
+  backhand / 2 serve** (a rally is ~50/50) — the audio "pock" detector finds
+  nothing confident on net-level broadcast audio, so every contact frame is
+  anchored ~13f late and Claude, shown a follow-through frame, defaults to
+  "forehand". Player fills ~15% of the frame, off-centre, with the far player
+  also in shot (the `num_poses=1` problem, live).
+- **Both probe runs rolled back** — DB back at 415. `--use-claude` for all 4 is
+  running now (2026-09-03); Jack accepted the manual load (relabel shot type +
+  fix contact frame on ~all ~450 survivors in Pro Clip Review). Contact anchor
+  falls back to the racket/ball `find_contact_frame` guess (~3-4f) rather than
+  the wrist peak.
+
+**Open decision if the full run's yield/quality is as rough as the probe:**
+this footage type may not be worth the review grind — single-shot slow-mo
+compilations (one player, side-on, no audio needed) are the reliable path and
+`process_new_videos.py` already handles them.
