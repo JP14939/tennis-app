@@ -26,13 +26,17 @@ Full detail: `HANDOVER.md` "Session 2026-09-03".
    shot type. Approving or adjusting logs a real verdict and clears it from the
    queue.
 2. **Decide on the practice-footage ingest.** A `--use-claude` run over all 4
-   court-level videos is in progress. The probe (practice_02) suggests low
+   court-level videos is **running now** (started ~14:00 2026-09-03, ~2-3 h;
+   checkpointed, appends to the live DB per video — see the ⏳ box at the top of
+   `HANDOVER.md`'s "Session 2026-09-03"). The probe (practice_02) was low
    quality: shot types nearly all mislabelled "forehand", contact frames ~13f
-   late, small/off-centre/2-player framing. If the full run confirms that, this
-   footage isn't worth the per-entry relabel+recontact grind — pick single-shot
-   slow-mo compilations instead (one player, side-on; `process_new_videos.py`
-   handles them). If you keep the practice entries, `correct_shot_type.py` and
-   `correct_contact_time.py` both work on them.
+   late, small/off-centre/2-player framing. **When it finishes:** eyeball the
+   per-video yield; if it's as rough as the probe, drop the practice entries
+   (`entry['ingest'] == 'practice_mvp'`) and pick single-shot slow-mo
+   compilations instead (one player, side-on; `process_new_videos.py` handles
+   them, almost no manual work). If you keep them, `correct_shot_type.py` and
+   `correct_contact_time.py` both work on them, and it's ~450 entries to relabel
+   + recontact in Pro Clip Review.
 3. **yt-dlp** on this machine is now 2026.08.19 (the 07.04 build 403s). Future
    `download_videos.py` runs merge DASH streams via the venv's bundled ffmpeg.
 4. **Copy `pro_database.json` + `overlay_trajectories.json` to the server**

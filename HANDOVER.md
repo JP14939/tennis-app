@@ -2091,6 +2091,22 @@ Jack to review.
 
 ## Session 2026-09-03 — grow the pro DB: audio-review-all + practice-footage ingestion
 
+> **⏳ IN FLIGHT as of 2026-09-03 ~14:00:** a background run of
+> `python 06_database_build/ingest_practice_footage.py practice_01 practice_02
+> practice_03 practice_04 --use-claude` is going (~2-3 h: pose extraction for
+> practice_01/03/04 + ~500 Claude calls, ~$2). It's **checkpointed/resumable**
+> (`data/06_pro_database/.practice_ingest_checkpoint.jsonl`) and **appends into
+> the live `pro_database.json`** per video (timestamped
+> `pro_database_backup_pre_practice_*` backup each merge). When it finishes:
+> check the per-video yield in its stdout, run
+> `python 06_database_build/enrich_view_direction.py`, then it's Jack's review
+> queue. If yield/quality is as poor as the practice_02 probe (below), the
+> practice entries can be dropped wholesale — every one carries
+> `entry['ingest'] == 'practice_mvp'`, so
+> `[e for e in db['entries'] if e.get('ingest') != 'practice_mvp']` reverts it
+> (+ pop those ids from `overlay_trajectories.json`, delete the checkpoint).
+> **The DB was at 415 before this run started.**
+
 ### Part 1 — audio-review every existing contact time (`708299e`, applied)
 
 `rebuild_pro_database_from_verdicts.py --apply-all-audio` applies **every** audio
