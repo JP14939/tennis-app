@@ -426,7 +426,12 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         try:
             lo = peak_frame - int(PRE_SEC * fps)
             hi = peak_frame + int(POST_SEC * fps)
-            racket_frames = track_racket_body(video_path, frame_range=(lo, hi))
+            # sample_every=4 to match enrich_pro_racket_body.py's stride when
+            # it precomputed top_entry['racket_body_distance'] for every pro
+            # database entry -- the default (3) here would compare the user's
+            # distance against a pro value built from a different sampling
+            # density than what's actually being diffed against it.
+            racket_frames = track_racket_body(video_path, frame_range=(lo, hi), sample_every=4)
             user_racket_body_distance = avg_racket_body_distance(racket_frames)
             breakdown = phase_breakdown.compute_phase_breakdown(
                 user_trajectory, top_entry, shot_type, user_racket_body_distance)

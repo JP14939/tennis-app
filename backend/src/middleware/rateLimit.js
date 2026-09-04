@@ -29,19 +29,43 @@ setInterval(() => {
 // container's own IP. `keyGenerator` lets a route key by something else
 // instead (e.g. the authenticated user id, for a limiter that must survive
 // the caller rotating IPs/accounts less easily than an IP-only key would).
+// Weighted sliding-window-counter approximation, not a true rolling log --
+// the module comment above (and every call site's own reasoning, e.g. "15
+// login attempts per 15 minutes") describes a sliding bound, but the bucket
+// used to fully reset the moment `now - windowStart > windowMs`, which is a
+// fixed/tumbling window: a caller could exhaust `max` right before a reset
+// and another `max` right after, getting up to 2x the intended ceiling in a
+// short burst spanning the boundary. Carrying the previous window's count,
+// weighted by how much of it still overlaps the current windowMs, keeps the
+// count for any windowMs-wide slice close to the real sliding-window bound
+// without needing a full timestamp log per key.
 function rateLimit({ windowMs, max, keyPrefix, keyGenerator = (req) => req.ip }) {
   return (req, res, next) => {
     const key = `${keyPrefix}:${keyGenerator(req)}`;
     const now = Date.now();
     let bucket = buckets.get(key);
-    if (!bucket || now - bucket.windowStart > windowMs) {
-      bucket = { windowStart: now, windowMs, count: 0 };
+    if (!bucket) {
+      bucket = { windowStart: now, windowMs, count: 0, prevCount: 0 };
       buckets.set(key, bucket);
+    } else if (now - bucket.windowStart >= 2 * windowMs) {
+      // Idle for at least a full extra window -- the previous window is
+      // entirely out of range, so there's nothing left to weight in.
+      bucket.windowStart = now;
+      bucket.count = 0;
+      bucket.prevCount = 0;
+    } else if (now - bucket.windowStart >= windowMs) {
+      bucket.windowStart += windowMs;
+      bucket.prevCount = bucket.count;
+      bucket.count = 0;
     }
-    bucket.count += 1;
-    if (bucket.count > max) {
+
+    const elapsed = now - bucket.windowStart;
+    const overlap = Math.max(0, (windowMs - elapsed) / windowMs);
+    const weightedCount = bucket.prevCount * overlap + bucket.count;
+    if (weightedCount + 1 > max) {
       return res.status(429).json({ error: 'Too many requests -- please try again later' });
     }
+    bucket.count += 1;
     next();
   };
 }

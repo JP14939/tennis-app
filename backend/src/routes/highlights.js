@@ -71,6 +71,12 @@ function serializeClip(clip) {
   return { ...clip, clip_url: toClipUrl(clip.clip_path) };
 }
 
+// SIGKILL grace period after a timeout -- mirrors runPythonJson.js's own
+// escalation (see that file's comment): a plain proc.kill() sends SIGTERM,
+// which a child stuck in a blocking MediaPipe/OpenCV call can outlive
+// indefinitely, leaving 'close' never firing.
+const SIGKILL_GRACE_MS = 5000;
+
 function runJob(jobId, videoPath, userId) {
   db.prepare(`UPDATE highlight_jobs SET status = 'processing' WHERE id = ?`).run(jobId);
 
@@ -82,10 +88,24 @@ function runJob(jobId, videoPath, userId) {
   proc.stdout.on('data', (chunk) => { stdout += chunk; });
   proc.stderr.on('data', (chunk) => { stderr += chunk; });
 
-  const timeout = setTimeout(() => proc.kill(), JOB_TIMEOUT_MS);
+  // Guards against runPythonJson.js's documented failure mode: a failed
+  // spawn fires BOTH 'error' and 'close' on the child ('error' first, then
+  // 'close' with a non-zero/negative code). Without this flag both handlers
+  // below ran for the same failure -- a specific error message/notification
+  // from 'error', immediately overwritten by a generic one from 'close',
+  // plus a duplicate push notification.
+  let settled = false;
+  let killTimeout = null;
+  const timeout = setTimeout(() => {
+    proc.kill();
+    killTimeout = setTimeout(() => proc.kill('SIGKILL'), SIGKILL_GRACE_MS);
+  }, JOB_TIMEOUT_MS);
 
   proc.on('close', (code) => {
+    if (settled) return;
+    settled = true;
     clearTimeout(timeout);
+    if (killTimeout) clearTimeout(killTimeout);
     fs.unlink(videoPath, () => {}); // raw upload only ever needed during processing
 
     if (code !== 0) {
@@ -144,7 +164,10 @@ function runJob(jobId, videoPath, userId) {
   });
 
   proc.on('error', (err) => {
+    if (settled) return;
+    settled = true;
     clearTimeout(timeout);
+    if (killTimeout) clearTimeout(killTimeout);
     fs.unlink(videoPath, () => {});
     console.error('[highlights] failed to spawn python:', err);
     db.prepare(`UPDATE highlight_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?`).run('Failed to start detection process', jobId);
@@ -213,11 +236,20 @@ function runReelJob(reelJobId, outputPath, clipPaths) {
   proc.stderr.on('data', (chunk) => { stderr += chunk; });
 
   // Safety net against a stuck process now, not tied to any HTTP response --
-  // the client learns the outcome by polling reel_jobs regardless.
-  const timeout = setTimeout(() => proc.kill(), REEL_TIMEOUT_MS);
+  // the client learns the outcome by polling reel_jobs regardless. Same
+  // settled-guard + SIGKILL-escalation reasoning as runJob() above.
+  let settled = false;
+  let killTimeout = null;
+  const timeout = setTimeout(() => {
+    proc.kill();
+    killTimeout = setTimeout(() => proc.kill('SIGKILL'), SIGKILL_GRACE_MS);
+  }, REEL_TIMEOUT_MS);
 
   proc.on('close', (code) => {
+    if (settled) return;
+    settled = true;
     clearTimeout(timeout);
+    if (killTimeout) clearTimeout(killTimeout);
     if (code !== 0) {
       console.error('[highlights] stitch_clips.py failed:', stderr.slice(-2000));
       let error = 'Failed to build highlight reel';
@@ -237,7 +269,10 @@ function runReelJob(reelJobId, outputPath, clipPaths) {
   });
 
   proc.on('error', (err) => {
+    if (settled) return;
+    settled = true;
     clearTimeout(timeout);
+    if (killTimeout) clearTimeout(killTimeout);
     console.error('[highlights] failed to spawn stitcher:', err);
     db.prepare(`UPDATE reel_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?`).run('Failed to start reel builder', reelJobId);
   });

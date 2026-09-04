@@ -215,6 +215,16 @@ router.patch('/history/:id', requireAuth, (req, res) => {
   if (hasShotType && !isShotType(shot_type)) {
     return res.status(400).json({ error: `shot_type ${oneOfMessage(SHOT_TYPES)}`, field: 'shot_type' });
   }
+  // Neither field was type-checked before, unlike shot_type just above and
+  // highlights.js's `archived` (same class of bug) -- a non-boolean truthy
+  // value (e.g. the string "true") passed the "is something present" check
+  // above, then silently fell through the `typeof ... === 'boolean'` ternary
+  // below and was dropped with no 400 and no applied change.
+  const bad = validate([
+    ['flagged_not_shot', flagged_not_shot, (v) => v === undefined || typeof v === 'boolean', 'must be true or false'],
+    ['confirmed_real_shot', confirmed_real_shot, (v) => v === undefined || typeof v === 'boolean', 'must be true or false'],
+  ]);
+  if (bad) return res.status(400).json(bad);
   // The two verdicts are meant to be mutually exclusive (see the comment
   // below), but the "one implies the other's false" logic only kicks in when
   // exactly one of the two is provided -- a request sending both as `true` in

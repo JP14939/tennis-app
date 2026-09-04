@@ -57,4 +57,40 @@ describe('rateLimit', () => {
 
     expect(next).toHaveBeenCalledTimes(2);
   });
+
+  test('does not allow a 2x burst spanning a window boundary', () => {
+    jest.useFakeTimers();
+    try {
+      const limiter = rateLimit({ windowMs: 1000, max: 4, keyPrefix: 'test-boundary' });
+      const next = jest.fn();
+      const ip = '9.9.9.9';
+
+      // Exhaust the limit right at the start of the window.
+      jest.setSystemTime(900);
+      for (let i = 0; i < 4; i += 1) {
+        const call = makeReqRes(ip);
+        limiter(call.req, call.res, next);
+      }
+      expect(next).toHaveBeenCalledTimes(4);
+
+      // Just past the window boundary (windowStart 900 + windowMs 1000 =
+      // 1900): a fixed/tumbling window would have reset the bucket and
+      // allowed a fresh burst of `max` here, doubling the real rate over
+      // that ~1s span. The sliding approximation should still reject.
+      jest.setSystemTime(1950);
+      const afterBoundary = makeReqRes(ip);
+      limiter(afterBoundary.req, afterBoundary.res, next);
+      expect(afterBoundary.statusCode).toBe(429);
+      expect(next).toHaveBeenCalledTimes(4);
+
+      // Once the previous window's weight has fully decayed, requests flow
+      // again -- this isn't a permanent lockout, just a smoothed boundary.
+      jest.setSystemTime(3000);
+      const later = makeReqRes(ip);
+      limiter(later.req, later.res, next);
+      expect(next).toHaveBeenCalledTimes(5);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });

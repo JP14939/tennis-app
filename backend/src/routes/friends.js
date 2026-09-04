@@ -245,11 +245,17 @@ router.post('/friends/:userId/share', requireAuth, (req, res) => {
     return res.status(404).json({ error: 'Analysis not found' });
   }
 
-  db.prepare('INSERT OR IGNORE INTO shared_analyses (analysis_id, owner_id, friend_id) VALUES (?, ?, ?)')
+  const info = db.prepare('INSERT OR IGNORE INTO shared_analyses (analysis_id, owner_id, friend_id) VALUES (?, ?, ?)')
     .run(analysis.id, req.user.id, friendId);
 
-  const sharer = db.prepare('SELECT name FROM users WHERE id = ?').get(req.user.id);
-  sendPushNotification(friendId, `${sharer?.name ?? 'A friend'} shared a swing`, 'Tap to see it on Friends.', { analysisId: analysis.id });
+  // INSERT OR IGNORE's own result was never checked, so a retried/duplicate
+  // share (this analysis was already shared with this friend -- UNIQUE
+  // (analysis_id, friend_id)) still fired a fresh "shared a swing" push
+  // every time, even though nothing actually changed.
+  if (info.changes === 1) {
+    const sharer = db.prepare('SELECT name FROM users WHERE id = ?').get(req.user.id);
+    sendPushNotification(friendId, `${sharer?.name ?? 'A friend'} shared a swing`, 'Tap to see it on Friends.', { analysisId: analysis.id });
+  }
 
   res.status(201).json({ shared: true });
 });

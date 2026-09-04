@@ -4,7 +4,9 @@ const optionalAuth = require('../middleware/optionalAuth');
 const requireAuth = require('../middleware/requireAuth');
 const { currentTier } = require('../utils/tier');
 const { toClipUrl } = require('../utils/drillClips');
-const { DRILL_KINDS, isPositiveIntegerId, isDrillKind } = require('../domain/invariants');
+const {
+  DRILL_KINDS, DRILL_SHOT_TYPES, isPositiveIntegerId, isDrillKind, isDrillShotType,
+} = require('../domain/invariants');
 const { oneOfMessage } = require('../validation/validateBody');
 
 const router = express.Router();
@@ -48,6 +50,12 @@ router.get('/drills', optionalAuth, (req, res) => {
   // this; `shot_type` wasn't.
   if (shot_type !== undefined && typeof shot_type !== 'string') {
     return res.status(400).json({ error: 'shot_type must be a single value' });
+  }
+  // kind is checked against its vocabulary two lines up; shot_type wasn't --
+  // a typo'd/bogus value silently matched zero rows instead of 400ing, the
+  // same class of drift the shared invariants.js predicates exist to close.
+  if (shot_type && !isDrillShotType(shot_type)) {
+    return res.status(400).json({ error: `shot_type ${oneOfMessage(DRILL_SHOT_TYPES)}`, field: 'shot_type' });
   }
 
   let query = 'SELECT * FROM drill_items WHERE archived = 0';

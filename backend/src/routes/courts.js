@@ -168,7 +168,17 @@ router.get('/courts', requireAuth, async (req, res) => {
   // we just fall back to an empty result rather than failing the request.
   if (courts.length === 0 && !wasRecentlySeededEmpty(lat, lng)) {
     try {
-      await seedCourtsNearOnce(lat, lng, radiusKm);
+      // Seed at MAX_RADIUS_KM regardless of this request's radiusKm.
+      // seedAreaKey()/wasRecentlySeededEmpty() (and inFlightSeeds) are keyed
+      // on coordinates alone, with no radius in the key -- seeding at a
+      // narrower radius than MAX_RADIUS_KM let a later, wider-radius request
+      // at the same coordinates find `wasRecentlySeededEmpty` already true
+      // and skip the self-heal entirely, even though Overpass was never
+      // actually asked about the extra distance and might have real courts
+      // there. Always seeding at the true ceiling keeps the empty-result
+      // cache (and the in-flight dedup) valid for any radius a caller asks
+      // for, not just the one that happened to trigger it first.
+      await seedCourtsNearOnce(lat, lng, MAX_RADIUS_KM);
       courts = queryNearbyCourts(lat, lng, radiusKm, req.user.id);
       if (courts.length === 0) markSeededEmpty(lat, lng);
     } catch (err) {

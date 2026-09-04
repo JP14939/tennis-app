@@ -350,6 +350,16 @@ router.post('/dev/drills', requireAuth, requireAdmin, uploadDrillVideo.single('v
     ]);
     if (badStep) return reject(400, badStep);
   }
+  // Two submitted steps referencing the same existing id would both hit the
+  // reconciliation loop's "update in place" branch below, one after the
+  // other -- the second UPDATE silently overwrites the first's content on
+  // that one row, so whichever step was submitted first vanishes with no
+  // error and no trace, undermining the reconciliation's whole premise that
+  // a submitted id maps to exactly one step.
+  const submittedStepIds = steps.map((s) => s?.id).filter((v) => v !== undefined && v !== null && v !== '');
+  if (new Set(submittedStepIds.map(String)).size !== submittedStepIds.length) {
+    return reject(400, { error: 'steps must not reference the same id more than once', field: 'steps' });
+  }
 
   const videoPath = req.file ? req.file.path : undefined;
   // Captured so a replaced video's old file can be deleted once the save
