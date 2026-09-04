@@ -47,6 +47,33 @@ describe('POST /courts — coordinates', () => {
   });
 });
 
+describe('GET /courts — coordinates', () => {
+  function get(token, query) {
+    return request(app).get('/api/courts').query(query).set('Authorization', `Bearer ${token}`);
+  }
+
+  test('accepts valid coordinates near a seeded court', async () => {
+    const { token } = makeUser();
+    seedCourt();
+    const res = await get(token, { lat: 51.5, lng: -0.12 });
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.courts)).toBe(true);
+  });
+
+  // Unlike POST /courts, this route used to only check for NaN -- an
+  // out-of-range value fed straight into the bounding-box arithmetic and,
+  // on a cache miss, into a live Overpass API call with a nonsensical box.
+  test.each([
+    ['a latitude past the pole', { lat: 5000, lng: 0 }],
+    ['a longitude past the antimeridian', { lat: 0, lng: 400 }],
+    ['both wildly out of range', { lat: -9999, lng: 9999 }],
+  ])('rejects %s with a 400, not a lookup', async (_label, coords) => {
+    const { token } = makeUser();
+    const res = await get(token, coords);
+    expect(res.status).toBe(400);
+  });
+});
+
 describe('POST /courts — name', () => {
   test.each([
     ['', 'empty'],
