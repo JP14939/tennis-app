@@ -156,8 +156,16 @@ router.get('/courts', requireAuth, async (req, res) => {
     ? Math.min(parsedRadiusKm, MAX_RADIUS_KM)
     : DEFAULT_RADIUS_KM;
 
-  if (Number.isNaN(lat) || Number.isNaN(lng)) {
-    return res.status(400).json({ error: 'lat and lng are required' });
+  // Unlike POST /courts (which validates via isLatitude/isLongitude), this
+  // route only ever checked for NaN -- an out-of-range value like lat=9999
+  // still passed, and fed straight into queryNearbyCourts()'s bounding-box
+  // arithmetic and, on a cache miss, into seedCourtsNearOnce()'s live
+  // Overpass API call with a nonsensical bounding box. Same real-world-value
+  // reasoning as isLatitude/isLongitude's own comment: a coordinate outside
+  // ±90/±180 isn't a valid location, so this should 400 the same way the
+  // write path already does rather than silently querying garbage.
+  if (!isLatitude(lat) || !isLongitude(lng)) {
+    return res.status(400).json({ error: 'lat must be a number between -90 and 90, lng between -180 and 180' });
   }
 
   let courts = queryNearbyCourts(lat, lng, radiusKm, req.user.id);
