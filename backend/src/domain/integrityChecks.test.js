@@ -18,7 +18,7 @@ const TABLES_IN_DELETE_ORDER = [
   'drill_practice_attempts', 'drill_routine_steps', 'drill_items',
   'message_reports', 'messages', 'user_blocks',
   'shared_analyses', 'swing_annotations', 'coach_notes',
-  'friend_matches', 'friend_links', 'coach_links',
+  'friend_matches', 'friend_links', 'coach_links', 'coach_invite_codes', 'push_tokens',
   'availability_posts', 'court_confirmations', 'court_watches',
   'club_watches', 'club_courts', 'clubs', 'courts',
   'reel_jobs', 'rally_clips', 'highlight_jobs',
@@ -409,6 +409,31 @@ describe('orphan canaries', () => {
 
     withoutConstraints(() => db.prepare('DELETE FROM highlight_jobs WHERE id = ?').run(job));
     expect(violationNames()).toEqual(['rally_clips.job_id']);
+  });
+
+  test('catches a coach link whose coach or student account is gone', () => {
+    const coach = makeUser('coach@test.com');
+    const student = makeUser('student@test.com');
+    db.prepare('INSERT INTO coach_links (coach_id, student_id) VALUES (?, ?)').run(coach, student);
+
+    withoutConstraints(() => db.prepare('DELETE FROM users WHERE id = ?').run(coach));
+    expect(violationNames()).toEqual(['coach_links.coach_id']);
+  });
+
+  test('catches an invite code whose student account is gone', () => {
+    const student = makeUser('student2@test.com');
+    db.prepare("INSERT INTO coach_invite_codes (student_id, code) VALUES (?, 'ABC123')").run(student);
+
+    withoutConstraints(() => db.prepare('DELETE FROM users WHERE id = ?').run(student));
+    expect(violationNames()).toEqual(['coach_invite_codes.student_id']);
+  });
+
+  test('catches a push token whose user account is gone', () => {
+    const user = makeUser('pushuser@test.com');
+    db.prepare("INSERT INTO push_tokens (user_id, token) VALUES (?, 'tok-1')").run(user);
+
+    withoutConstraints(() => db.prepare('DELETE FROM users WHERE id = ?').run(user));
+    expect(violationNames()).toEqual(['push_tokens.user_id']);
   });
 });
 

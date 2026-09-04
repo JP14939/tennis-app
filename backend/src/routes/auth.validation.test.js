@@ -66,3 +66,37 @@ describe('PATCH /auth/me — name length cap', () => {
     expect(after.body.user.name).toBe(before.body.user.name);
   });
 });
+
+describe('PATCH /auth/me — notifications_enabled type check', () => {
+  async function makeAuthedUser() {
+    const signup = await request(app).post('/api/auth/signup').send(signupBody());
+    return signup.body.token;
+  }
+
+  test('rejects a truthy non-boolean instead of silently coercing it to true', async () => {
+    const token = await makeAuthedUser();
+
+    // Bug-sweep regression: before this check existed, the string "false"
+    // (truthy in JS) was coerced by `notifications_enabled ? 1 : 0` to 1
+    // (enabled) -- the opposite of what a caller sending the string
+    // "false" almost certainly intended.
+    const res = await request(app)
+      .patch('/api/auth/me')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ notifications_enabled: 'false' });
+    expect(res.status).toBe(400);
+
+    const after = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${token}`);
+    expect(after.body.user.notifications_enabled).toBe(true);
+  });
+
+  test('accepts a real boolean', async () => {
+    const token = await makeAuthedUser();
+    const res = await request(app)
+      .patch('/api/auth/me')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ notifications_enabled: false });
+    expect(res.status).toBe(200);
+    expect(res.body.user.notifications_enabled).toBe(false);
+  });
+});

@@ -262,6 +262,14 @@ router.post('/analyse', requireAuth, analyseLimiter, upload.single('video'), asy
     // silently give every free user unlimited real analyses for as long as
     // it lasts.
     cleanup();
+    // persistAndCrop can partially write into USER_CLIPS_DIR/<uploadId>
+    // before failing (e.g. disk full mid-copy on the cropped variant) --
+    // unlike compareVideos.js's equivalent path, which removes its whole
+    // per-job directory on a partial persistAndCrop failure, this had no
+    // such cleanup, leaking an orphaned/partial directory under
+    // USER_CLIPS_DIR forever on every post-processing failure.
+    const uploadId = path.parse(req.file.filename).name;
+    fs.rmSync(path.join(USER_CLIPS_DIR, uploadId), { recursive: true, force: true });
     console.error(`[analyse] post-processing failed after a successful analysis: ${err.message}`);
     if (!res.headersSent) {
       res.status(500).json({ error: 'Analysis succeeded but the response could not be completed' });
