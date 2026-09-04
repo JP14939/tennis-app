@@ -1015,3 +1015,37 @@ guaranteed in-order, so a stale `EXPIRATION` redelivered after a newer
 `RENEWAL` could downgrade a currently-paying user to `free` until the
 next `/billing/sync` call. Needs a real design decision (e.g. tracking
 the latest-applied-event timestamp per user), not a targeted diff.
+
+---
+
+## New from the 2026-09-04 docs round-up
+
+**Review and merge (or request changes on) PRs #28–#30 from today's
+scheduled routines** — logic review (`logic-review/2026-09-04`, 8 fixes
+including a highlights-job double-event/stuck-process guard and a
+rate-limiter fixed-window bug that let auth-route callers burst up to 2x
+the intended cap), bug sweep (`bug-sweep/2026-09-04`, 4 fixes including a
+NaN-fps crash in the live swing comparator and 4 more foreign-key columns
+missing from `verify:db`'s orphan checks), and security review
+(`security-review/2026-09-04`, patches a moderate `qs` DoS advisory and a
+`GET /courts` coordinate-validation gap). None titled `🚨 CRITICAL:`. All
+ten PRs from the prior three rounds (#17–#27) are already merged, so these
+3 are the only open PRs right now — a clean backlog, unlike the ten-deep
+pile called out on 2026-09-01. See `HANDOVER.md`'s "Scheduled-routine PR
+round-up (2026-09-04)" for the full per-PR summary.
+
+**Worth checking before merging PR #28 and PR #29 specifically**: both
+touch `scripts/08_comparison_engine/compare_swing.py` — the live
+pro-database comparison path (#28's `sample_every` mismatch fix, #29's
+NaN-fps guard) — and neither could be run through the real `scripts/venv`
+pytest suite in the routine's sandbox (no `cv2`/`mediapipe` there), only
+verified by inspection/stubbing. Same recommendation as every prior PR
+touching this file (#10, #13, #24, #25): a real
+`cd scripts && .\venv\Scripts\activate && pytest` pass before merging.
+
+**Also noted, not a new action item**: no scheduled-routine PRs were
+opened on 2026-09-02 or 2026-09-03. This lines up with the code-review
+routines' every-3-days cadence (last batch before today was 2026-09-01)
+and isn't itself a sign anything is broken — flagging only so a future
+session doesn't mistake it for a missed run if the pattern looks odd in
+the git history.
