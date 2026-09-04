@@ -253,6 +253,14 @@ router.patch('/auth/me', requireAuth, (req, res) => {
   if (username !== undefined && typeof username !== 'string') {
     return res.status(400).json({ error: 'Username must be a string' });
   }
+  // Unlike name/username just above, this had no type check -- a truthy
+  // non-boolean (e.g. the string "false", sent by a client that
+  // stringifies form values) passed the `!== undefined` guard below and
+  // was coerced by `notifications_enabled ? 1 : 0` to 1 (enabled), silently
+  // inverting the caller's actual intent instead of rejecting the request.
+  if (notifications_enabled !== undefined && typeof notifications_enabled !== 'boolean') {
+    return res.status(400).json({ error: 'notifications_enabled must be a boolean' });
+  }
 
   let normalisedUsername;
   if (username !== undefined) {

@@ -108,12 +108,17 @@ def extract_user_poses(video_path):
 
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps   = cap.get(cv2.CAP_PROP_FPS)
-    if not fps or fps <= 0:
-        # Some malformed/corrupt containers report fps=0.0 from OpenCV. Left
-        # unguarded, the very next `round(idx / fps, 3)` below raises
-        # ZeroDivisionError on frame 0 -- caught by pro_matcher.py's/
-        # video_matcher.py's outer try/except, but surfaces to the user as an
-        # opaque "float division by zero" instead of an actionable message.
+    if not fps or fps <= 0 or math.isnan(fps):
+        # Some malformed/corrupt containers report fps=0.0, or (a separate,
+        # real OpenCV/FFmpeg quirk on other malformed containers) fps=nan --
+        # `not nan` and `nan <= 0` are both False, so the original bare
+        # `not fps or fps <= 0` check let a nan fps straight through. Left
+        # unguarded, `int(PRE_SEC * fps)` in build_user_trajectory() below
+        # raises `ValueError: cannot convert float NaN to integer` -- caught
+        # by pro_matcher.py's/video_matcher.py's outer try/except, but
+        # surfaces to the user as an opaque internals string instead of an
+        # actionable message. (The fps=0.0 case alone would otherwise raise
+        # ZeroDivisionError on the very next `round(idx / fps, 3)` below.)
         cap.release()
         raise RuntimeError(f'Could not read a valid frame rate from the uploaded video ({os.path.basename(video_path)}) -- it may be corrupted.')
     print(f'  Video: {os.path.basename(video_path)} | {total} frames @ {fps:.1f}fps', file=sys.stderr)

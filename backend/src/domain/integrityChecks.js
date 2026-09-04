@@ -327,6 +327,10 @@ const ORPHAN_CHECKS = [
   ['friend_matches', 'opponent_id', 'users'],
   ['celebrity_scores', 'added_by', 'users'],
   ['password_resets', 'user_id', 'users'],
+  ['push_tokens', 'user_id', 'users'],
+  ['coach_invite_codes', 'student_id', 'users'],
+  ['coach_links', 'coach_id', 'users'],
+  ['coach_links', 'student_id', 'users'],
 ].map(([table, column, parent]) => ({
   name: `${table}.${column}`,
   description: `every ${table} row points at a ${parent} row that still exists`,
