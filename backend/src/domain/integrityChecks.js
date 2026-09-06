@@ -24,12 +24,14 @@ const {
   TIERS,
   JOB_STATUSES,
   COURT_SOURCES,
+  NAME_SOURCES,
   AVAILABILITY_STATUSES,
   MAX_SETS_IN_A_MATCH,
   MAX_VIDEO_SECONDS,
   PHASE_KEYS,
   isBoundaryNote,
   isIsoDateTime,
+  isOptionalPostcode,
 } = require('./invariants');
 
 // SQL fragment for `col IN ('a','b')` built from a JS vocabulary, so the
@@ -104,6 +106,20 @@ const VALUE_DOMAIN_CHECKS = [
              OR latitude NOT BETWEEN -90 AND 90 OR longitude NOT BETWEEN -180 AND 180`,
   },
   {
+    // Same shape again -- area_watches is user-writable (POST
+    // /courts/area-watch), so this one IS also covered by validateBody.js's
+    // isLatitude/isLongitude/isRadiusKm at write time; this at-rest check
+    // exists for the same reason every other invariants.js rule gets one:
+    // proving stored data still satisfies the rule, not just that the write
+    // path once rejected a bad one.
+    name: 'area_watches.coordinates_and_radius',
+    description: 'every area watch sits at a real latitude/longitude with a sane radius',
+    sql: `SELECT id, user_id, latitude, longitude, radius_km FROM area_watches
+          WHERE ${numericTypeGuard('latitude')} OR ${numericTypeGuard('longitude')} OR ${numericTypeGuard('radius_km')}
+             OR latitude NOT BETWEEN -90 AND 90 OR longitude NOT BETWEEN -180 AND 180
+             OR radius_km NOT BETWEEN 0.1 AND 20`,
+  },
+  {
     name: 'courts.source',
     description: `every court came from a known source (${COURT_SOURCES.join(', ')})`,
     sql: `SELECT id, name, source FROM courts WHERE source NOT IN (${sqlIn(COURT_SOURCES)})`,
@@ -112,6 +128,24 @@ const VALUE_DOMAIN_CHECKS = [
     name: 'courts.verified',
     description: 'verified is a boolean flag (0 or 1)',
     sql: 'SELECT id, name, verified FROM courts WHERE verified NOT IN (0, 1)',
+  },
+  {
+    name: 'clubs.name_source',
+    description: `every club's name_source is a known value (${NAME_SOURCES.join(', ')})`,
+    sql: `SELECT id, name, name_source FROM clubs WHERE name_source NOT IN (${sqlIn(NAME_SOURCES)})`,
+  },
+  {
+    name: 'clubs.name_verified',
+    description: 'name_verified is a boolean flag (0 or 1)',
+    sql: 'SELECT id, name, name_verified FROM clubs WHERE name_verified NOT IN (0, 1)',
+  },
+  {
+    // A verified name with no submitter (or vice versa) is meaningless --
+    // routes/courts.js only ever sets these two together (see its
+    // /clubs/:id/name/confirm handler).
+    name: 'clubs.name_verification_consistency',
+    description: 'a club only has name_verified=1 once someone has actually submitted a name',
+    sql: 'SELECT id, name, name_submitted_by, name_verified FROM clubs WHERE name_verified = 1 AND name_submitted_by IS NULL',
   },
   {
     name: 'friend_matches.sets',
@@ -311,6 +345,10 @@ const ORPHAN_CHECKS = [
   ['club_courts', 'court_id', 'courts'],
   ['club_watches', 'user_id', 'users'],
   ['club_watches', 'club_id', 'clubs'],
+  ['area_watches', 'user_id', 'users'],
+  ['clubs', 'name_submitted_by', 'users'],
+  ['club_name_confirmations', 'club_id', 'clubs'],
+  ['club_name_confirmations', 'user_id', 'users'],
   ['availability_posts', 'court_id', 'courts'],
   ['availability_posts', 'user_id', 'users'],
   ['message_reports', 'message_id', 'messages'],
@@ -350,6 +388,32 @@ const JS_CHECKS = [
     run: (db) => db.prepare('SELECT id, user_id, boundary_note FROM rally_clips WHERE boundary_note IS NOT NULL')
       .all()
       .filter((row) => !isBoundaryNote(row.boundary_note)),
+  },
+  {
+    // postcode is nullable (a best-effort lookup -- see utils/postcodeLookup.js)
+    // but when present must actually look like a UK postcode. One predicate
+    // shared across all three tables that carry it, rather than three
+    // hand-copied SQL LIKE patterns SQLite's lack of built-in regex would
+    // force otherwise.
+    name: 'courts.postcode',
+    description: 'postcode, when present, looks like a real UK postcode',
+    run: (db) => db.prepare('SELECT id, name, postcode FROM courts WHERE postcode IS NOT NULL')
+      .all()
+      .filter((row) => !isOptionalPostcode(row.postcode)),
+  },
+  {
+    name: 'clubs.postcode',
+    description: 'postcode, when present, looks like a real UK postcode',
+    run: (db) => db.prepare('SELECT id, name, postcode FROM clubs WHERE postcode IS NOT NULL')
+      .all()
+      .filter((row) => !isOptionalPostcode(row.postcode)),
+  },
+  {
+    name: 'area_watches.postcode',
+    description: 'postcode, when present, looks like a real UK postcode',
+    run: (db) => db.prepare('SELECT id, user_id, postcode FROM area_watches WHERE postcode IS NOT NULL')
+      .all()
+      .filter((row) => !isOptionalPostcode(row.postcode)),
   },
   {
     name: 'friend_matches.played_at',

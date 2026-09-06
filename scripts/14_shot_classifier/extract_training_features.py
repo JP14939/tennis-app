@@ -72,6 +72,33 @@ FEATURE_NAMES = [
 ]
 
 
+def torso_scale(peak_lm):
+    """Torso length (shoulder-mid -> hip-mid), fallback shoulder width.
+    Magnitude features / geometric thresholds are divided by it so a phone
+    selfie (player fills the frame) and a broadcast clip (player small)
+    produce comparable numbers -- see train_shot_classifier_model.py's
+    2026-08-27 note on why raw magnitudes blocked the pro-review clips.
+    Returns None when the torso isn't visible or degenerate.
+
+    Shared by extract_features() (ML feature vector) and
+    classify_shot_geom.py (the geometric decision tree)."""
+    rs = get_lm(peak_lm, 'right_shoulder')
+    ls = get_lm(peak_lm, 'left_shoulder')
+    rh = get_lm(peak_lm, 'right_hip')
+    lh = get_lm(peak_lm, 'left_hip')
+    scale = None
+    if visible(rs) and visible(ls):
+        sh_mid = ((rs['x'] + ls['x']) / 2, (rs['y'] + ls['y']) / 2)
+        if visible(rh) and visible(lh):
+            hip_mid = ((rh['x'] + lh['x']) / 2, (rh['y'] + lh['y']) / 2)
+            scale = math.hypot(sh_mid[0] - hip_mid[0], sh_mid[1] - hip_mid[1])
+        if not scale:
+            scale = abs(rs['x'] - ls['x'])
+    if scale is not None and scale < 1e-4:
+        scale = None
+    return scale
+
+
 def extract_features(peak_lm, prev_lm, window_lms):
     """
     Raw intermediate quantities score_forehand/score_backhand/score_serve
@@ -89,22 +116,7 @@ def extract_features(peak_lm, prev_lm, window_lms):
     rw_prev = get_lm(prev_lm, 'right_wrist') if prev_lm else None
     lw_prev = get_lm(prev_lm, 'left_wrist') if prev_lm else None
 
-    # body_scale = torso length (shoulder-mid -> hip-mid), fallback shoulder
-    # width. Every magnitude feature below is divided by it so a phone selfie
-    # (player fills the frame) and a broadcast clip (player small) produce
-    # comparable numbers -- see train_shot_classifier_model.py's 2026-08-27
-    # note on why raw magnitudes blocked the pro-review clips. None when the
-    # torso isn't visible -> the magnitude features become None (imputed).
-    body_scale = None
-    if visible(rs) and visible(ls):
-        sh_mid = ((rs['x'] + ls['x']) / 2, (rs['y'] + ls['y']) / 2)
-        if visible(rh) and visible(lh):
-            hip_mid = ((rh['x'] + lh['x']) / 2, (rh['y'] + lh['y']) / 2)
-            body_scale = math.hypot(sh_mid[0] - hip_mid[0], sh_mid[1] - hip_mid[1])
-        if not body_scale:
-            body_scale = abs(rs['x'] - ls['x'])
-    if body_scale is not None and body_scale < 1e-4:
-        body_scale = None
+    body_scale = torso_scale(peak_lm)
 
     def _n(v):
         return round(v / body_scale, 4) if (v is not None and body_scale) else None

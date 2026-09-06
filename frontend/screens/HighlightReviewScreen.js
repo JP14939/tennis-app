@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { API_BASE } from '../config/api';
 import { playTapSound } from '../utils/sounds';
 import { useWindowWidth } from '../utils/responsive';
+import { formatTime } from '../utils/formatTime';
 import { colors, fonts, radius, spacing } from '../theme';
 
 // Outcome vocabulary: who won the point, not how -- in tennis, almost every
@@ -27,12 +28,6 @@ const TAG_OPTIONS = [
   { value: 'winner_other_side',  label: 'Winner (other side)' },
   { value: 'skip',               label: 'Not a rally' },
 ];
-
-function formatTime(sec) {
-  const m = Math.floor(sec / 60);
-  const s = Math.round(sec % 60);
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
 
 function ClipRow({ clip, value, onTag }) {
   const videoRef = useRef(null);

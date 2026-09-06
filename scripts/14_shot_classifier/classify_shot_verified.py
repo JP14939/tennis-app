@@ -28,15 +28,22 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '05_angle_detection'))
-from classify_shot import classify, classify_ml  # noqa: E402
+from classify_shot import classify, classify_ml, classify_ensemble  # noqa: E402
 from shot_classifier_training_log import log_example as log_rule_example  # noqa: E402
 from shot_classifier_training_log import should_trust_student as should_trust_rule_student  # noqa: E402
 import shot_classifier_ml_training_log as ml_log  # noqa: E402
+import shot_classifier_ensemble_training_log as ens_log  # noqa: E402
 from shot_classifier_verifier import verify_shot  # noqa: E402
 from infer_angle import extract_frame  # noqa: E402
 
+# The rally pipeline (detect_rallies / analyze_rallies_parallel) runs on
+# broadcast-ish footage where the trajectory-kNN step is reliable; a future
+# phone-upload caller should set RALLYMAX_ENSEMBLE_NO_TRAJECTORY=1.
+_ENSEMBLE_USE_TRAJECTORY = os.environ.get('RALLYMAX_ENSEMBLE_NO_TRAJECTORY') != '1'
 
-def get_verified_shot_type(video_path, contact_time_sec, use_verifier=True, frames_fps=None, log_lock=None):
+
+def get_verified_shot_type(video_path, contact_time_sec, use_verifier=True, frames_fps=None,
+                           log_lock=None, handedness='right', use_trajectory=None):
     """
     frames_fps: optional pre-extracted (frames, fps) tuple, passed straight
     through to classify()/classify_ml() to skip re-running pose extraction
@@ -47,7 +54,30 @@ def get_verified_shot_type(video_path, contact_time_sec, use_verifier=True, fram
     log_lock: optional lock passed straight through to both training logs'
     log_example() -- see shot_classifier_training_log.py's docstring.
     Defaults to None (no locking), safe for single-process callers.
+
+    use_trajectory: override the ensemble's trajectory-kNN step. None (default)
+    = fall back to the _ENSEMBLE_USE_TRAJECTORY env default (on). Phone-footage
+    callers (detect_rallies.py --no-trajectory) pass False -- the pro trajectory
+    pool is broadcast and mislabels every phone selfie backhand as a forehand.
     """
+    if use_trajectory is None:
+        use_trajectory = _ENSEMBLE_USE_TRAJECTORY
+    # ── ensemble student (geom serve gate + trajectory-kNN FH/BH) ──
+    ens_result = None
+    try:
+        ens_result = classify_ensemble(video_path, contact_time_sec, frames_fps=frames_fps,
+                                       handedness=handedness, use_trajectory=use_trajectory)
+    except Exception as e:  # noqa: BLE001
+        print(f'  [ensemble] skipped: {e}', file=sys.stderr)
+
+    ens_definite = ens_result is not None and ens_result['shot_type'] in ('forehand', 'backhand', 'serve')
+    # Same rule as the other students: `not use_verifier` ("don't pay for
+    # Claude") returns the student; otherwise it must earn trust first.
+    if ens_definite and (not use_verifier or ens_log.should_trust_student()):
+        return ens_result['shot_type'], {'source': f'student_ensemble:{ens_result["source"]}',
+                                         'verified': False, 'scores': ens_result['scores'],
+                                         'confidence': ens_result['confidence']}
+
     ml_result = None
     try:
         ml_result = classify_ml(video_path, contact_time_sec, frames_fps=frames_fps)
@@ -101,6 +131,17 @@ def get_verified_shot_type(video_path, contact_time_sec, use_verifier=True, fram
         ml_agreed = claude_pick == ml_result['shot_type']
         ml_log.log_example(ml_result['scores'], ml_result['shot_type'], claude_pick, ml_agreed, lock=log_lock,
                             clip_path=video_path, contact_frame=contact_frame)
+
+    # Same for the ensemble -- shadow-mode logging so it earns trust on real
+    # pipeline data. An 'uncertain'/None pick is logged with agreed=None so it
+    # doesn't count toward the trust rate (those are exactly the cases that
+    # SHOULD reach Claude).
+    if ens_result is not None:
+        ens_pick = ens_result['shot_type'] if ens_definite else None
+        ens_log.log_example(ens_result.get('scores', {}), ens_pick, claude_pick,
+                            (claude_pick == ens_pick) if ens_pick else None, lock=log_lock,
+                            clip_path=video_path, contact_frame=contact_frame,
+                            source=ens_result.get('source'))
 
     return claude_pick, {
         'source': 'claude_verified', 'verified': True, 'agreed_with_student': agreed,

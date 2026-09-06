@@ -6,7 +6,7 @@ background (not awaited by the upload response) since pose extraction over
 a full match video takes real time.
 
 Usage:
-  python rally_detector.py <video_path> <output_dir>
+  python rally_detector.py <video_path> <output_dir> [--no-trajectory] [--handedness left|right]
 
 Output (stdout): see detect_rallies.detect_rallies() docstring.
 On error: { "error": "description" }
@@ -27,6 +27,9 @@ def main():
     parser = argparse.ArgumentParser(description='Detect rally boundaries in a match video and clip each one out')
     parser.add_argument('video', help='Path to full match/practice video')
     parser.add_argument('output_dir', help='Directory to write rally clips into')
+    parser.add_argument('--no-trajectory', action='store_true',
+                        help='Disable trajectory-kNN FH/BH (phone footage -- broadcast pool mislabels it)')
+    parser.add_argument('--handedness', choices=['right', 'left'], default='right')
     args = parser.parse_args()
 
     if not os.path.exists(args.video):
@@ -34,7 +37,9 @@ def main():
         sys.exit(1)
 
     try:
-        result = detect_rallies(args.video, args.output_dir)
+        result = detect_rallies(args.video, args.output_dir,
+                                use_trajectory=not args.no_trajectory,
+                                handedness=args.handedness)
         print(json.dumps(result))
     except Exception as e:
         # Same reasoning as pro_matcher.py's except block: some underlying

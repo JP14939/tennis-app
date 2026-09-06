@@ -499,8 +499,8 @@ export default function HistoryScreen({ navigation, route }) {
     try {
       const data = await fetchHistory(token);
       if (!mountedRef.current) return;
-      setAnalyses(data.analyses);
-      setLimit(data.limit);
+      setAnalyses(data.analyses ?? []);
+      setLimit(data.limit ?? null);
     } catch {
       // Leave whatever was previously loaded rather than blanking the screen
       // on a transient network failure.

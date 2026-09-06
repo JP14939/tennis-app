@@ -129,6 +129,11 @@ export default function DevProClipReviewScreen({ navigation }) {
   const [submitting, setSubmitting] = useState(false);
   const [doneCount, setDoneCount] = useState(0);
   const [reloadKey, setReloadKey] = useState(0);
+  // Two review streams: the curated broadcast clips (default) and the
+  // court-level practice-footage ingest (needs relabel + recontact, not just
+  // an eyeball -- its shot types came out skewed to 'forehand' and its
+  // contact frames land ~13f late).
+  const [practiceMode, setPracticeMode] = useState(false);
 
   // Cut mode: cutStart/cutEnd are captured from the video's own playback
   // position (seconds), not typed in -- matches this screen's tap-driven
@@ -218,9 +223,10 @@ export default function DevProClipReviewScreen({ navigation }) {
     setLoadError(false);
     (async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/dev/pro-clip-review-candidates`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await fetch(
+          `${API_BASE}/api/dev/pro-clip-review-candidates${practiceMode ? '?practice=1' : ''}`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
         if (!res.ok) throw new Error(`Request failed (${res.status})`);
         const data = await res.json();
         setCandidates(data.candidates ?? []);
@@ -233,9 +239,21 @@ export default function DevProClipReviewScreen({ navigation }) {
         setLoading(false);
       }
     })();
-  }, [token, reloadKey]);
+  }, [token, reloadKey, practiceMode]);
 
   const current = candidates[index];
+
+  // Batch exhausted -> pull the next batch (and a fresh `progress`) instead of
+  // stranding the user on a stale "reviewed all N this batch / X of 333" screen.
+  // Server-side filtering means already-reviewed clips don't come back, so this
+  // walks forward through the queue. When there's genuinely nothing left the
+  // refetch returns [] (candidates.length === 0), the guard below stops, and
+  // the real all-done screen shows with an up-to-date count.
+  useEffect(() => {
+    if (!loading && candidates.length > 0 && index >= candidates.length) {
+      setReloadKey((k) => k + 1);
+    }
+  }, [loading, index, candidates.length]);
 
   // Clear every per-clip sub-panel / anchor. Called both when `index` changes
   // (new clip) and, without an index change, right after a Cut/Split so the
@@ -449,14 +467,16 @@ export default function DevProClipReviewScreen({ navigation }) {
       });
       if (!res.ok) throw new Error(`Request failed (${res.status})`);
       const data = await res.json();
-      if (justEdited) {
-        // Chained edit after a cut/split -- the clip file moved folders, so
-        // reload it from the new path; "Next ->" advances.
+      if (justEdited || practiceMode) {
+        // Chained edit after a cut/split, OR a practice clip (which almost
+        // always needs a contact-time fix too) -- stay on the clip and reload
+        // it (the file may have moved folders); "Next ->" advances.
         patchCurrent({
           shot_type: newShotType,
           clip_url: withNonce(data.clip_path ? `/pro-clips/${data.clip_path}` : current.clip_url),
         });
         setShotTypeMode(false);
+        setJustEdited(true);
       } else {
         setDoneCount((c) => c + 1);
         setIndex((i) => i + 1);
@@ -480,11 +500,13 @@ export default function DevProClipReviewScreen({ navigation }) {
         body: JSON.stringify({ id: current.id, new_contact_time_sec: fineT, name: names[current.id] || null }),
       });
       if (!res.ok) throw new Error(`Request failed (${res.status})`);
-      if (justEdited) {
-        // Chained edit after a cut/split -- stay on the clip so shot type can
+      if (justEdited || practiceMode) {
+        // Chained edit after a cut/split, OR a practice clip (which almost
+        // always needs a relabel too) -- stay on the clip so shot type can
         // also be fixed; "Next ->" advances.
         patchCurrent({ clip_contact_time_sec: fineT });
         setCtStep(null); setRoughSec(null); setFineOffset(0); setScrubFraction(null);
+        setJustEdited(true);
       } else {
         setDoneCount((c) => c + 1);
         setIndex((i) => i + 1);
@@ -529,11 +551,24 @@ export default function DevProClipReviewScreen({ navigation }) {
             <Text style={s.doneTitle}>All done!</Text>
             <Text style={s.errorText}>
               {candidates.length === 0
-                ? 'No reviewable pro clips found.'
-                : `You reviewed all ${candidates.length} clips this batch.`}
+                ? `No reviewable ${practiceMode ? 'practice-footage' : 'broadcast'} clips found.`
+                : `You reviewed all ${candidates.length} ${practiceMode ? 'practice' : 'broadcast'} clips this batch.`}
             </Text>
+            {progress && (
+              <Text style={s.errorText}>
+                Practice footage: {progress.practice_reviewed} of {progress.practice_total} reviewed
+              </Text>
+            )}
             <TouchableOpacity style={s.retryBtn} onPress={() => setReloadKey((k) => k + 1)}>
               <Text style={s.retryBtnText}>Load more clips</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.retryBtn, { marginTop: 12, backgroundColor: 'rgba(255,255,255,0.12)' }]}
+              onPress={() => { setPracticeMode((p) => !p); setReloadKey((k) => k + 1); }}
+            >
+              <Text style={s.retryBtnText}>
+                {practiceMode ? 'Back to broadcast clips' : 'Review practice footage →'}
+              </Text>
             </TouchableOpacity>
           </View>
         </SafeAreaView>
@@ -576,10 +611,13 @@ export default function DevProClipReviewScreen({ navigation }) {
                 <Text style={s.prevBtnText}>‹ Previous</Text>
               </TouchableOpacity>
             )}
-            <Text style={s.progressText}>Clip {index + 1} of {candidates.length}</Text>
+            <Text style={s.progressText}>
+              {practiceMode ? 'PRACTICE · ' : ''}Clip {index + 1} of {candidates.length}
+            </Text>
             <Text style={s.progressSub}>
               {current.id} · {current.shot_type}
               {current.camera_angle != null ? ` · ${current.camera_angle}°` : ''}
+              {practiceMode ? ' · expect to relabel + fix contact time' : ''}
             </Text>
             <TextInput
               style={s.nameInput}

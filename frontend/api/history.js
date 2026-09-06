@@ -1,11 +1,24 @@
 import { API_BASE } from '../config/api';
 
 async function handle(res) {
-  const data = await res.json().catch(() => ({}));
+  let data;
+  let parseFailed = false;
+  try {
+    data = await res.json();
+  } catch {
+    data = {};
+    parseFailed = true;
+  }
   if (!res.ok) {
     const err = new Error(data.error || 'Something went wrong');
     err.code = data.code;
     throw err;
+  }
+  if (parseFailed) {
+    // A 2xx whose body isn't JSON means something between us and the backend
+    // answered instead of the backend (e.g. an ngrok/proxy interstitial page).
+    // Fail loudly rather than returning {} and blanking the screen.
+    throw new Error(`Unexpected non-JSON response from ${res.url}`);
   }
   return data;
 }

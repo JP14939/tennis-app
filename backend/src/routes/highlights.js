@@ -2,13 +2,17 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { spawn } = require('child_process');
 const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
 const requirePremium = require('../middleware/requirePremium');
+const { currentTier } = require('../utils/tier');
 const { PYTHON, DATA_DIR } = require('../config/paths');
 const { sendPushNotification } = require('../utils/pushNotifications');
+const { runPythonJson } = require('../utils/runPythonJson');
+const { resolveJobFailureMessage } = require('../utils/resolveJobFailureMessage');
 const { safeVideoExt, videoFileFilter } = require('../utils/videoUpload');
+const { reserveDailyUsageSlot, releaseUsageSlot, LIMIT_EXCEEDED } = require('../utils/usageLimit');
+const { finalizeAnalysisResult, USER_CLIPS_DIR } = require('../services/finalizeAnalysisResult');
 const {
   OUTCOME_TAGS, MAX_LENGTHS, isOutcomeTag, isBoundaryNote, isText,
 } = require('../domain/invariants');
@@ -30,6 +34,16 @@ const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads');
 // their ephemeral uploads.
 const CLIPS_DIR = path.join(DATA_DIR, 'runtime', 'highlight_clips');
 const DETECTOR = path.join(__dirname, '..', 'services', 'rally_detector.py');
+// Same script /api/analyse spawns -- a shot picked from an already-detected
+// rally clip is analyzed through the identical pipeline, not a second one.
+const MATCHER = path.join(__dirname, '..', 'services', 'pro_matcher.py');
+const ANALYSIS_TIMEOUT_MS = 2 * 60 * 1000; // matches analyse.js's own ceiling for the same subprocess
+// Duplicated from analyse.js rather than shared -- see that file's own
+// comment on why a daily cap exists at all (free-tier resource exhaustion).
+// This is the same expensive MediaPipe subprocess, so it draws on the same
+// analysis_usage accounting rather than getting a free pass.
+const FREE_DAILY_LIMIT = 2;
+const analyzeShotLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 30, keyPrefix: 'analyse-shot', keyGenerator: (req) => req.user?.id ?? req.ip });
 const STITCHER = path.join(__dirname, '..', '..', '..', 'scripts', '11_highlight_clipping', 'stitch_clips.py');
 // Stitching re-copies every frame of every clip via OpenCV (no ffmpeg on
 // this machine -- see stitch_clips.py's module comment), not a fast stream
@@ -71,89 +85,105 @@ function serializeClip(clip) {
   return { ...clip, clip_url: toClipUrl(clip.clip_path) };
 }
 
-function runJob(jobId, videoPath, userId) {
+// Attaches this rally's persisted per-shot data (shot_type, clip-relative
+// contact_time_sec) -- see rally_shots' schema comment in db.js. Rallies
+// created before this table existed simply have no rows here, so this
+// degrades to shots: [] rather than erroring.
+function serializeClipWithShots(clip) {
+  const shots = db.prepare(
+    `SELECT shot_index, shot_type, contact_time_sec FROM rally_shots WHERE rally_clip_id = ? ORDER BY shot_index`
+  ).all(clip.id);
+  return { ...serializeClip(clip), shots };
+}
+
+// Per-kind failure copy for the two background job runners below -- same
+// convention as dev.js's sendPythonJson (see its own comment): the messages
+// a PythonProcessError.kind maps to are written once per job type instead of
+// hand-rolled per catch branch. 'nonzero_exit' has no fixed message here --
+// the detector/stitcher's own reported error (parsed from stdout) takes
+// priority over the fallback text, same as before this was deepened.
+const RALLY_DETECTION_MESSAGES = {
+  timeout: 'Rally detection timed out -- please try a shorter video.',
+  invalid_json: 'Something went wrong processing your video.',
+  spawn_failed: 'Failed to start detection process',
+  nonzero_exit: 'Rally detection failed',
+};
+const REEL_BUILD_MESSAGES = {
+  timeout: 'Reel building timed out.',
+  invalid_json: 'Reel builder produced invalid output',
+  spawn_failed: 'Failed to start reel builder',
+  nonzero_exit: 'Failed to build highlight reel',
+};
+
+async function runJob(jobId, videoPath, userId) {
   db.prepare(`UPDATE highlight_jobs SET status = 'processing' WHERE id = ?`).run(jobId);
 
   const outputDir = path.join(CLIPS_DIR, String(userId), String(jobId));
-  const proc = spawn(PYTHON, [DETECTOR, videoPath, outputDir]);
+  // Highlight jobs are always phone footage -- disable the trajectory-kNN FH/BH
+  // step (its pro pool is broadcast and mislabels every phone selfie backhand
+  // as a forehand). Mirror lefties before geom's view-invariant side test.
+  const detectorArgs = [DETECTOR, videoPath, outputDir, '--no-trajectory'];
+  const handed = db.prepare('SELECT handed FROM users WHERE id = ?').get(userId)?.handed;
+  if (handed === 'left') detectorArgs.push('--handedness', 'left');
 
-  let stdout = '';
-  let stderr = '';
-  proc.stdout.on('data', (chunk) => { stdout += chunk; });
-  proc.stderr.on('data', (chunk) => { stderr += chunk; });
-
-  const timeout = setTimeout(() => proc.kill(), JOB_TIMEOUT_MS);
-
-  proc.on('close', (code) => {
-    clearTimeout(timeout);
+  let result;
+  try {
+    result = await runPythonJson(PYTHON, detectorArgs, { timeoutMs: JOB_TIMEOUT_MS, label: 'rally_detector.py' });
+  } catch (err) {
     fs.unlink(videoPath, () => {}); // raw upload only ever needed during processing
+    console.error(`[highlights] rally_detector.py failed (${err.kind}):`, err.stderr?.slice(-2000) || err.message);
+    const message = resolveJobFailureMessage(err, RALLY_DETECTION_MESSAGES);
+    db.prepare(`UPDATE highlight_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?`).run(message, jobId);
+    sendPushNotification(userId, 'Rally detection failed', message);
+    return;
+  }
 
-    if (code !== 0) {
-      console.error('[highlights] rally_detector.py failed:', stderr.slice(-2000));
-      let error = 'Rally detection failed';
-      try { error = JSON.parse(stdout).error || error; } catch { /* stdout wasn't JSON */ }
-      db.prepare(`UPDATE highlight_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?`).run(error, jobId);
-      sendPushNotification(userId, 'Rally detection failed', error);
-      return;
-    }
+  fs.unlink(videoPath, () => {}); // raw upload only ever needed during processing
 
-    let result;
-    try {
-      result = JSON.parse(stdout);
-    } catch (e) {
-      console.error('[highlights] failed to parse rally_detector.py output:', e.message, stdout.slice(-2000));
-      db.prepare(`UPDATE highlight_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?`).run('Detection produced invalid output', jobId);
-      sendPushNotification(userId, 'Rally detection failed', 'Something went wrong processing your video.');
-      return;
-    }
-
-    try {
-      const insert = db.prepare(`
-        INSERT INTO rally_clips (job_id, user_id, clip_path, start_sec, end_sec, duration_sec, swing_count)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `);
-      // Transactional so a bad rally mid-list (e.g. a null clip_path
-      // hitting the NOT NULL constraint) can't leave a partial set of
-      // rally_clips rows inserted while the job status still ends up
-      // 'failed' -- previously the loop and the status update were
-      // separate statements, so a throw partway through left orphaned
-      // clips that still rendered via GET /highlights/:jobId/clips despite
-      // the job never being marked 'done'.
-      const ingest = db.transaction(() => {
-        for (const rally of result.rallies) {
-          insert.run(jobId, userId, rally.clip_path, rally.start_sec, rally.end_sec, rally.duration_sec, rally.swing_count);
+  try {
+    const insert = db.prepare(`
+      INSERT INTO rally_clips (job_id, user_id, clip_path, start_sec, end_sec, duration_sec, swing_count)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    const insertShot = db.prepare(`
+      INSERT INTO rally_shots (rally_clip_id, shot_index, shot_type, contact_time_sec)
+      VALUES (?, ?, ?, ?)
+    `);
+    // Transactional so a bad rally mid-list (e.g. a null clip_path
+    // hitting the NOT NULL constraint) can't leave a partial set of
+    // rally_clips rows inserted while the job status still ends up
+    // 'failed' -- previously the loop and the status update were
+    // separate statements, so a throw partway through left orphaned
+    // clips that still rendered via GET /highlights/:jobId/clips despite
+    // the job never being marked 'done'. Per-shot rows are inserted in the
+    // same transaction, right after their parent rally_clips row, so a
+    // bad shot can't leave a rally half-written either.
+    const ingest = db.transaction(() => {
+      for (const rally of result.rallies) {
+        const info = insert.run(jobId, userId, rally.clip_path, rally.start_sec, rally.end_sec, rally.duration_sec, rally.swing_count);
+        for (const shot of rally.shots ?? []) {
+          insertShot.run(info.lastInsertRowid, shot.shot_index, shot.shot_type, shot.contact_time_sec);
         }
-        db.prepare(`UPDATE highlight_jobs SET status = 'done', completed_at = datetime('now') WHERE id = ?`).run(jobId);
-      });
-      ingest();
-      sendPushNotification(
-        userId,
-        'Your rallies are ready',
-        `Found ${result.rallies_detected} rall${result.rallies_detected === 1 ? 'y' : 'ies'} in your video — tap to review.`,
-        { jobId }
-      );
-    } catch (e) {
-      // Was folded into the JSON-parse catch above, which logged only stdout
-      // and never the error itself -- so a DB constraint failure during
-      // ingest() left no trace of what actually broke and reported itself to
-      // the user as bad detector output.
-      console.error('[highlights] failed to ingest rally_detector.py results:', e);
-      db.prepare(`UPDATE highlight_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?`).run('Failed to save detected rallies', jobId);
-      sendPushNotification(userId, 'Rally detection failed', 'Something went wrong processing your video.');
-    }
-  });
-
-  proc.on('error', (err) => {
-    clearTimeout(timeout);
-    fs.unlink(videoPath, () => {});
-    console.error('[highlights] failed to spawn python:', err);
-    db.prepare(`UPDATE highlight_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?`).run('Failed to start detection process', jobId);
-    // Every other failure path in this function (nonzero exit, invalid JSON
-    // output) notifies the user their job failed -- this one (spawn itself
-    // never starting, e.g. a bad interpreter path) marked the job failed in
-    // the DB but left the user with no proactive signal, unlike the rest.
-    sendPushNotification(userId, 'Rally detection failed', 'Failed to start detection process');
-  });
+      }
+      db.prepare(`UPDATE highlight_jobs SET status = 'done', completed_at = datetime('now') WHERE id = ?`).run(jobId);
+    });
+    ingest();
+    sendPushNotification(
+      userId,
+      'Your rallies are ready',
+      `Found ${result.rallies_detected} rall${result.rallies_detected === 1 ? 'y' : 'ies'} in your video — tap to review.`,
+      { jobId }
+    );
+  } catch (e) {
+    // Deliberately a separate catch from the runPythonJson() one above --
+    // this failure isn't the detector's fault (its JSON already parsed
+    // successfully), it's a DB constraint failure during ingest(). Folding
+    // it into the other catch used to log only stdout and never the error
+    // itself, misreporting a DB failure to the user as bad detector output.
+    console.error('[highlights] failed to ingest rally_detector.py results:', e);
+    db.prepare(`UPDATE highlight_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?`).run('Failed to save detected rallies', jobId);
+    sendPushNotification(userId, 'Rally detection failed', 'Something went wrong processing your video.');
+  }
 }
 
 router.post('/highlights/upload', requireAuth, requirePremium, highlightsUploadLimiter, upload.single('video'), (req, res) => {
@@ -165,7 +195,15 @@ router.post('/highlights/upload', requireAuth, requirePremium, highlightsUploadL
   const jobId = info.lastInsertRowid;
 
   // Not awaited -- runs in the background, response goes back immediately.
-  runJob(jobId, req.file.path, req.user.id);
+  // runJob is now an async function (it awaits runPythonJson internally) --
+  // every throw inside it is already try/caught, but an un-awaited async
+  // call is still a promise nobody holds a reference to, so any future edit
+  // that adds a throw outside those try blocks would become an unhandled
+  // rejection instead of a caught error. Attach a catch here as a permanent
+  // backstop against that, same reasoning as runReelJob's call site below.
+  runJob(jobId, req.file.path, req.user.id).catch((err) => {
+    console.error('[highlights] runJob rejected unexpectedly:', err);
+  });
 
   res.status(202).json({ jobId });
 });
@@ -196,51 +234,122 @@ router.get('/highlights/jobs/:id', requireAuth, (req, res) => {
   if (!job) return res.status(404).json({ error: 'Job not found' });
 
   const rallies = job.status === 'done'
-    ? db.prepare(`SELECT * FROM rally_clips WHERE job_id = ? ORDER BY start_sec`).all(job.id).map(serializeClip)
+    ? db.prepare(`SELECT * FROM rally_clips WHERE job_id = ? ORDER BY start_sec`).all(job.id).map(serializeClipWithShots)
     : [];
 
   res.json({ ...job, rallies });
 });
 
-function runReelJob(reelJobId, outputPath, clipPaths) {
+// Analyzes one shot picked out of an already-detected rally clip, using the
+// pipeline's own detected contact frame -- no manual contact-marking
+// round-trip needed, since detect_rallies.py already found it. Reuses the
+// same pro_matcher.py invocation and post-processing /api/analyse uses, so
+// the response shape matches exactly and ResultsScreen.js renders it with
+// no changes to its render path.
+router.post('/highlights/rallies/:id/shots/:shotIndex/analyze', requireAuth, analyzeShotLimiter, async (req, res) => {
+  const shotIndex = Number(req.params.shotIndex);
+  if (!Number.isInteger(shotIndex) || shotIndex < 0) {
+    return res.status(400).json({ error: 'shotIndex must be a non-negative integer' });
+  }
+
+  const clip = db.prepare(`SELECT * FROM rally_clips WHERE id = ? AND user_id = ?`).get(req.params.id, req.user.id);
+  if (!clip) return res.status(404).json({ error: 'Rally clip not found' });
+
+  const shot = db.prepare(
+    `SELECT * FROM rally_shots WHERE rally_clip_id = ? AND shot_index = ?`
+  ).get(clip.id, shotIndex);
+  if (!shot) return res.status(404).json({ error: 'Shot not found' });
+
+  // Same free-tier accounting as /api/analyse -- this spawns the identical
+  // expensive subprocess, it shouldn't get a free pass just because the
+  // source clip already existed.
+  const isFreeUser = currentTier(req.user.id) === 'free';
+  let usageRowId = null;
+  if (isFreeUser) {
+    const reserved = reserveDailyUsageSlot(db, req.user.id, FREE_DAILY_LIMIT);
+    if (reserved === LIMIT_EXCEEDED) {
+      return res.status(403).json({
+        error: `Free plan is limited to ${FREE_DAILY_LIMIT} analyses per day — upgrade to Premium for unlimited.`,
+        code: 'DAILY_LIMIT',
+      });
+    }
+    usageRowId = reserved;
+  }
+
+  const handed = db.prepare('SELECT handed FROM users WHERE id = ?').get(req.user.id)?.handed;
+  const args = [MATCHER, clip.clip_path, shot.shot_type, '--top', '3', '--contact-time', String(shot.contact_time_sec)];
+  if (handed === 'left') args.push('--handedness', 'left');
+
+  let result;
+  try {
+    result = await runPythonJson(PYTHON, args, { timeoutMs: ANALYSIS_TIMEOUT_MS, label: 'pro_matcher.py' });
+  } catch (err) {
+    // The matcher never ran to completion -- this free-tier slot bought
+    // nothing, give it back (see analyse.js's identical reasoning).
+    releaseUsageSlot(db, usageRowId);
+    console.error(`[highlights] analyze-shot pro_matcher.py failed (${err.kind}):`, err.stderr?.slice(-2000) || err.message);
+    const messages = {
+      spawn_failed: 'Failed to start analysis process',
+      invalid_json: 'Analysis produced invalid output',
+      timeout: 'Analysis timed out',
+      nonzero_exit: (() => {
+        try { return JSON.parse(err.stdout).error; } catch { return 'Analysis failed'; }
+      })(),
+    };
+    return res.status(500).json({ error: messages[err.kind] || 'Analysis failed' });
+  }
+
+  try {
+    // deleteSource:false -- unlike /api/analyse's throwaway upload, this
+    // source is the persisted rally clip, still needed for this rally's
+    // other shots (and any re-analysis of this one).
+    //
+    // destDir includes a per-request suffix (analyse.js gets the same
+    // uniqueness for free from multer's own randomized upload filename) --
+    // a bare `rally_<id>_shot_<index>` would give two concurrent requests
+    // for the same shot (a double-tap, or two devices on the same account)
+    // the identical destination path, racing persistAndCrop's copyFileSync/
+    // cropToSubject against each other into the same files.
+    await finalizeAnalysisResult(result, {
+      sourcePath: clip.clip_path,
+      destDir: path.join(USER_CLIPS_DIR, `rally_${clip.id}_shot_${shot.shot_index}_${Date.now()}_${Math.round(Math.random() * 1e6)}`),
+      shotType: shot.shot_type,
+      deleteSource: false,
+    });
+    res.json(result);
+  } catch (err) {
+    // Analysis already succeeded by this point -- same reasoning as
+    // analyse.js's identical catch: this is a post-processing failure, not
+    // a failed analysis, so the usage slot is NOT released here.
+    console.error(`[highlights] analyze-shot post-processing failed after a successful analysis: ${err.message}`);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Analysis succeeded but the response could not be completed' });
+    }
+  }
+});
+
+async function runReelJob(reelJobId, outputPath, clipPaths) {
   db.prepare(`UPDATE reel_jobs SET status = 'processing' WHERE id = ?`).run(reelJobId);
-
-  const proc = spawn(PYTHON, [STITCHER, outputPath, ...clipPaths]);
-
-  let stdout = '';
-  let stderr = '';
-  proc.stdout.on('data', (chunk) => { stdout += chunk; });
-  proc.stderr.on('data', (chunk) => { stderr += chunk; });
 
   // Safety net against a stuck process now, not tied to any HTTP response --
   // the client learns the outcome by polling reel_jobs regardless.
-  const timeout = setTimeout(() => proc.kill(), REEL_TIMEOUT_MS);
+  let result;
+  try {
+    result = await runPythonJson(PYTHON, [STITCHER, outputPath, ...clipPaths], { timeoutMs: REEL_TIMEOUT_MS, label: 'stitch_clips.py' });
+  } catch (err) {
+    console.error(`[highlights] stitch_clips.py failed (${err.kind}):`, err.stderr?.slice(-2000) || err.message);
+    const message = resolveJobFailureMessage(err, REEL_BUILD_MESSAGES);
+    db.prepare(`UPDATE reel_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?`).run(message, reelJobId);
+    return;
+  }
 
-  proc.on('close', (code) => {
-    clearTimeout(timeout);
-    if (code !== 0) {
-      console.error('[highlights] stitch_clips.py failed:', stderr.slice(-2000));
-      let error = 'Failed to build highlight reel';
-      try { error = JSON.parse(stdout).error || error; } catch { /* stdout wasn't JSON */ }
-      db.prepare(`UPDATE reel_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?`).run(error, reelJobId);
-      return;
-    }
-    try {
-      const result = JSON.parse(stdout);
-      db.prepare(
-        `UPDATE reel_jobs SET status = 'done', output_path = ?, completed_at = datetime('now') WHERE id = ?`
-      ).run(result.output_path, reelJobId);
-    } catch {
-      console.error('[highlights] failed to parse stitch_clips.py output:', stdout.slice(-2000));
-      db.prepare(`UPDATE reel_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?`).run('Reel builder produced invalid output', reelJobId);
-    }
-  });
-
-  proc.on('error', (err) => {
-    clearTimeout(timeout);
-    console.error('[highlights] failed to spawn stitcher:', err);
-    db.prepare(`UPDATE reel_jobs SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?`).run('Failed to start reel builder', reelJobId);
-  });
+  // runPythonJson already guarantees `result` is valid parsed JSON by the
+  // time this resolves -- no separate JSON.parse/catch needed here the way
+  // the hand-rolled version needed one (that failure mode is now
+  // err.kind === 'invalid_json' above, handled once for every job type).
+  db.prepare(
+    `UPDATE reel_jobs SET status = 'done', output_path = ?, completed_at = datetime('now') WHERE id = ?`
+  ).run(result.output_path, reelJobId);
 }
 
 router.post('/highlights/jobs/:id/reel', requireAuth, requirePremium, (req, res) => {
@@ -293,7 +402,10 @@ router.post('/highlights/jobs/:id/reel', requireAuth, requirePremium, (req, res)
   const reelJobId = info.lastInsertRowid;
 
   // Not awaited -- runs in the background, response goes back immediately.
-  runReelJob(reelJobId, outputPath, clips.map((c) => c.clip_path));
+  // See runJob's call site above for why this needs a .catch backstop.
+  runReelJob(reelJobId, outputPath, clips.map((c) => c.clip_path)).catch((err) => {
+    console.error('[highlights] runReelJob rejected unexpectedly:', err);
+  });
 
   res.status(202).json({ reelJobId });
 });

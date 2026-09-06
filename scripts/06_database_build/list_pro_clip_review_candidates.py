@@ -7,11 +7,18 @@ teacher-student ML loop. Same free, no-Claude-cost, one-at-a-time pattern
 already established for Swing Review / Rally Boundary Review / Tip Review.
 
 Usage:
-  python list_pro_clip_review_candidates.py [limit]
+  python list_pro_clip_review_candidates.py [limit] [--practice]
+
+  --practice: review ONLY the court-level practice-footage ingest
+  (entry['ingest'] == 'practice_mvp'). Its shot-type labels came out badly
+  skewed to 'forehand' and its contact frames land ~13f late, so it needs a
+  relabel-and-recontact pass, not just an eyeball -- a separate review stream
+  from the curated broadcast clips (which the default queue shows and this
+  flag hides).
 
 Output (stdout): {"candidates": [{id, shot_type, clip_url, camera_angle,
   confidence, clip_contact_time_sec, fps}, ...], "progress": {live_total,
-  boundary_reviewed, label_reviewed}}
+  boundary_reviewed, label_reviewed, practice_total, practice_reviewed}}
 """
 import json
 import os
@@ -73,16 +80,22 @@ def _progress(db):
     label_reviewed = get_label_reviewed_ids()
     verdict_notes = latest_verdict_notes()
     machine_fill = {eid for eid, (v, n) in verdict_notes.items() if _is_machine_contact_fill(v, n)}
+    practice_ids = {e['id'] for e in db['entries'] if e.get('ingest') == 'practice_mvp'}
     return {
         'live_total': len(live_ids),
         'boundary_reviewed': len(live_ids & reviewed - machine_fill),
         'label_reviewed': len(live_ids & label_reviewed - machine_fill),
         'contact_fill_pending': len(live_ids & machine_fill),
+        'practice_total': len(practice_ids),
+        # a practice entry counts as done once it has any real (non-machine-fill) verdict
+        'practice_reviewed': len(practice_ids & (reviewed | label_reviewed) - machine_fill),
     }
 
 
 def main():
-    limit = int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_LIMIT
+    argv = [a for a in sys.argv[1:] if a != '--practice']
+    practice_only = '--practice' in sys.argv[1:]
+    limit = int(argv[0]) if argv else DEFAULT_LIMIT
 
     verdict_notes = latest_verdict_notes()
     with open(PRO_DB_PATH) as f:
@@ -92,6 +105,8 @@ def main():
     for entry in db['entries']:
         if len(candidates) >= limit:
             break
+        if (entry.get('ingest') == 'practice_mvp') != practice_only:
+            continue  # --practice shows only practice entries; default hides them
         if not _still_needs_review(entry['id'], verdict_notes):
             continue
         clip_abs_path = os.path.join(PRO_CLIPS_DIR, entry['clip_path'])

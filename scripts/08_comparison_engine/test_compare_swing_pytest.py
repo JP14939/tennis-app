@@ -16,7 +16,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from compare_swing import find_peak_wrist_frame  # noqa: E402
+from compare_swing import find_peak_wrist_frame, eligible_match_candidates  # noqa: E402
 
 
 def _landmark(x, y, visibility):
@@ -59,3 +59,38 @@ def test_missing_landmarks_frame_is_skipped_not_crashed():
     ]
     # Should not raise, and should still find the real movement at frame 2.
     assert find_peak_wrist_frame(frames, fps=30) == 2
+
+
+# ── eligible_match_candidates ───────────────────────────────────────────────
+# Regression: the court-level practice-footage ingest (entry['ingest'] ==
+# 'practice_mvp') was a live match candidate the moment it landed in
+# pro_database.json, unreviewed shot type / contact frame and all -- a bad
+# auto-label could be served to a real user as their "closest pro match".
+
+def _entry(id_, shot_type, ingest=None):
+    e = {'id': id_, 'shot_type': shot_type}
+    if ingest:
+        e['ingest'] = ingest
+    return e
+
+
+def test_unreviewed_practice_entry_is_excluded():
+    entries = [_entry('practice_1', 'forehand', ingest='practice_mvp')]
+    assert eligible_match_candidates(entries, 'forehand', reviewed_practice_ids=set()) == []
+
+
+def test_reviewed_practice_entry_is_included():
+    entries = [_entry('practice_1', 'forehand', ingest='practice_mvp')]
+    result = eligible_match_candidates(entries, 'forehand', reviewed_practice_ids={'practice_1'})
+    assert result == entries
+
+
+def test_non_practice_entry_is_unaffected_by_review_status():
+    entries = [_entry('forehand_0004', 'forehand')]
+    assert eligible_match_candidates(entries, 'forehand', reviewed_practice_ids=set()) == entries
+
+
+def test_filters_to_requested_shot_type():
+    entries = [_entry('forehand_0001', 'forehand'), _entry('backhand_0001', 'backhand')]
+    result = eligible_match_candidates(entries, 'forehand', reviewed_practice_ids=set())
+    assert [e['id'] for e in result] == ['forehand_0001']

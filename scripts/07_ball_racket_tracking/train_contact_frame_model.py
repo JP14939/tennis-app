@@ -168,6 +168,22 @@ def main(argv=None):
         records = [json.loads(line) for line in f if line.strip()]
     records = [r for r in records if r.get('frame_error') is not None]
 
+    # --force-relog (build_contact_student_dataset) appends a fresh row for a
+    # swing that was already logged (e.g. backfilling wrist-kinematics onto
+    # pre-Phase-C 'human' rows). Keep only the newest row per (swing_key,
+    # source); rows without a swing_key (user_submitted marks) are all kept.
+    _seen, _deduped = {}, []
+    for r in records:  # file order == chronological (append-only log)
+        sk = (r.get('student_meta') or {}).get('swing_key')
+        if not sk:
+            _deduped.append(r)
+            continue
+        _seen[(sk, r.get('source'))] = r
+    n_dropped_dup = len(records) - len(_deduped) - len(_seen)
+    records = _deduped + list(_seen.values())
+    if n_dropped_dup:
+        print(f'{n_dropped_dup} superseded rows dropped (kept newest per swing_key+source)')
+
     in_scope = [r for r in records if r.get('source') in TRAIN_SOURCES]
     print(f'{len(records)} rows total, {len(in_scope)} in scope (sources: {sorted(TRAIN_SOURCES)})')
 

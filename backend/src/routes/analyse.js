@@ -8,7 +8,7 @@ const requireAuth = require('../middleware/requireAuth');
 const { currentTier } = require('../utils/tier');
 const { PYTHON, DATA_DIR, SCRIPTS_DIR } = require('../config/paths');
 const { SHOT_TYPES } = require('../config/shotTypes');
-const { persistAndCrop, croppedProClipPath, toUrl, PRO_CLIPS_DIR, PRO_CLIPS_CROPPED_DIR } = require('../utils/videoCrop');
+const { finalizeAnalysisResult, USER_CLIPS_DIR } = require('../services/finalizeAnalysisResult');
 const { reserveDailyUsageSlot, releaseUsageSlot, LIMIT_EXCEEDED } = require('../utils/usageLimit');
 const { runPythonJson } = require('../utils/runPythonJson');
 const { safeVideoExt, videoFileFilter } = require('../utils/videoUpload');
@@ -42,9 +42,6 @@ const MATCHER = path.join(__dirname, '..', 'services', 'pro_matcher.py');
 const CONTACT_FRAME_LOGGER = path.join(SCRIPTS_DIR, '07_ball_racket_tracking', 'log_user_contact_frame_cli.py');
 const ANALYSIS_TIMEOUT_MS = 2 * 60 * 1000; // pose extraction on a short clip should finish well within this
 const FREE_DAILY_LIMIT = 2;
-// Where the user's uploaded video is kept after analysis (used to be
-// deleted immediately -- the sync-compare screen needs it to still exist).
-const USER_CLIPS_DIR = path.join(DATA_DIR, 'runtime', 'user_clips');
 
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 fs.mkdirSync(USER_CLIPS_DIR, { recursive: true });
@@ -175,55 +172,17 @@ router.post('/analyse', requireAuth, analyseLimiter, upload.single('video'), asy
     // Analysis succeeded -- keep the user's video (used to be deleted
     // here) and crop it for the sync-compare screen. Cropping failure is
     // non-fatal: croppedPath just comes back null and the screen falls
-    // back to the original video.
+    // back to the original video. deleteSource:true -- req.file.path is a
+    // throwaway multer upload, gone once persisted (unlike
+    // highlights.js's per-shot analyze endpoint, whose source is a
+    // persisted rally clip other shots still need).
     const uploadId = path.parse(req.file.filename).name;
-    const { originalPath, croppedPath } = await persistAndCrop(req.file.path, path.join(USER_CLIPS_DIR, uploadId));
-
-    // Defensive check -- don't hand back a URL that 404s or points at a
-    // truncated file (e.g. an interrupted upload on a bad connection).
-    // Doesn't fix whatever the underlying cause is, but turns a silent
-    // broken video into an honest "unavailable" instead of a black box
-    // with no error the frontend has no way to explain.
-    let persistedOk = false;
-    try {
-      persistedOk = fs.statSync(originalPath).size > 0;
-    } catch { /* file missing */ }
-    if (!persistedOk) {
-      console.error('[analyse] persisted user clip missing or empty:', originalPath);
-    }
-
-    result.user_clip_url = persistedOk ? toUrl('/user-clips', USER_CLIPS_DIR, originalPath) : null;
-    result.user_clip_cropped_url = persistedOk ? toUrl('/user-clips', USER_CLIPS_DIR, croppedPath) : null;
-
-    const top = result.matches?.[0];
-    if (top?.clip_path) {
-      // pro_database.json stores clip_path relative to PRO_CLIPS_DIR (not
-      // an absolute path -- it used to be, which broke the moment the
-      // database built on one machine got deployed to another, since
-      // toUrl()'s path.relative() only makes sense against a real path on
-      // the *current* OS). Resolve to a real absolute path here, once,
-      // right where it's actually used.
-      const proClipAbsPath = path.join(PRO_CLIPS_DIR, top.clip_path);
-      const proCroppedPath = await croppedProClipPath(proClipAbsPath, top.shot_type || shotType);
-
-      // Same defensive check as the user clip above -- pro_database.json
-      // entries can outlive the actual clip file on disk (e.g. data/ not
-      // fully copied over during a manual deploy, see HANDOVER.md's
-      // deployment gotcha). Without this, a missing pro clip silently
-      // produced a 200 response whose pro_clip_url 404s client-side.
-      let proClipOk = false;
-      try {
-        proClipOk = fs.statSync(proClipAbsPath).size > 0;
-      } catch { /* file missing */ }
-      if (!proClipOk) {
-        console.error('[analyse] matched pro clip missing or empty:', proClipAbsPath);
-      }
-
-      top.pro_clip_url = proClipOk ? toUrl('/pro-clips', PRO_CLIPS_DIR, proClipAbsPath) : null;
-      top.pro_clip_cropped_url = proClipOk
-        ? toUrl('/pro-clips-cropped', PRO_CLIPS_CROPPED_DIR, proCroppedPath)
-        : null;
-    }
+    const { originalPath, persistedOk } = await finalizeAnalysisResult(result, {
+      sourcePath: req.file.path,
+      destDir: path.join(USER_CLIPS_DIR, uploadId),
+      shotType,
+      deleteSource: true,
+    });
 
     res.json(result);
 

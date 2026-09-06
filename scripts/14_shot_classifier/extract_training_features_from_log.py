@@ -1,17 +1,27 @@
 """
-Turns real logged shot-type verdicts (shot_classifier_training_log.jsonl --
-every real Claude call from detect_rallies.py/analyze_rallies_parallel.py
-has logged clip_path+contact_frame alongside its verdict for a while now)
+Turns real logged shot-type verdicts (shot_classifier_training_log.jsonl)
 into the same feature-row shape extract_training_features.py produces from
 the fixed 116-clip amateur dataset, so train_shot_classifier_model.py can
 train on both together. This is the "improves as more gets labeled" half of
 the shot-type classifier -- re-run this (then the trainer) any time to pick
 up everything logged since the last run.
 
-Dedupes by (clip_path, contact_frame) keeping the latest record (a swing
-might get logged more than once, e.g. reprocessed) and skips any whose clip
-file no longer exists on disk (uploaded videos aren't kept forever) or
-without a valid claude_pick to use as the label.
+Two row shapes feed this, both keyed by (clip_path, some notion of "which
+swing"):
+  - every real Claude call from detect_rallies.py/analyze_rallies_parallel.py
+    logs clip_path + contact_frame (an already-known frame index) directly.
+  - a user's "Wrong shot type?" correction in History (backend/src/routes/
+    history.js's logShotTypeCorrection) only has clip_path + contact_time_sec
+    (seconds into that user's own uploaded clip) -- this script probes the
+    clip's own fps and resolves contact_frame = round(contact_time_sec * fps)
+    itself, same pattern extract_training_features_from_pro_verdicts.py uses
+    for clip_contact_time_sec.
+
+Dedupes by (clip_path, identity) keeping the latest record (a swing might get
+logged more than once, e.g. reprocessed) -- identity is contact_frame when
+known, else the rounded contact_time_sec -- and skips any whose clip file no
+longer exists on disk (uploaded videos aren't kept forever) or without a
+valid claude_pick to use as the label.
 
 Usage:
   python extract_training_features_from_log.py
@@ -103,6 +113,42 @@ def get_poses(clip_path, contact_frame, cache_dir=POSES_CACHE_DIR):
         return json.load(f)
 
 
+def _latest_by_identity(records):
+    """Dedupe by (clip_path, identity), latest wins -- mirrors
+    clip_review_log.get_latest_verdicts()'s "latest logged line for this
+    identity" pattern. normpath() the clip_path first -- the same file has
+    been logged with both '\\' and '/' separators (different code paths
+    wrote the log), which would otherwise dedupe as two distinct clips and
+    double the pose-extraction work for that video.
+
+    identity is contact_frame when the row already has one (Claude-verifier
+    rows); otherwise a user-correction row only has contact_time_sec, so
+    identity is ('time', rounded seconds) instead -- resolving that to an
+    actual frame needs the clip's fps, which needs the file to exist, which
+    is checked later (see main()), not here. Pure / no I/O so it's directly
+    unit-testable.
+
+    Returns {(clip_path, identity): record}."""
+    latest = {}
+    for r in records:
+        clip_path = r.get('clip_path')
+        if not clip_path:
+            continue
+        if r.get('claude_pick') not in VALID_LABELS:
+            continue
+        contact_frame = r.get('contact_frame')
+        if contact_frame is not None:
+            identity = contact_frame
+        else:
+            contact_time_sec = r.get('contact_time_sec')
+            if contact_time_sec is None:
+                continue
+            identity = ('time', round(contact_time_sec, 3))
+        clip_path = os.path.normpath(clip_path)
+        latest[(clip_path, identity)] = r
+    return latest
+
+
 def main():
     if not os.path.exists(LOG_PATH):
         print(json.dumps([]))
@@ -111,27 +157,21 @@ def main():
     with open(LOG_PATH) as f:
         records = [json.loads(line) for line in f if line.strip()]
 
-    # Dedupe by (clip_path, contact_frame), latest wins -- mirrors
-    # clip_review_log.get_latest_verdicts()'s "latest logged line for this
-    # identity" pattern. normpath() the clip_path first -- the same file has
-    # been logged with both '\' and '/' separators (different code paths
-    # wrote the log), which would otherwise dedupe as two distinct clips and
-    # double the pose-extraction work for that video.
-    latest = {}
-    for r in records:
-        clip_path, contact_frame = r.get('clip_path'), r.get('contact_frame')
-        if not clip_path or contact_frame is None:
-            continue
-        if r.get('claude_pick') not in VALID_LABELS:
-            continue
-        clip_path = os.path.normpath(clip_path)
-        latest[(clip_path, contact_frame)] = r
+    latest = _latest_by_identity(records)
 
     rows, skipped = [], []
-    for (clip_path, contact_frame), r in latest.items():
+    for (clip_path, _identity), r in latest.items():
         if not os.path.exists(clip_path):
             skipped.append({'clip_path': clip_path, 'reason': 'clip no longer on disk'})
             continue
+        contact_frame = r.get('contact_frame')
+        if contact_frame is None:
+            # user-correction row: only has contact_time_sec -- resolve the
+            # frame from the clip's own fps, same pattern
+            # extract_training_features_from_pro_verdicts.py uses for
+            # clip_contact_time_sec.
+            fps_probe = _probe_fps(clip_path)
+            contact_frame = round(r['contact_time_sec'] * fps_probe)
         try:
             pose_data = get_poses(clip_path, contact_frame)
         except Exception as e:

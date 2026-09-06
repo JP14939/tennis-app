@@ -42,9 +42,26 @@ function logUserFlag(analysisId, isRealShot) {
 // and that module's agreement_rate()/should_trust_student() were updated
 // this session to exclude agreed=null records from the trust math.
 const SHOT_CLASSIFIER_LOG_PATH = path.join(DATA_DIR, '14_shot_classifier', 'shot_classifier_training_log.jsonl');
+// Same path analyse.js persists uploads under -- retained for as long as a
+// History row references it (server.js's runtime sweep), so it's always on
+// disk for any row still correctable here.
+const USER_CLIPS_DIR = path.join(DATA_DIR, 'runtime', 'user_clips');
 
-function logShotTypeCorrection(analysisId, correctedShotType) {
+function logShotTypeCorrection(analysisId, correctedShotType, result) {
   fs.mkdirSync(path.dirname(SHOT_CLASSIFIER_LOG_PATH), { recursive: true });
+  // clip_path + contact_time_sec: without these, extract_training_features_
+  // from_log.py's very first filter (`if not clip_path or contact_frame is
+  // None: continue`) silently dropped every user correction ever logged --
+  // this was meant to be the classifier's real-usage training flywheel and
+  // has been a no-op since it shipped. result_json is written by this same
+  // backend at analyse time (not attacker-controlled by this PATCH's body,
+  // which only ever supplies shot_type), but still resolve + exists-check
+  // defensively before logging a path.
+  let clipPath = null;
+  if (result?.user_clip_url) {
+    const candidate = path.join(USER_CLIPS_DIR, result.user_clip_url.replace(/^\/user-clips\//, ''));
+    if (fs.existsSync(candidate)) clipPath = candidate;
+  }
   const record = {
     timestamp: Date.now() / 1000,
     scores: null,
@@ -53,6 +70,8 @@ function logShotTypeCorrection(analysisId, correctedShotType) {
     agreed: null,
     source: 'user_flag',
     student_meta: { analysis_id: analysisId },
+    clip_path: clipPath,
+    contact_time_sec: result?.contact_time_sec ?? null,
   };
   fs.appendFileSync(SHOT_CLASSIFIER_LOG_PATH, JSON.stringify(record) + '\n');
 }
@@ -252,7 +271,7 @@ router.patch('/history/:id', requireAuth, (req, res) => {
       logUserFlag(row.id, true);
     }
     if (hasShotType && shot_type !== row.shot_type) {
-      logShotTypeCorrection(row.id, shot_type);
+      logShotTypeCorrection(row.id, shot_type, safeJsonParse(row.result_json, `analysis ${row.id}`));
     }
   } catch (e) {
     console.error('[history] failed to log user verdict/correction for training:', e);

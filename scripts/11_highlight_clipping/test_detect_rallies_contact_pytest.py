@@ -66,15 +66,38 @@ def test_exception_is_swallowed(monkeypatch):
     assert swings[0]['contact_time_sec'] == 10.0
 
 
-def test_serve_gate_uses_refined_contact_time():
-    # boundary falls between two shots only when the accurate times are used:
-    # wrist peaks are 5.5s apart (one rally), refined contact times 6.5s apart
-    # (two points) -- the second groundstroke should be gated out (no serve
-    # opened its point).
+def test_build_shot_list_is_clip_relative_and_chronological():
+    # start_sec mirrors the PRE_PAD_SEC subtraction detect_rallies() applies
+    # before calling this -- contact_time_sec must come out relative to the
+    # rally's own clip, not the source match video's absolute timeline.
+    group = [
+        {'peak_time': 12.0, 'contact_time_sec': 12.3, 'shot_type': 'forehand'},
+        {'peak_time': 15.0, 'contact_time_sec': 15.6, 'shot_type': 'backhand'},
+    ]
+    shots = detect_rallies.build_shot_list(group, start_sec=10.0)
+    assert shots == [
+        {'shot_index': 0, 'shot_type': 'forehand', 'contact_time_sec': 2.3},
+        {'shot_index': 1, 'shot_type': 'backhand', 'contact_time_sec': 5.6},
+    ]
+
+
+def test_build_shot_list_falls_back_to_peak_time_without_a_refined_contact_time():
+    group = [{'peak_time': 11.0, 'shot_type': 'forehand'}]
+    shots = detect_rallies.build_shot_list(group, start_sec=10.0)
+    assert shots == [{'shot_index': 0, 'shot_type': 'forehand', 'contact_time_sec': 1.0}]
+
+
+def test_serve_gate_uses_refined_contact_time_for_the_point_boundary():
+    # In strict mode the "a serve opened this point" flag resets only after a
+    # POINT_BOUNDARY_GAP_SEC gap. Here the wrist peaks sit ~6s apart (below the
+    # boundary) but the refined contact times are >POINT_BOUNDARY_GAP_SEC apart,
+    # so the third shot must be gated out -- proving the gate reads
+    # contact_time_sec, not peak_time.
+    boundary = detect_rallies.POINT_BOUNDARY_GAP_SEC
     swings = [
         {'peak_time': 1.0, 'contact_time_sec': 1.0, 'shot_type': 'serve'},
         {'peak_time': 2.0, 'contact_time_sec': 2.0, 'shot_type': 'forehand'},
-        {'peak_time': 7.5, 'contact_time_sec': 8.5, 'shot_type': 'forehand'},
+        {'peak_time': 8.0, 'contact_time_sec': 2.0 + boundary + 1.0, 'shot_type': 'forehand'},
     ]
-    kept = detect_rallies.apply_serve_gate(swings, rally_gap_sec=6.0)
+    kept = detect_rallies.apply_serve_gate(swings, rally_gap_sec=6.0, mode='strict')
     assert [s['contact_time_sec'] for s in kept] == [2.0]

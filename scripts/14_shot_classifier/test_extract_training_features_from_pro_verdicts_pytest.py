@@ -24,11 +24,11 @@ def _env(tmp_path, monkeypatch, entries, verdicts, feats_for=None):
                                 'name': None, 'timestamp': 0}) + '\n')
     out_path = tmp_path / 'training_features_from_pro.json'
     clips_dir = tmp_path / 'clips'
-    (clips_dir / 'forehand').mkdir(parents=True)
-    (clips_dir / 'backhand').mkdir(parents=True)
 
     for e in entries:
-        (clips_dir / e['clip_path']).write_bytes(b'v')
+        clip_path = clips_dir / e['clip_path']
+        clip_path.parent.mkdir(parents=True, exist_ok=True)
+        clip_path.write_bytes(b'v')
 
     monkeypatch.setattr(ex, 'PRO_DB_PATH', str(db_path))
     monkeypatch.setattr(ex, 'PRO_CLIPS_DIR', str(clips_dir))
@@ -43,9 +43,13 @@ def _env(tmp_path, monkeypatch, entries, verdicts, feats_for=None):
     return db_path, out_path
 
 
-def _entry(eid, shot_type, cc=1.0):
-    return {'id': eid, 'shot_type': shot_type, 'swing_id': int(eid.split('_')[1]),
-            'clip_path': f'{shot_type}/{eid}.mp4', 'clip_contact_time_sec': cc}
+def _entry(eid, shot_type, cc=1.0, ingest=None):
+    e = {'id': eid, 'shot_type': shot_type, 'swing_id': int(eid.split('_')[1]),
+         'clip_path': f'{shot_type}/{eid}.mp4', 'clip_contact_time_sec': cc}
+    if ingest:
+        e['ingest'] = ingest
+        e['clip_path'] = f'practice/{eid}.mp4'
+    return e
 
 
 def test_keeps_only_label_review_verdicts(tmp_path, monkeypatch):
@@ -96,6 +100,37 @@ def test_skips_when_no_pose_near_contact(tmp_path, monkeypatch):
     _, out_path = _env(tmp_path, monkeypatch, [_entry('forehand_0001', 'forehand')],
                        {'forehand_0001': 'contact_time_corrected'})
     monkeypatch.setattr(ex, 'extract_for_clip', lambda cp, cf, fps: None)
+    ex.extract()
+    assert json.loads(out_path.read_text()) == []
+
+
+def test_reviewed_practice_entry_is_included(tmp_path, monkeypatch):
+    """Regression: practice_mvp entries used to be excluded outright here.
+    But by construction every entry reaching this loop already passed
+    LABEL_REVIEW_VERDICTS filtering -- an unreviewed practice entry has no
+    verdict logged at all, so it's never a `target` in the first place (see
+    test_unreviewed_practice_entry_never_becomes_a_target below). A reviewed
+    one should train the classifier same as any broadcast entry."""
+    _, out_path = _env(
+        tmp_path, monkeypatch,
+        [_entry('practice_100001', 'forehand', cc=0.95, ingest='practice_mvp')],
+        {'practice_100001': 'shot_type_corrected'},
+    )
+    ex.extract()
+    rows = json.loads(out_path.read_text())
+    assert {r['id'] for r in rows} == {'practice_100001'}
+    assert rows[0]['label'] == 'forehand'
+
+
+def test_unreviewed_practice_entry_never_becomes_a_target(tmp_path, monkeypatch):
+    """An unreviewed practice entry has no verdict logged -- it's simply
+    absent from clip_review_log.jsonl, so it never reaches (or needs) any
+    ingest-specific filtering at all."""
+    _, out_path = _env(
+        tmp_path, monkeypatch,
+        [_entry('practice_100001', 'forehand', ingest='practice_mvp')],
+        {},  # no verdict logged for this id
+    )
     ex.extract()
     assert json.loads(out_path.read_text()) == []
 

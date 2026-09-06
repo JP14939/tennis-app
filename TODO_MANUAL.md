@@ -15,32 +15,116 @@ gets resolved.
 
 ---
 
+## New from the 2026-09-05 session (Find Games revamp: mesh clubs, watches, postcodes, club naming)
+
+Full detail: `HANDOVER.md` "Session 2026-09-05". Nothing here is blocked —
+it's all built and tested, just needs your eyes on a real device.
+
+1. **Click through the whole Find Games revamp on a real phone** —
+   `npx expo start`, Find Games tab. Specifically: tap "Watch an area", drop
+   a pin, drag the radius slider, save it, confirm it actually saved (open
+   "My Watches" and check the Areas section shows it); open a court and
+   confirm its "Notify me" pill already shows "Watching" if you'd
+   previously watched it (this was broken before — always started
+   unwatched on load, regardless of real state); open a court that's part
+   of a club, suggest a name in the new "unverified name" banner, then
+   confirm it from a second account; unwatch a court/club/area from the My
+   Watches screen and confirm the row disappears.
+2. **Decide whether to re-run `node scripts/clusterCourts.js`** now that
+   the clustering algorithm changed from a 250m running-centroid to a true
+   100m node-mesh graph. Not run yet this session (only the algorithm and
+   its tests were built/verified) — a real re-run against the ~33k-court
+   local DB will re-shuffle some club boundaries (a straight line of
+   closely-spaced courts that used to split into multiple 250m clusters may
+   now merge into one, and vice versa for anything that was only within
+   250m via centroid drift, not real 100m adjacency). Existing
+   `club_watches` should carry over correctly (the new
+   `deleteOrphanedClubs()` cleanup + `reconcile()`'s existing court-overlap
+   matching both got test coverage for this), but worth eyeballing the
+   before/after club list once, not blindly trusting it.
+3. **The postcode backfill already ran** against your local dev DB
+   (16,711/33,222 courts resolved) — nothing to do here, just noting it so
+   a future session doesn't re-run it by accident thinking it's still
+   pending. Re-running is safe/idempotent regardless (only touches rows
+   where `postcode IS NULL`) if more courts get seeded later and you want
+   to top it up.
+4. Nothing pushed or deployed — same as every other item below.
+
+---
+
+## New from the 2026-09-04 session (dev-workflow fixes, flywheels, Phase C rejected)
+
+Full detail: `HANDOVER.md` "Session 2026-09-04".
+
+1. **Keep reviewing the practice-footage queue in Pro Clip Review** — 201/333
+   done. No change to the workflow itself; two new things happen
+   automatically as you go, no separate step: each reviewed entry becomes
+   eligible for live matching (previously any unreviewed entry could be
+   shown to a real user), and its corrected shot type flows into classifier
+   training. Every ~50-100 more reviewed clips, worth asking me to re-run
+   `extract_training_features_from_pro_verdicts.py` +
+   `evaluate_shot_classifiers.py --set both` to see the phone-accuracy
+   number move.
+2. **Decide whether to pursue the Phase C contact-frame model further.**
+   It failed its ship gate twice this session (see `STATUS.md` item 5) —
+   the "predict a correction offset" framing doesn't seem to have signal in
+   the current features. Options if you want to keep going: different
+   features, a more conservative model, or predicting the frame directly
+   instead of an offset. Not urgent — it's not live-consequential either way.
+3. **Look at the ball/racket tracker audit images** and decide if
+   fine-tuning the ball/racket YOLO detector (flagged since
+   `audit_ball_confidence_at_contact.py`, never acted on) is worth doing now
+   that there's visual evidence serves are the weak point:
+   `data/07_ball_racket_tracking/contact_review/<clip_id>/*.jpg` — start
+   with `practice_100126`, `practice_100109`, `practice_100005` (the worst
+   misses, over 85 frames off).
+4. **Copy `pro_database.json` + `overlay_trajectories.json` to the server**
+   — still don't do this yet, see item 4 under the 2026-09-03 section below
+   for why (practice review isn't far enough along).
+5. Everything else from local dev this session (ngrok, video codec, review
+   UI) needed no action from you and is already fixed — see `STATUS.md`
+   item 7 if curious.
+6. **Decide whether/when to prioritize the architecture-deepening backlog**
+   an `/improve-codebase-architecture` review surfaced this session (report:
+   `%TEMP%\architecture-review-20260904-233151.html`). Candidate A (the
+   highlights.js job-runners) is already done. B (`compare_swing.py`'s
+   `compare()` — the single most-modified file in the repo, no seams for its
+   8 inline special cases), C (three duplicate contact/swing-peak-detection
+   implementations with no shared interface), and D (two small duplications
+   in the Pro Clip Review pipeline) are not started — see `HANDOVER.md`'s
+   "Architecture review" entry for the full writeup. Not urgent; B is the
+   highest-leverage of the three but needs its own design pass before
+   touching it.
+
 ## New from the 2026-09-03 session (audio-review-all + practice footage)
 
-Full detail: `HANDOVER.md` "Session 2026-09-03".
+Full detail: `HANDOVER.md` "Session 2026-09-03". **See "New from the
+2026-09-04 session" below for current status — most of this is resolved or
+superseded.**
 
-1. **Work the Pro Clip Review queue.** ~300 entries now carry a machine
-   audio-guessed contact time (verdict note ends `"(audio)"`, shown as
-   "N with an audio-guessed contact time to check" on the review screen). For
-   each: confirm the contact frame is right (adjust if not) and check quality /
-   shot type. Approving or adjusting logs a real verdict and clears it from the
-   queue.
-2. **Decide on the practice-footage ingest.** A `--use-claude` run over all 4
-   court-level videos is **running now** (started ~14:00 2026-09-03, ~2-3 h;
-   checkpointed, appends to the live DB per video — see the ⏳ box at the top of
-   `HANDOVER.md`'s "Session 2026-09-03"). The probe (practice_02) was low
-   quality: shot types nearly all mislabelled "forehand", contact frames ~13f
-   late, small/off-centre/2-player framing. **When it finishes:** eyeball the
-   per-video yield; if it's as rough as the probe, drop the practice entries
-   (`entry['ingest'] == 'practice_mvp'`) and pick single-shot slow-mo
-   compilations instead (one player, side-on; `process_new_videos.py` handles
-   them, almost no manual work). If you keep them, `correct_shot_type.py` and
-   `correct_contact_time.py` both work on them, and it's ~450 entries to relabel
-   + recontact in Pro Clip Review.
-3. **yt-dlp** on this machine is now 2026.08.19 (the 07.04 build 403s). Future
-   `download_videos.py` runs merge DASH streams via the venv's bundled ffmpeg.
+1. ~~Work the Pro Clip Review queue.~~ — in progress, not blocked on
+   anything: 354/359 broadcast entries label-reviewed, only 5 left (machine
+   audio-fills to eyeball). Practice-footage queue below is the real
+   remaining work.
+2. ~~Decide on the practice-footage ingest.~~ — resolved 2026-09-03: the
+   `--use-claude` run completed (333 entries, 225 forehand/70 serve/38
+   backhand, ~$5). Jack chose to keep and manually review rather than
+   revert. **201/333 reviewed as of 2026-09-04**, ongoing.
+3. ~~yt-dlp~~ — resolved, now 2026.08.19, merges DASH via bundled ffmpeg.
 4. **Copy `pro_database.json` + `overlay_trajectories.json` to the server**
-   after any review batch or ingest (gitignored, CD never touches `data/`).
+   — still open, don't do yet. Wait until the practice review pass is
+   further along (currently ~60%) or unreviewed/lower-quality practice
+   entries would go live — the match-pool filter added 2026-09-04 protects
+   *local* matching from this, but a straight file copy to the server
+   bypasses that filter's whole point if done mid-review.
+5. ~~Phase C — run the labelling pass + retrain, then copy the model.~~ —
+   **done, and rejected.** Ran the full labelling pass (`--audio-only` +
+   the new `--practice` sweep, see 2026-09-04 below) and retrained twice.
+   **Failed its own ship gate both times** — the corrected model is worse
+   than the raw heuristic on every tolerance band. **Do not copy
+   `contact_frame_model.pkl` to the server** — it would make contact
+   detection worse, not better, if the runtime trust gate ever turned it on
+   (it currently can't — 0 of the required 50 real production examples).
 
 ## New from the 2026-09-02 evening session (commit + detect_rallies + Phase B.2)
 

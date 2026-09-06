@@ -58,6 +58,15 @@ def extract(verdict_filter=None):
     rows, skipped = [], []
     for eid, verdict in targets:
         entry = by_id[eid]
+        # practice_mvp entries used to be excluded outright here (audio
+        # contact detection fails on that footage, auto-filled contact times
+        # land ~13f late) -- but `targets` is already filtered to
+        # LABEL_REVIEW_VERDICTS above, so any practice entry reaching this
+        # point has a REAL human verdict (Jack's Pro Clip Review pass), not
+        # the raw Claude-ingest guess the old exclusion was protecting
+        # against. An unreviewed practice entry never has a verdict logged at
+        # all, so it's never in `targets` in the first place -- nothing more
+        # to filter here.
         label = entry['shot_type']
         if label not in VALID_LABELS:
             skipped.append({'id': eid, 'reason': f'label {label!r}'})

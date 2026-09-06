@@ -99,6 +99,23 @@ log, still the source of truth on *why*) plus everything that came up in the
       (from the 2026-08-14 local batch-analysis run) — decide if it's worth
       a one-time `scp`/`tar` copy of `data/runtime/user_clips/8_*` to the
       host to make them watchable, or leave as-is.
+- [ ] **Keep working the practice-footage queue in Pro Clip Review** —
+      201/333 done as of 2026-09-04. Reviewed entries now feed both the
+      live match pool and classifier training automatically, no extra step.
+- [ ] **Decide whether to keep pushing on the Phase C contact-frame model**
+      — retrained twice 2026-09-04 with real new data, failed its own
+      accuracy gate both times (worse than the plain heuristic). Not
+      shipped, not live-consequential either way. Needs a different
+      approach if you want to revisit it, not more data.
+- [ ] **Look at the ball/racket tracker audit images** and decide if
+      fine-tuning the ball detector is worth doing —
+      `data/07_ball_racket_tracking/contact_review/<clip_id>/*.jpg`, 25
+      sample clips. Confirms serves have a much worse contact-detection
+      error tail than groundstrokes; points at the tracker, not pose.
+- [ ] **Don't copy `pro_database.json` to the server yet** — wait until the
+      practice-review pass is further along, or unreviewed/lower-quality
+      practice entries would go live on the hosted server (the local match-
+      pool filter added 2026-09-04 doesn't protect a straight file copy).
 
 ## Real-device / real-browser testing
 
@@ -124,21 +141,59 @@ verification, `IMG_5755.MOV`) surfaced a break at the *second* level, which
 silently wrecks everything above it — decided 2026-08-27 to stop patching
 top-down and instead harden each level before trusting the one built on it.
 
-- [ ] **Sprint 1 — shot-type classifier is over-predicting "serve"**: job 10
-      found Claude itself classified 46 of 60 real, contact-verified shots as
-      `serve` (14 forehand, 0 backhand) on `IMG_5755.MOV` — footage job 8
-      (before the serve-gate existed) found 32 real rally clips in. A rally
-      session doesn't become 77% serves once verification turns on, so this
-      is very likely a real classifier miscalibration, not reality. Needs:
-      pull the 46 "serve" clips job 10 logged and eyeball a sample — are they
-      actually serves? If not, this is where to focus (prompt/logic in
-      `scripts/14_shot_classifier/classify_shot_verified.py`) before touching
-      rally logic again.
-- [ ] **Sprint 2 — re-check the serve gate's assumption** (`apply_serve_gate()`
-      in `scripts/11_highlight_clipping/detect_rallies.py`) once Sprint 1 is
-      solid — right now it requires a `serve` to open every point, which is a
-      reasonable model of real match play but may be too strict for practice
-      footage where points don't always start with a formal serve.
+- [x] ~~**Sprint 1 — shot-type classifier over-predicting "serve"**~~ —
+      investigated 2026-09-02 (HANDOVER §7). Root cause is **not** the
+      classifier: it's the contact frame `detect_rallies` feeds the verifier
+      being ~13f off, so groundstrokes look like serves. Classifier features
+      body-normalised + version-guarded; pro labels confirmed net-harmful to
+      the live model; real bottleneck = only 10 amateur backhand examples
+      (needs Jack to source phone footage). No remaining code task here.
+
+- [ ] **Phase C — activate the visual contact-frame student** (code done +
+      wired 2026-09-03, no-op until trained). From `scripts/` with the venv:
+  1. `python 07_ball_racket_tracking/build_contact_student_dataset.py --audio-only`
+     — ~500 audio-teacher training rows. YOLO-heavy (~1h+), resumable, touches
+     no `pro_database.json`. Run it once the ingest + shot-verification jobs
+     are done so it isn't fighting them for CPU.
+  2. `python 07_ball_racket_tracking/build_contact_student_dataset.py --human-only --force-relog`
+     — backfills wrist-kinematics features onto the 196 old hand-marked rows.
+  3. `python 07_ball_racket_tracking/train_contact_frame_model.py` — only ship
+     if the `corrected (human)` slice beats `raw (human)` and the ~9f wrist
+     baseline.
+  4. Copy `data/07_ball_racket_tracking/contact_frame_model.pkl` +
+     `contact_frame_model_meta.json` to the server (gitignored). Live path
+     stays a no-op until the model is present *and* has earned trust.
+
+- [x] ~~**Sprint 2 — fix `apply_serve_gate()`**~~ — done 2026-09-03 (code).
+      `detect_rallies.py`: split `POINT_BOUNDARY_GAP_SEC` (12s) from
+      `RALLY_GAP_SEC` (6s) so a detection gap mid-rally no longer slams the
+      serve gate shut; `apply_serve_gate` is now **advisory** by default (keeps
+      every non-serve shot, tags `after_serve`) with `--serve-gate
+      strict|off`; `group_into_rallies` + clip bounds now use the audio-refined
+      contact time. Serve-gate tests rewritten (189 pytest green). Still open:
+      **run Sprint 3** (below), and wire accurate contact into
+      `analyze_rallies_parallel.py` (still uses the wrist peak; audio-less
+      clips → needs the Phase C visual student).
+- [x] ~~**Sprint 2b — is Claude's shot classifier right?**~~ — answered
+      2026-09-03/04. Cross-check ($0.45, over budget — my error) found **every**
+      method ~35% on the 68 hand-labelled pro clips; Claude was not a usable
+      teacher. **Shot classifier rebuilt** (HANDOVER "Part 5"): new geometric +
+      trajectory-kNN ensemble, **40% → 84% on the pipeline domain, backhand
+      24% → 84%**. Wired into `get_verified_shot_type` as the first student
+      (shadow-mode until it earns trust, or used directly under
+      `SKIP_CLASSIFIER_VERIFIER`). **Not committed — Jack's step.**
+      - Open (Phase 2): serve recall still 44% (needs motion-direction
+        features); the phone-upload domain is only ~56% (trajectory-kNN doesn't
+        transfer — needs the ~809 unlabelled amateur swings + a real ML retrain).
+      - The **v2 ML retrain** (`extract_training_features_from_log.py` →
+        `train_shot_classifier_model.py --no-log`) is still worth doing — the
+        on-disk model is inert v1 — but is no longer on the critical path.
+- [ ] **Sprint 3 — re-run `detect_rallies` on IMG_5755, Claude-free.**
+      `RALLYMAX_SKIP_CONTACT_VERIFIER=1 RALLYMAX_SKIP_CLASSIFIER_VERIFIER=1
+      python 11_highlight_clipping/detect_rallies.py <IMG_5755> <out>
+      --serve-gate advisory` — $0. Expect serve share well below 78% and
+      `rallies_detected > 0`. If plausible, one paid confirmation run with
+      contact verification on (~$2–3).
 - [ ] **Sprint 3 — only then re-run rally detection** (job 10 was `IMG_5755.MOV`,
       Claude-verified, ended at 0 rallies — don't re-spend Claude credits
       re-running this until Sprints 1–2 are done, or the same collapse just

@@ -100,6 +100,24 @@ db.exec(`
     created_at   TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  -- One row per real shot inside a rally clip (serves excluded -- they open
+  -- a point but aren't rally content, same reasoning as detect_rallies.py's
+  -- apply_serve_gate()). shot_index is 0-based, chronological within the
+  -- clip. contact_time_sec is CLIP-relative (the rally's own start_sec
+  -- already subtracted, done in detect_rallies.py), so it stays valid
+  -- against rally_clips.clip_path directly -- for seeking a preview
+  -- client-side, and for handing straight to pro_matcher.py's
+  -- --contact-time server-side without re-deriving anything.
+  CREATE TABLE IF NOT EXISTS rally_shots (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    rally_clip_id    INTEGER NOT NULL REFERENCES rally_clips(id),
+    shot_index       INTEGER NOT NULL,
+    shot_type        TEXT NOT NULL CHECK (shot_type IN ('forehand', 'backhand')),
+    contact_time_sec REAL NOT NULL,
+    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(rally_clip_id, shot_index)
+  );
+
   CREATE TABLE IF NOT EXISTS push_tokens (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id      INTEGER NOT NULL REFERENCES users(id),
@@ -236,6 +254,23 @@ db.exec(`
     club_id    INTEGER NOT NULL REFERENCES clubs(id),
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(user_id, club_id)
+  );
+
+  -- A third watch kind alongside court_watches/club_watches: an arbitrary
+  -- map area (a dropped pin + radius) rather than a specific court or club --
+  -- lets someone watch "anywhere near here" without needing a court (or a
+  -- club) to already exist there. No UNIQUE constraint, unlike the other two
+  -- watch tables -- a court/club is a fixed row you either watch or don't,
+  -- but a user can meaningfully want several distinct overlapping areas
+  -- (e.g. "near work" and "near home").
+  CREATE TABLE IF NOT EXISTS area_watches (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id),
+    name       TEXT,
+    latitude   REAL NOT NULL,
+    longitude  REAL NOT NULL,
+    radius_km  REAL NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
   -- Simple 1:1 messaging. user_a_id/user_b_id are always stored as
@@ -498,6 +533,54 @@ if (!hasSubmittedByCol) {
   db.exec('ALTER TABLE courts ADD COLUMN submitted_by INTEGER REFERENCES users(id)');
 }
 
+// Adds `column` to `table` if it isn't already there -- the lazy-migration
+// idiom this file already uses above (verified/submitted_by on courts,
+// handed on users): CREATE TABLE IF NOT EXISTS only handles a table that
+// doesn't exist yet at all, not a column added to the schema after the
+// table was already created on someone's real database.
+function addColumnIfMissing(table, column, ddl) {
+  const has = db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+  if (!has) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+}
+
+// postcode: best-effort reverse-geocode via utils/postcodeLookup.js
+// (postcodes.io -- free, UK-only, no API key). Nullable and populated
+// lazily/best-effort (a failed lookup, or a location postcodes.io has
+// nothing for, leaves this null rather than blocking the write it's
+// attached to) -- see routes/courts.js and scripts/backfillPostcodes.js.
+addColumnIfMissing('courts', 'postcode', 'postcode TEXT');
+addColumnIfMissing('clubs', 'postcode', 'postcode TEXT');
+addColumnIfMissing('area_watches', 'postcode', 'postcode TEXT');
+
+// Crowd-sourced club naming -- same shape as courts' verified/submitted_by
+// above, but for the NAME specifically rather than the club's existence
+// (a club's existence is entirely derived from clusterCourts.js, never
+// user-submitted). 'derived' means the name still comes from
+// clusterCourts.js's deriveName() (majority OSM tag, or a generic
+// "Courts near X" fallback) and gets overwritten on every re-cluster; once
+// a user's proposed name reaches CONFIRMATION_THRESHOLD confirmations
+// (routes/courts.js), name_source flips to 'user' and clusterCourts.js's
+// reconcile() stops touching the name on future runs (see its own comment).
+addColumnIfMissing('clubs', 'name_source', "name_source TEXT NOT NULL DEFAULT 'derived' CHECK (name_source IN ('derived', 'user'))");
+addColumnIfMissing('clubs', 'name_submitted_by', 'name_submitted_by INTEGER REFERENCES users(id)');
+addColumnIfMissing('clubs', 'name_verified', 'name_verified INTEGER NOT NULL DEFAULT 0');
+
+// One row per user who's confirmed the club's CURRENT proposed name --
+// mirrors court_confirmations' shape exactly. A new proposal (POST
+// /clubs/:id/name) clears this club's rows here, since confirmations are
+// for a specific name string, not the club in the abstract -- an old
+// confirmation of a superseded name shouldn't count toward a different one.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS club_name_confirmations (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    club_id    INTEGER NOT NULL REFERENCES clubs(id),
+    user_id    INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(club_id, user_id)
+  )
+`);
+db.exec('CREATE INDEX IF NOT EXISTS idx_club_name_confirmations_club_id ON club_name_confirmations(club_id)');
+
 // GET /courts's queryNearbyCourts runs a bounding-box scan plus a LEFT JOIN
 // and several correlated subqueries per row on every request -- fine
 // against a small local seed, but the courts table is now ~33k rows after
@@ -527,6 +610,7 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_analyses_user_id ON analyses(user_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_messages_user_a_b ON messages(user_a_id, user_b_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_rally_clips_user_id ON rally_clips(user_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_rally_clips_job_id ON rally_clips(job_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_rally_shots_rally_clip_id ON rally_shots(rally_clip_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_highlight_jobs_user_id ON highlight_jobs(user_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_coach_notes_analysis_id ON coach_notes(analysis_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_push_tokens_user_id ON push_tokens(user_id)');
@@ -548,6 +632,7 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_messages_user_b_id ON messages(user_b_id
 db.exec('CREATE INDEX IF NOT EXISTS idx_friend_links_user_b_id ON friend_links(user_b_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_analysis_usage_user_created ON analysis_usage(user_id, created_at)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_court_watches_court_id ON court_watches(court_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_area_watches_user_id ON area_watches(user_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_availability_posts_court_id ON availability_posts(court_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_analyses_shot_type ON analyses(shot_type)');
 

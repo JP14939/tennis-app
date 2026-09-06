@@ -3,14 +3,16 @@ const db = require('../db');
 const requireAuth = require('../middleware/requireAuth');
 const { sendPushNotification } = require('../utils/pushNotifications');
 const { seedCourtsNear } = require('../utils/overpassCourts');
+const { haversineKm } = require('../utils/geo');
+const { lookupPostcode } = require('../utils/postcodeLookup');
 const {
-  MAX_LENGTHS, isLatitude, isLongitude, isText, isOptionalText, isIsoDateTime,
+  MAX_LENGTHS, MIN_AREA_WATCH_RADIUS_KM, MAX_AREA_WATCH_RADIUS_KM,
+  isLatitude, isLongitude, isRadiusKm, isText, isOptionalText, isIsoDateTime,
 } = require('../domain/invariants');
 const { validate, optional } = require('../validation/validateBody');
 
 const router = express.Router();
 
-const EARTH_RADIUS_KM = 6371;
 const DEFAULT_RADIUS_KM = 20;
 const MAX_RADIUS_KM = 100;
 // Independent confirmations a user-dropped pin needs before it's trusted
@@ -84,15 +86,6 @@ function seedCourtsNearOnce(lat, lng, radiusKm) {
   return promise;
 }
 
-function haversineKm(lat1, lng1, lat2, lng2) {
-  const toRad = (d) => (d * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLng = toRad(lng2 - lng1);
-  const a = Math.sin(dLat / 2) ** 2
-    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-  return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
 function queryNearbyCourts(lat, lng, radiusKm, userId) {
   // Cheap bounding-box prefilter in SQL (degrees, not exact -- lng shrinks
   // toward the poles, so this box is intentionally a bit generous), then an
@@ -105,7 +98,15 @@ function queryNearbyCourts(lat, lng, radiusKm, userId) {
     SELECT c.*,
       (SELECT COUNT(*) FROM court_confirmations cc WHERE cc.court_id = c.id) AS confirmation_count,
       EXISTS(SELECT 1 FROM court_confirmations cc WHERE cc.court_id = c.id AND cc.user_id = ?) AS already_confirmed,
-      cl.id AS club_id, cl.name AS club_name,
+      -- Previously missing entirely -- the frontend had no way to know which
+      -- courts the user already watches on initial load, so its watched-set
+      -- always started empty regardless of real state (only became correct
+      -- again after opening that exact court's sheet, which re-derives it
+      -- from club_already_watched but never this per-court equivalent).
+      EXISTS(SELECT 1 FROM court_watches cw2 WHERE cw2.court_id = c.id AND cw2.user_id = ?) AS watched,
+      cl.id AS club_id, cl.name AS club_name, cl.postcode AS club_postcode,
+      cl.name_verified AS club_name_verified, cl.name_source AS club_name_source,
+      cl.name_submitted_by AS club_name_submitted_by,
       EXISTS(SELECT 1 FROM club_watches cw WHERE cw.club_id = cl.id AND cw.user_id = ?) AS club_already_watched,
       (SELECT COUNT(*) FROM club_courts cc2 WHERE cc2.club_id = cl.id) AS club_court_count
     FROM courts c
@@ -118,7 +119,7 @@ function queryNearbyCourts(lat, lng, radiusKm, userId) {
     -- issue, despite the frontend showing a generic connection error for
     -- it). We want the court's own coordinates for this bounding box.
     WHERE c.latitude BETWEEN ? AND ? AND c.longitude BETWEEN ? AND ?
-  `).all(userId, userId, lat - latDelta, lat + latDelta, lng - lngDelta, lng + lngDelta);
+  `).all(userId, userId, userId, lat - latDelta, lat + latDelta, lng - lngDelta, lng + lngDelta);
 
   return candidates
     .map((c) => {
@@ -126,7 +127,9 @@ function queryNearbyCourts(lat, lng, radiusKm, userId) {
       return {
         ...c,
         already_confirmed: !!c.already_confirmed,
+        watched: !!c.watched,
         club_already_watched: !!c.club_already_watched,
+        club_name_verified: !!c.club_name_verified,
         exactDistanceKm,
         // Rounded for display only -- filtering/sorting on this instead of
         // exactDistanceKm let a court up to 0.05km outside radiusKm round
@@ -179,7 +182,7 @@ router.get('/courts', requireAuth, async (req, res) => {
   res.json({ courts });
 });
 
-router.post('/courts', requireAuth, (req, res) => {
+router.post('/courts', requireAuth, async (req, res) => {
   const { name, latitude, longitude } = req.body || {};
 
   // courts is a SHARED table (~33k rows) that every user's map reads, so a
@@ -193,12 +196,17 @@ router.post('/courts', requireAuth, (req, res) => {
   ]);
   if (bad) return res.status(400).json(bad);
 
+  // Best-effort (postcodes.io -- see utils/postcodeLookup.js) -- a failed or
+  // empty lookup leaves postcode null, same tradeoff already accepted for
+  // Overpass elsewhere in this file rather than failing the whole write.
+  const postcode = await lookupPostcode(latitude, longitude);
+
   // User-dropped pins start unverified -- they only show as a trusted court
   // once CONFIRMATION_THRESHOLD other users independently confirm it via
   // POST /courts/:id/confirm below.
   const info = db.prepare(
-    `INSERT INTO courts (name, latitude, longitude, source, verified, submitted_by) VALUES (?, ?, ?, 'user', 0, ?)`
-  ).run(name.trim(), latitude, longitude, req.user.id);
+    `INSERT INTO courts (name, latitude, longitude, source, verified, submitted_by, postcode) VALUES (?, ?, ?, 'user', 0, ?, ?)`
+  ).run(name.trim(), latitude, longitude, req.user.id, postcode);
 
   const court = db.prepare('SELECT * FROM courts WHERE id = ?').get(info.lastInsertRowid);
   res.status(201).json({ court: { ...court, confirmation_count: 0, already_confirmed: false } });
@@ -275,7 +283,10 @@ router.get('/courts/watched', requireAuth, (req, res) => {
     WHERE w.user_id = ?
     ORDER BY w.created_at DESC
   `).all(req.user.id);
-  res.json({ courts, clubs });
+  const areas = db.prepare(`
+    SELECT * FROM area_watches WHERE user_id = ? ORDER BY created_at DESC
+  `).all(req.user.id);
+  res.json({ courts, clubs, areas });
 });
 
 router.post('/courts/:id/watch', requireAuth, (req, res) => {
@@ -311,6 +322,123 @@ router.delete('/courts/:id/club/watch', requireAuth, (req, res) => {
 
   db.prepare('DELETE FROM club_watches WHERE user_id = ? AND club_id = ?')
     .run(req.user.id, membership.club_id);
+  res.status(204).end();
+});
+
+// Direct-by-club-id unwatch, alongside the court-resolved one above. The
+// "My Watches" management screen only ever has the watched clubs list
+// itself (GET /courts/watched's `clubs` array -- id, name, lat/lng, no
+// associated court id) to work from, so it has no court id to resolve a
+// club from the way CourtSheet's per-court "Watching" pill does. No POST
+// counterpart -- watching a club still only makes sense starting from a
+// specific court's sheet (you're watching a venue you found via a court on
+// it), same as before; only unwatching needs this direct path.
+router.delete('/courts/club-watch/:clubId', requireAuth, (req, res) => {
+  db.prepare('DELETE FROM club_watches WHERE user_id = ? AND club_id = ?')
+    .run(req.user.id, req.params.clubId);
+  res.status(204).end();
+});
+
+// Crowd-sourced club naming -- same shape as court verification
+// (court_confirmations/CONFIRMATION_THRESHOLD above), applied to a club's
+// NAME rather than its existence (a club's existence is entirely derived
+// from clusterCourts.js, never user-submitted). A proposal resets any
+// confirmations the PREVIOUS name had -- see db.js's own comment on
+// club_name_confirmations for why.
+router.post('/clubs/:id/name', requireAuth, (req, res) => {
+  const { name } = req.body || {};
+  const bad = validate([
+    ['name', name, isText(MAX_LENGTHS.clubName), `must be a name of ${MAX_LENGTHS.clubName} characters or fewer`],
+  ]);
+  if (bad) return res.status(400).json(bad);
+
+  const club = db.prepare('SELECT * FROM clubs WHERE id = ?').get(req.params.id);
+  if (!club) return res.status(404).json({ error: 'Club not found' });
+
+  const trimmed = name.trim();
+  // A no-op resubmission of the name that's already current shouldn't reset
+  // real progress toward verification (e.g. a second person independently
+  // typing the same correct name before either confirms it).
+  if (trimmed === club.name) {
+    return res.json({ club: { ...club, name_confirmation_count: db.prepare('SELECT COUNT(*) AS n FROM club_name_confirmations WHERE club_id = ?').get(club.id).n } });
+  }
+
+  const propose = db.transaction(() => {
+    db.prepare('DELETE FROM club_name_confirmations WHERE club_id = ?').run(club.id);
+    db.prepare(
+      `UPDATE clubs SET name = ?, name_source = 'user', name_submitted_by = ?, name_verified = 0 WHERE id = ?`
+    ).run(trimmed, req.user.id, club.id);
+  });
+  propose();
+
+  const updated = db.prepare('SELECT * FROM clubs WHERE id = ?').get(club.id);
+  res.json({ club: { ...updated, name_confirmation_count: 0 } });
+});
+
+router.post('/clubs/:id/name/confirm', requireAuth, (req, res) => {
+  const club = db.prepare('SELECT * FROM clubs WHERE id = ?').get(req.params.id);
+  if (!club) return res.status(404).json({ error: 'Club not found' });
+  if (club.name_source !== 'user') {
+    return res.status(400).json({ error: 'This club has no user-proposed name to confirm yet' });
+  }
+  if (club.name_submitted_by === req.user.id) {
+    return res.status(400).json({ error: "You can't confirm a name you proposed yourself" });
+  }
+
+  // Same check-then-write-as-one-transaction shape as POST /courts/:id/confirm
+  // above, for the same reason: two concurrent confirmations both reading
+  // count == CONFIRMATION_THRESHOLD - 1 could otherwise both believe they
+  // were the one that crossed the threshold.
+  const confirmName = db.transaction(() => {
+    db.prepare('INSERT OR IGNORE INTO club_name_confirmations (club_id, user_id) VALUES (?, ?)')
+      .run(club.id, req.user.id);
+
+    const { count } = db.prepare(
+      'SELECT COUNT(*) AS count FROM club_name_confirmations WHERE club_id = ?'
+    ).get(club.id);
+
+    if (!club.name_verified && count >= CONFIRMATION_THRESHOLD) {
+      db.prepare('UPDATE clubs SET name_verified = 1 WHERE id = ?').run(club.id);
+    }
+    return count;
+  });
+
+  const count = confirmName();
+  const updated = db.prepare('SELECT * FROM clubs WHERE id = ?').get(club.id);
+  res.json({ club: { ...updated, name_confirmation_count: count } });
+});
+
+// Area watch -- unlike court/club watches, this doesn't resolve from an
+// existing row (a court, a club): the area itself is user-defined (a
+// dropped pin + radius), so it's created/owned directly rather than
+// toggled on an existing entity. No UNIQUE constraint the way court_watches/
+// club_watches have -- a user can meaningfully want several distinct,
+// possibly-overlapping areas (e.g. "near work" and "near home").
+router.post('/courts/area-watch', requireAuth, async (req, res) => {
+  const { name, latitude, longitude, radius_km } = req.body || {};
+
+  const bad = validate([
+    ['name', name, isOptionalText(MAX_LENGTHS.areaWatchName), `must be ${MAX_LENGTHS.areaWatchName} characters or fewer`],
+    ['latitude', latitude, isLatitude, 'must be a number between -90 and 90'],
+    ['longitude', longitude, isLongitude, 'must be a number between -180 and 180'],
+    ['radius_km', radius_km, isRadiusKm, `must be a number between ${MIN_AREA_WATCH_RADIUS_KM} and ${MAX_AREA_WATCH_RADIUS_KM}`],
+  ]);
+  if (bad) return res.status(400).json(bad);
+
+  // Best-effort, same tradeoff as POST /courts above.
+  const postcode = await lookupPostcode(latitude, longitude);
+
+  const info = db.prepare(
+    `INSERT INTO area_watches (user_id, name, latitude, longitude, radius_km, postcode) VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(req.user.id, name?.trim() || null, latitude, longitude, radius_km, postcode);
+
+  const area = db.prepare('SELECT * FROM area_watches WHERE id = ?').get(info.lastInsertRowid);
+  res.status(201).json({ area });
+});
+
+router.delete('/courts/area-watch/:id', requireAuth, (req, res) => {
+  db.prepare('DELETE FROM area_watches WHERE id = ? AND user_id = ?')
+    .run(req.params.id, req.user.id);
   res.status(204).end();
 });
 
@@ -351,11 +479,12 @@ router.post('/courts/:id/availability', requireAuth, (req, res) => {
     `INSERT INTO availability_posts (user_id, court_id, start_time, end_time, note) VALUES (?, ?, ?, ?, ?)`
   ).run(req.user.id, court.id, start_time, end_time ?? null, note ?? null);
 
-  // Broadcast to every other user watching this court, plus anyone watching
-  // the club it belongs to (if any) -- confirmed model either way: anyone
-  // watching gets notified regardless of friendship or their own stated
-  // availability. Club watchers are deduped against direct court watchers
-  // so someone watching both doesn't get notified twice for the same post.
+  // Broadcast to every other user watching this court, anyone watching the
+  // club it belongs to (if any), and anyone whose watched area's radius
+  // reaches this court -- confirmed model either way: anyone watching gets
+  // notified regardless of friendship or their own stated availability. All
+  // three are deduped into one Set so someone watching the court AND its
+  // club AND an overlapping area only gets notified once for the same post.
   const poster = db.prepare('SELECT name FROM users WHERE id = ?').get(req.user.id);
   const courtWatchers = db.prepare(
     `SELECT user_id FROM court_watches WHERE court_id = ? AND user_id != ?`
@@ -369,7 +498,18 @@ router.post('/courts/:id/availability', requireAuth, (req, res) => {
       ).all(membership.club_id, req.user.id)
     : [];
 
-  const allWatcherIds = new Set([...notifiedIds, ...clubWatchers.map((w) => w.user_id)]);
+  // area_watches has no spatial index (small table, one row per user's
+  // watched area -- see area_watches' own schema comment), so this fetches
+  // every row and filters in JS with the same haversine used everywhere
+  // else in this file, same tradeoff already accepted in queryNearbyCourts.
+  const allAreaWatches = db.prepare(
+    `SELECT user_id, latitude, longitude, radius_km FROM area_watches WHERE user_id != ?`
+  ).all(req.user.id);
+  const areaWatcherIds = allAreaWatches
+    .filter((a) => haversineKm(a.latitude, a.longitude, court.latitude, court.longitude) <= a.radius_km)
+    .map((a) => a.user_id);
+
+  const allWatcherIds = new Set([...notifiedIds, ...clubWatchers.map((w) => w.user_id), ...areaWatcherIds]);
   for (const user_id of allWatcherIds) {
     sendPushNotification(
       user_id,

@@ -71,6 +71,7 @@ from detect_swings import (  # noqa: E402
     compute_wrist_velocity, find_swing_peaks, THRESHOLD_PERCENTILE, MIN_SWING_GAP_SEC,
 )
 from extract_clips import extract_clip  # noqa: E402
+from video_io import reencode_to_h264  # noqa: E402
 from infer_angle import infer_camera_angle, infer_angle_from_source, create_landmarker  # noqa: E402
 from verify_shot_contact import verify_swings, filter_verified_swings  # noqa: E402
 from verify_shot_contact_verified import get_verified_shot_contact  # noqa: E402
@@ -256,6 +257,12 @@ def process_video(name, db_ids, checkpoint, limit=None, use_claude=False):
             clip_abs = os.path.join(PRO_CLIPS_DIR, clip_rel)
             try:
                 extract_clip(cap, clip_start_frame, end_frame, clip_abs, fps, fourcc)
+                # extract_clip writes mp4v (MPEG-4 Part 2) -- unplayable in a
+                # browser, so the Pro Clip Review tool can't show it. Same
+                # extract_clip + reencode_to_h264 pattern every other clip path
+                # in the pipeline uses (detect_rallies.py, crop_to_subject.py,
+                # ingest_raw_footage_to_history.py).
+                reencode_to_h264(clip_abs)
             except Exception as e:  # noqa: BLE001
                 tally['clip_failed'] += 1
                 rec['result'] = f'clip_failed:{e}'

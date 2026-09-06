@@ -208,6 +208,9 @@ router.post('/dev/tip-review/label', requireAuth, requireAdmin, (req, res) => {
 router.get('/dev/pro-clip-review-candidates', requireAuth, requireAdmin, (req, res) => {
   const args = [LIST_PRO_CLIP_REVIEW_CANDIDATES];
   if (req.query.limit) args.push(String(req.query.limit));
+  // ?practice=1 -> review only the court-level practice-footage ingest
+  // (relabel + recontact stream), separate from the curated broadcast queue.
+  if (req.query.practice === '1' || req.query.practice === 'true') args.push('--practice');
   sendPythonJson(res, args, {
     timeoutMs: PRO_CLIP_REVIEW_CANDIDATES_TIMEOUT_MS,
     label: 'list_pro_clip_review_candidates.py',

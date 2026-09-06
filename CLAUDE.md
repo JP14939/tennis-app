@@ -25,6 +25,8 @@ Tests are colocated with routes (e.g. `src/routes/drills.test.js`, `history.test
 
 **Shared validation/invariant layer** (`src/domain/invariants.js`, `src/validation/validateBody.js`, `src/domain/integrityChecks.js`): domain rules (vocabularies, cross-field constraints) are defined once in `invariants.js` and consumed two ways — `validateBody.js` rejects bad input at write time (400s), `integrityChecks.js` re-checks the same rules against data already at rest (`npm run verify:db` / `backend/scripts/verifyIntegrity.js`). When adding a new field constraint, add it to `invariants.js` rather than inlining an `if` check in a route, so both consumers stay in sync.
 
+**Route auth convention is enforced, not just documented** (`src/routeAuthConvention.test.js`, `src/domain/routeAuthExceptions.js`): every route must carry `requireAuth` or `optionalAuth` in its actual Express middleware chain, or be explicitly listed with a reason in `routeAuthExceptions.js`. This guards against a real free-tier-cap bypass (2026-08-22) caused by a route silently missing both. A new route with neither will fail this test at CI/`npm test` time rather than shipping unauthenticated by accident — add auth middleware, or add a reasoned exception if it's deliberately public (e.g. pre-login auth routes, the RevenueCat webhook).
+
 ### Frontend (`frontend/`)
 ```
 cd frontend
@@ -65,6 +67,10 @@ The backend **never runs ML code in-process** — it always shells out to a Pyth
 ## The numbered `scripts/` pipeline
 
 `scripts/` is organized into numbered stages, each in its own `scripts/NN_<name>/` folder. Stages `01_data_collection` through `06_database_build` are the **offline pipeline that already built the 631-entry pro database** — you should not need to re-run them unless adding new source footage. `07_ball_racket_tracking` and `10_net_detection` are auxiliary trained keypoint models used by later stages. `08_comparison_engine` is the live inference code described above. `09_coaching_ai` is the (currently unused) teacher-student coaching-tip selector. `11`–`17` cover highlight clipping, video crop/overlay utilities, shot classification, batch analysis, shot verification, and amateur-footage evaluation. See `HANDOVER.md`'s "The Data Pipeline" section for a per-stage breakdown of what each script does and why — it's detailed enough that re-deriving it from the code alone is slower than reading it there first.
+
+## Find Games (courts, clubs, watches)
+
+Courts are sourced from OpenStreetMap (`backend/src/utils/overpassCourts.js`, Overpass API) and clustered into clubs via `backend/scripts/clusterCourts.js`: courts are nodes in a graph, an edge connects two courts ≤100m apart (`backend/src/utils/geo.js` haversine distance), and a club is one connected component — not a running-centroid heuristic, so a long line of closely-spaced courts correctly becomes one club. Postcodes are resolved via postcodes.io (free, no API key — chosen over paid Google Geocoding) and backfilled onto existing court/club rows with `backend/scripts/backfillPostcodes.js`. Club naming is crowd-sourced the same way court verification already worked: a user proposes a name, two others confirm it — no paid lookup needed. Users can watch a specific court, an entire club, or an arbitrary map area (pin + radius); `GET /courts` reports which are already watched so the map can render watched-state on load.
 
 ## Database
 

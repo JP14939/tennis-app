@@ -147,6 +147,100 @@ def classify_ml(video_path, contact_time_sec, frames_fps=None):
     return {'shot_type': best_shot, 'scores': scores}
 
 
+TRAJ_MARGIN_MIN = 0.20   # trajectory-kNN vote decisiveness to trust its FH/BH call
+GEOM_CONF_MIN = 0.35     # geom's own FH/BH confidence to fall back on (trajectory-on path)
+# When trajectory is off (phone footage), geom is the ONLY FH/BH signal and the
+# alternative to trusting it is dumping to Claude / 'uncertain'. A near-midline
+# one-handed backhand gets geom confidence capped at 0.3 (< GEOM_CONF_MIN), so
+# with the strict floor every 1HBH on phone footage was lost. Accept geom's best
+# guess down to this floor when there's nothing else.
+GEOM_CONF_MIN_NOTRAJ = 0.15
+# On the phone path (trajectory off) the trained model is the primary FH/BH
+# decider -- it learns backhand from the amateur set (CV recall ~0.60) where
+# geom's near-midline side test only manages ~0.40. Gate on the winning class
+# probability so its low backhand precision doesn't run away; geom stays the
+# backstop. The model is amateur-trained so it is NOT used on the broadcast
+# path (trajectory-kNN owns that domain).
+ML_CONF_MIN = 0.55
+
+
+def classify_ensemble(video_path, contact_time_sec, frames_fps=None, *,
+                      handedness='right', use_trajectory=True, use_ml=None):
+    """Serve is decided by classify_shot_geom's overhead gate (near-100% serve
+    recall, view-invariant); forehand vs backhand by trajectory-kNN over the
+    labelled pro swings (~85% in the broadcast/pipeline domain), with geom's
+    dot-product side test as the fallback.
+
+    `use_trajectory=False` for phone-upload footage -- the pro trajectory pool
+    is broadcast, and matching a phone selfie swing against it mislabels every
+    backhand as a forehand (measured). There the trained model (classify_ml)
+    becomes the primary FH/BH decider, with geom's dot-product side test down
+    to GEOM_CONF_MIN_NOTRAJ as the backstop. (The phone caller is
+    detect_rallies.py --no-trajectory, wired from backend/src/routes/highlights.js.)
+
+    `use_ml` defaults to `not use_trajectory` -- the model is the phone tool,
+    trajectory-kNN is the broadcast tool, geom is shared (serve gate + fallback).
+
+    Returns {shot_type, scores, source, confidence}. shot_type is 'uncertain'
+    when nothing is confident (-> send to Claude) and None when there isn't
+    enough pose to decide anything.
+    """
+    from classify_shot_geom import classify_geom  # noqa: PLC0415
+
+    if use_ml is None:
+        use_ml = not use_trajectory
+
+    peak_lm, prev_lm, window_lms, fps = _build_swing_frames(video_path, contact_time_sec, frames_fps)
+    g = classify_geom(peak_lm, prev_lm, window_lms, handedness)
+
+    ml = None
+    if use_ml:
+        try:
+            ml = classify_ml(video_path, contact_time_sec, frames_fps=frames_fps)
+        except Exception as e:  # noqa: BLE001
+            print(f'  [ensemble] ml step skipped: {e}', file=sys.stderr)
+
+    traj = None
+    if use_trajectory:
+        try:
+            from classify_shot_trajectory import classify_from_frames  # noqa: PLC0415
+            frames, _fps = frames_fps if frames_fps is not None else extract_user_poses(video_path)
+            traj = classify_from_frames(frames, fps, contact_time_sec, handedness=handedness)
+        except Exception as e:  # noqa: BLE001
+            print(f'  [ensemble] trajectory step skipped: {e}', file=sys.stderr)
+
+    # ── serve ── geom's overhead-at-contact gate owns it. Trades ~0.5pt overall
+    # accuracy for serve recall 15% -> 44% vs trajectory-kNN alone (measured);
+    # worth it because a serve mislabelled as a groundstroke pollutes rally
+    # grouping. Trajectory-kNN serve votes were tried as corroboration and made
+    # it worse -- dropped.
+    if g['shot_type'] == 'serve':
+        return {'shot_type': 'serve', 'scores': g['scores'], 'source': 'geom_serve',
+                'confidence': g['confidence']}
+
+    # ── forehand vs backhand ──
+    # broadcast: trajectory-kNN owns it (~85% pipeline domain).
+    if traj and traj['shot_type'] in ('forehand', 'backhand') and traj.get('margin', 0) >= TRAJ_MARGIN_MIN:
+        return {'shot_type': traj['shot_type'], 'scores': traj['scores'], 'source': 'trajectory',
+                'confidence': round(min(1.0, 0.4 + traj['margin']), 3)}
+
+    # phone: the trained model, when its winning-class probability clears the gate.
+    if ml and ml['shot_type'] in ('forehand', 'backhand'):
+        ml_conf = ml.get('scores', {}).get(ml['shot_type'], 0.0)
+        if ml_conf >= ML_CONF_MIN:
+            return {'shot_type': ml['shot_type'], 'scores': ml['scores'], 'source': 'ml',
+                    'confidence': round(ml_conf, 3)}
+
+    geom_floor = GEOM_CONF_MIN if use_trajectory else GEOM_CONF_MIN_NOTRAJ
+    if g['shot_type'] in ('forehand', 'backhand') and g['confidence'] >= geom_floor:
+        return {'shot_type': g['shot_type'], 'scores': g['scores'], 'source': 'geom',
+                'confidence': g['confidence']}
+
+    fallback = (traj or ml or g)
+    return {'shot_type': 'uncertain', 'scores': fallback.get('scores', {}),
+            'source': 'none', 'confidence': 0.0, 'best_guess': fallback.get('shot_type')}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('video')

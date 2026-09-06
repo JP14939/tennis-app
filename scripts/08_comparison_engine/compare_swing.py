@@ -33,11 +33,38 @@ from ball_speed import estimate_net_crossing_ball_speed_kmh
 from select_coaching_tips import get_coaching_tips
 from paths import DATA_DIR
 import phase_breakdown
+import clip_review_log
 
 DB_PATH         = os.path.join(DATA_DIR, '06_pro_database', 'pro_database.json')
 OVERLAY_DB_PATH = os.path.join(DATA_DIR, '06_pro_database', 'overlay_trajectories.json')
 PLAYER_NAMES_PATH = os.path.join(DATA_DIR, '06_pro_database', 'player_names.json')
 MODEL_PATH      = os.path.join(os.path.dirname(__file__), '..', 'pose_landmarker.task')
+
+
+def eligible_match_candidates(entries, shot_type, reviewed_practice_ids=None):
+    """pro_database.json entries of `shot_type` that are safe to serve as a
+    real user's "closest pro match".
+
+    The court-level practice-footage ingest (2026-09, entry['ingest'] ==
+    'practice_mvp') auto-labelled shot type + contact frame with an ~all-
+    forehand skew and often a ~13f-late contact anchor -- unreviewed, an entry
+    is as likely to be wrong as right, and a bad clip served as someone's
+    closest match is a real user-facing failure, not a cosmetic one. Only
+    entries Jack has hand-reviewed in Pro Clip Review (any
+    clip_review_log.LABEL_REVIEW_VERDICTS verdict logged) are eligible;
+    everything else in the ingest stays in pro_database.json (so nothing is
+    lost / no rebuild needed) but is invisible to real users until reviewed.
+
+    reviewed_practice_ids: injectable for tests; defaults to a fresh read of
+    clip_review_log (cheap -- one JSONL pass, called once per comparison)."""
+    if reviewed_practice_ids is None:
+        reviewed_practice_ids = clip_review_log.get_label_reviewed_ids()
+    return [
+        e for e in entries
+        if e['shot_type'] == shot_type
+        and (e.get('ingest') != 'practice_mvp' or e['id'] in reviewed_practice_ids)
+    ]
+
 
 KEY_LANDMARKS = [
     'nose',
@@ -238,7 +265,7 @@ def build_user_trajectory(frames, fps, contact_time_sec=None):
 
 # ── Main comparison ───────────────────────────────────────────────────────────
 
-def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=None, view_direction_hint=None, frames_fps=None, handedness='right'):
+def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=None, view_direction_hint=None, frames_fps=None, handedness='right', camera_roll_override=None):
     """
     frames_fps: optional pre-extracted (frames, fps) tuple (same shape
     extract_user_poses returns) to skip re-running pose extraction when the
@@ -271,6 +298,7 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
     # only used when the classifier is confident -- so this can only improve
     # the auto-detect, never make it worse. Fully guarded: no audio stream /
     # no model / any error -> unchanged behaviour.
+    audio_unconfident_sec = None  # an audio pick that was below the confidence bar
     if contact_time_sec is None:
         try:
             from audio_contact import detect_contact  # noqa: PLC0415
@@ -284,10 +312,53 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
                 print(f"  Contact auto-detected via AUDIO onset at {contact_time_sec:.3f}s "
                       f"(confidence {ac['confidence']:.2f}, margin {ac['margin']:.2f})", file=sys.stderr)
             elif ac:
+                audio_unconfident_sec = ac['contact_time_sec']
                 print(f"  Audio onset found but not confident enough "
-                      f"(conf {ac['confidence']:.2f}) -- using wrist-velocity peak", file=sys.stderr)
+                      f"(conf {ac['confidence']:.2f}) -- trying the visual student", file=sys.stderr)
         except Exception as e:  # noqa: BLE001
             print(f'  [audio-contact] skipped: {e}', file=sys.stderr)
+
+    # Phase C.4 -- audioless (or audio-unconfident) fallback: the visual
+    # contact-frame student (racket/ball geometry + wrist kinematics -> a
+    # learned offset on find_contact_frame's guess). Gated on
+    # contact_frame_ml_training_log reporting the model has earned trust, so an
+    # unproven model can never push the auto-detect below today's wrist-peak
+    # baseline. Same try/except-and-carry-on philosophy as the audio block.
+    if contact_time_sec is None:
+        try:
+            from contact_evidence import compute_contact_evidence  # noqa: PLC0415
+            from train_contact_frame_model import predict_contact_offset  # noqa: PLC0415
+            import contact_frame_ml_training_log as cf_ml  # noqa: PLC0415
+            if cf_ml.stats().get('trusted'):
+                anchor_idx = find_peak_wrist_frame(frames, fps)
+                anchor_frame = frames[anchor_idx]['frame']
+                ev = compute_contact_evidence(video_path, frames, fps, anchor_frame, anchor_idx)
+                if ev and ev['student_method'] != 'wrist_velocity_fallback':
+                    offset, available = predict_contact_offset({
+                        'student_method': ev['student_method'],
+                        'student_confidence': ev['student_confidence'],
+                        'fps': fps, 'student_meta': ev['student_meta'],
+                        'source': 'user_submitted',
+                    })
+                    if available:
+                        corrected_sec = max(0.0, (ev['student_frame'] + offset) / fps)
+                        # Audio + visual agreeing within ~2 frames: prefer the
+                        # audio time (the sharper signal) -- the visual pick's
+                        # role here is to corroborate the sub-threshold audio.
+                        if (audio_unconfident_sec is not None
+                                and abs(corrected_sec - audio_unconfident_sec) <= 2.0 / fps):
+                            contact_time_sec = audio_unconfident_sec
+                            print(f"  Contact auto-detected via AUDIO+VISUAL agreement at "
+                                  f"{contact_time_sec:.3f}s", file=sys.stderr)
+                        else:
+                            contact_time_sec = corrected_sec
+                            print(f"  Contact auto-detected via VISUAL student at {contact_time_sec:.3f}s "
+                                  f"(offset {offset:+d}f from {ev['student_method']})", file=sys.stderr)
+            else:
+                print("  [visual-contact] skipped: model has not earned trust yet "
+                      "-- using wrist-velocity peak", file=sys.stderr)
+        except Exception as e:  # noqa: BLE001
+            print(f'  [visual-contact] skipped: {e}', file=sys.stderr)
 
     user_trajectory, peak_frame = build_user_trajectory(frames, fps, contact_time_sec)
     if not user_trajectory:
@@ -331,9 +402,20 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
     else:
         print(f'  Camera angle: could not infer ({angle_debug})', file=sys.stderr)
 
-    user_roll = usable_roll(angle_debug.get('camera_roll_deg')) if isinstance(angle_debug, dict) else None
+    vision_roll = angle_debug.get('camera_roll_deg') if isinstance(angle_debug, dict) else None
+    if camera_roll_override is not None:
+        # Human-eyeballed correction (review_camera_roll.py) or, later, a
+        # device-gyro reading -- trusted as-is, not clamped to the vision
+        # band. 0 means "confirmed level, don't rotate".
+        user_roll = camera_roll_override or None
+        if user_roll is not None:
+            print(f'  Roll-correcting user trajectory: {user_roll:.1f}° (manual override; '
+                  f'vision estimate was {vision_roll})', file=sys.stderr)
+    else:
+        user_roll = usable_roll(vision_roll)
+        if user_roll is not None:
+            print(f'  Roll-correcting user trajectory: camera tilt {user_roll:.1f}° from net-cord slope', file=sys.stderr)
     if user_roll is not None:
-        print(f'  Roll-correcting user trajectory: camera tilt {user_roll:.1f}° from net-cord slope', file=sys.stderr)
         user_trajectory = rotate_trajectory(user_trajectory, user_roll)
 
     if handedness == 'left':
@@ -388,7 +470,7 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         with open(PLAYER_NAMES_PATH, encoding='utf-8') as f:
             player_names = json.load(f)
 
-    all_candidates = [e for e in db['entries'] if e['shot_type'] == shot_type]
+    all_candidates = eligible_match_candidates(db['entries'], shot_type)
 
     # Filter by angle if we have a user angle and the database has angle data
     if user_angle is not None:
@@ -569,8 +651,10 @@ if __name__ == '__main__':
     parser.add_argument('--angle-window', type=int, default=20, help='Angle filter window in degrees (default: 20)')
     parser.add_argument('--contact-time', type=float, default=None, help='User-marked contact time in seconds (from ContactMarkingScreen). If omitted, contact is auto-detected via wrist velocity.')
     parser.add_argument('--view-direction-hint', choices=['front', 'back'], default=None, help='User-stated filming position (from the record-time picker), used only if server-side detection is inconclusive.')
+    parser.add_argument('--camera-roll', type=float, default=None, help='Manual in-plane camera-roll override in degrees (from review_camera_roll.py eyeballing, or a gyro reading). Bypasses the vision estimate; 0 = confirmed level.')
     args = parser.parse_args()
-    result = compare(args.video, args.shot_type, args.top, args.angle_window, args.contact_time, args.view_direction_hint)
+    result = compare(args.video, args.shot_type, args.top, args.angle_window, args.contact_time, args.view_direction_hint,
+                     camera_roll_override=args.camera_roll)
 
     # Debug convenience for a manual CLI run only -- moved out of compare()
     # itself, which the live backend calls once per /api/analyse request via

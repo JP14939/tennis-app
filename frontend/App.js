@@ -1,3 +1,4 @@
+import './utils/installFetchShim'; // must run before any api/* fetch — see file
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -34,6 +35,7 @@ import FenceTutorialScreen from './screens/FenceTutorialScreen';
 import SettingsScreen from './screens/SettingsScreen';
 import CoachScreen from './screens/CoachScreen';
 import FindGamesScreen from './screens/FindGamesScreen';
+import MyWatchesScreen from './screens/MyWatchesScreen';
 import FriendsScreen from './screens/FriendsScreen';
 import MessageThreadScreen from './screens/MessageThreadScreen';
 import DevDashboardScreen from './screens/DevDashboardScreen';
@@ -109,6 +111,7 @@ export default function App() {
             <Stack.Screen name="FenceTutorial" component={FenceTutorialScreen} options={{ title: 'Camera Setup' }} />
             <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
             <Stack.Screen name="Coach" component={CoachScreen} options={{ title: 'Coach Mode' }} />
+            <Stack.Screen name="MyWatches" component={MyWatchesScreen} options={{ title: 'My Watches' }} />
             {/* Premium used to be registered both here AND as a tab
                 (MainTabs above) -- that dual registration meant
                 navigate('Premium') from a screen on this stack (e.g.

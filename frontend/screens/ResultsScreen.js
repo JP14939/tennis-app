@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet, SafeAreaView,
-  ScrollView, ActivityIndicator, Platform, Modal,
+  ScrollView, ActivityIndicator, Platform, Modal, Animated,
 } from 'react-native';
 import Alert from '../utils/alert';
 import { API_BASE } from '../config/api';
@@ -14,12 +14,11 @@ import CourtBackground from '../components/CourtBackground';
 import ResultShareCard from '../components/ResultShareCard';
 import { captureAndShare } from '../utils/shareCard';
 import { playTapSound, playCompleteSound, playAchievementSound } from '../utils/sounds';
-import { BackChevronIcon, ShareIcon, CheckIcon, FlagIcon } from '../components/icons';
+import { BackChevronIcon, ShareIcon, CheckIcon, FlagIcon, ChevronDownIcon } from '../components/icons';
 import ScoreCard from '../components/ScoreCard';
-import AngleRow from '../components/AngleRow';
 import StatCard from '../components/StatCard';
 import PhaseBreakdown, { PHASE_LABELS, PHASE_ORDER, phaseColor } from '../components/PhaseBreakdown';
-import TipsSection from '../components/TipsSection';
+import TipsSection, { Collapsible, useRotate } from '../components/TipsSection';
 import FriendPickerModal from '../components/FriendPickerModal';
 import { shareSwing } from '../api/friends';
 import { logDrillPractice } from '../api/drills';
@@ -166,6 +165,12 @@ export default function ResultsScreen({ navigation, route }) {
   const [displayShotType, setDisplayShotType] = useState(shotType);
   const [showTypePicker, setShowTypePicker] = useState(false);
 
+  // Closed by default -- unlike TipsSection's tips (valuable, actionable),
+  // the phase breakdown is a deep-dive most users don't need on first look;
+  // the hero score is the payoff, this is opt-in detail below it.
+  const [phasesOpen, setPhasesOpen] = useState(false);
+  const phasesRotate = useRotate(phasesOpen);
+
   const [notes, setNotes] = useState([]);
   const loadNotes = () => {
     if (!analysisId) return;
@@ -288,6 +293,12 @@ export default function ResultsScreen({ navigation, route }) {
 
   useEffect(() => {
     if (savedResult) {
+      // A savedResult with no analysisId (e.g. a shot analyzed straight out
+      // of a rally, via HighlightArchiveScreen's RallyBrowser) was never
+      // actually saved to History yet -- only opening an *already-saved*
+      // analysis (HistoryScreen, which always has an analysisId) means
+      // there's nothing left to do here.
+      if (!routeAnalysisId) saveToHistory(savedResult);
       return; // already have the full result — nothing to fetch
     }
     if (videoUri && shotType) {
@@ -503,24 +514,30 @@ export default function ResultsScreen({ navigation, route }) {
               <StatCard label="Ball speed at net" value={`${result.ball_speed_kmh} km/h`} />
             )}
 
-            {/* Angle info */}
-            <AngleRow
-              leftLabel="Your angle"
-              leftValue={result.angle_label ?? '—'}
-              leftSub={result.user_angle != null ? `${result.user_angle}°` : null}
-              rightLabel="Pro's angle"
-              rightValue={top.pro_angle != null ? `${top.pro_angle}°` : '—'}
-            />
-
-            {/* Phase breakdown */}
-            <PhaseBreakdown
-              phases={phases}
-              analysisId={analysisId}
-              notes={notes}
-              canAddNotes={canAddNotes}
-              onAddNote={handleAddNote}
-              NotesBlock={NotesBlock}
-            />
+            {/* Phase breakdown -- collapsed by default, same accordion
+                primitives TipsSection already uses below */}
+            {phases && (
+              <>
+                <TouchableOpacity style={s.phaseToggle} onPress={() => setPhasesOpen((o) => !o)} activeOpacity={0.85}>
+                  <Text style={s.phaseToggleText}>See phase breakdown</Text>
+                  <Animated.View style={{ transform: [{ rotate: phasesRotate }] }}>
+                    <ChevronDownIcon size={14} color={colors.mutedDark} />
+                  </Animated.View>
+                </TouchableOpacity>
+                <Collapsible open={phasesOpen}>
+                  <View style={s.phaseReveal}>
+                    <PhaseBreakdown
+                      phases={phases}
+                      analysisId={analysisId}
+                      notes={notes}
+                      canAddNotes={canAddNotes}
+                      onAddNote={handleAddNote}
+                      NotesBlock={NotesBlock}
+                    />
+                  </View>
+                </Collapsible>
+              </>
+            )}
 
             {/* Coaching tips */}
             {top.tips?.length > 0 && <TipsSection tips={top.tips} />}
@@ -736,6 +753,12 @@ const s = StyleSheet.create({
   typePickerBtnTextActive: { color: colors.white },
 
   sectionTitle: { color: colors.ink, fontSize: 19, fontFamily: fonts.serif, marginBottom: 12 },
+  phaseToggle: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: colors.surface, borderRadius: radius.md, padding: 15, marginBottom: 22,
+  },
+  phaseToggleText: { color: colors.ink, fontSize: 14.5, fontFamily: fonts.bold },
+  phaseReveal: { marginTop: -12, paddingTop: 10 },
   // phaseTrack/phaseFill are still used directly by the share modal's own
   // mini breakdown replay below -- the main phase-breakdown section itself
   // now lives in components/PhaseBreakdown.js with its own copies.

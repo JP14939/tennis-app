@@ -24,7 +24,6 @@ Usage:
 import argparse
 import contextlib
 import json
-import math
 import os
 import subprocess
 import sys
@@ -50,15 +49,14 @@ from clip_urls import PRO_CLIPS_DIR  # noqa: E402
 from audio_onset import FFMPEG, extract_audio_wav  # noqa: E402
 import audio_contact  # noqa: E402
 import contact_frame_training_log as cflog  # noqa: E402
-import racket_tracker as rt  # noqa: E402
-from racket_tracker import find_contact_frame, contact_frame_meta  # noqa: E402
+from contact_evidence import compute_contact_evidence  # noqa: E402
 from compare_swing import find_peak_wrist_frame  # noqa: E402
 
 POSE_CACHE = os.path.join(DATA_DIR, '07_ball_racket_tracking', '.student_pose_cache')
 AUDIO_CACHE = os.path.join(DATA_DIR, '07_ball_racket_tracking', '.student_audio_cache')
 AUDIO_ONLY_MODEL = audio_contact.AUDIO_ONLY_MODEL_PATH
+PRO_DB_PATH = os.path.join(DATA_DIR, '06_pro_database', 'pro_database.json')
 
-TRACK_MARGIN_SEC = 0.8   # YOLO only around the anchor -- find_contact_frame looks +-0.3s
 AUDIO_PAD_SEC = 0.3      # a little extra audio past the clip end
 
 
@@ -90,11 +88,15 @@ def _human_labels():
             if v == 'contact_time_corrected' and eid in corrected}
 
 
-def _already_done():
+def _already_done(exclude_sources=()):
+    """swing_keys already logged. `exclude_sources`: sources NOT to count as
+    done, so --force-relog can re-extract them (e.g. the pre-Phase-C 'human'
+    rows that lack the wrist-kinematics features the model now expects)."""
     done = set()
     for r in cflog.read_log():
         m = r.get('student_meta') or {}
-        if m.get('swing_key') and r.get('source') in ('human', 'audio_teacher'):
+        src = r.get('source')
+        if m.get('swing_key') and src in ('human', 'audio_teacher') and src not in exclude_sources:
             done.add(m['swing_key'])
     return done
 
@@ -124,50 +126,11 @@ def _get_poses(clip_mp4, key):
         return json.load(f)
 
 
-def _wrist_kinematics(frames, anchor_idx, fps):
-    """velocity / accel / jerk of the dominant wrist around the anchor, plus
-    the offset (frames) from the anchor to the peak-deceleration frame -- the
-    hand brakes hard at impact, which the speed-peak anchor ignores."""
-    def speed_series(name):
-        s, prev = [0.0], None
-        for fr in frames:
-            lm = fr.get('landmarks')          # already name->dict (or None)
-            d = lm.get(name) if lm else None
-            if d and prev and d.get('visibility', 1) > 0.5 and prev.get('visibility', 1) > 0.5:
-                s.append(math.hypot(d['x'] - prev['x'], d['y'] - prev['y']))
-            else:
-                s.append(s[-1] if s else 0.0)
-            prev = d
-        return s[1:]
-
-    rs, ls = speed_series('right_wrist'), speed_series('left_wrist')
-    sp = rs if sum(rs) >= sum(ls) else ls
-    if len(sp) < 5:
-        return {}
-    # light smoothing
-    sm = [sum(sp[max(0, i - 1):i + 2]) / len(sp[max(0, i - 1):i + 2]) for i in range(len(sp))]
-    a = anchor_idx if 0 <= anchor_idx < len(sm) else len(sm) // 2
-    accel = [sm[i + 1] - sm[i] for i in range(len(sm) - 1)]
-    jerk = [accel[i + 1] - accel[i] for i in range(len(accel) - 1)]
-    # only look for the braking event within ~0.35s of the speed peak -- past
-    # that it's follow-through noise, not the impact.
-    win = max(2, int(0.35 * fps / 3))
-    lo, hi = max(0, a - win), min(len(accel), a + win + 1)
-    decel_i = min(range(lo, hi), key=lambda i: accel[i]) if lo < hi else a
-    peak = max(sm[max(0, a - win):a + win + 1] or [1e-9]) or 1e-9
-    drop_i = next((i for i in range(a, min(len(sm), a + win + 1)) if sm[i] < 0.5 * peak), None)
-    return {
-        'wrist_speed_at_anchor': round(sm[a], 5) if a < len(sm) else None,
-        'wrist_accel_at_anchor': round(accel[a], 5) if a < len(accel) else None,
-        'wrist_jerk_at_anchor': round(jerk[a], 5) if a < len(jerk) else None,
-        'wrist_decel_offset_f': (decel_i - a) * 3,          # *3: pose sampled every 3
-        'wrist_halfspeed_offset_f': ((drop_i - a) * 3) if drop_i is not None else None,
-    }
-
-
 def _student_evidence(clip_mp4, key, fps):
-    """Runs the live visual contact pipeline on the clip. Returns
-    (student_frame, confidence, method, student_meta) or None."""
+    """Runs the live visual contact pipeline on the clip (via the shared
+    contact_evidence.compute_contact_evidence, same code compare_swing's
+    audioless path uses). Returns (student_frame, confidence, method,
+    student_meta, clip_fps) or None."""
     pd = _get_poses(clip_mp4, key)
     raw = pd.get('frames') or []
     frames = [{'frame': fr['frame'], 'landmarks': _lm_by_name(fr)} for fr in raw]
@@ -177,16 +140,12 @@ def _student_evidence(clip_mp4, key, fps):
     anchor_list_idx = find_peak_wrist_frame(frames, clip_fps)
     anchor_frame = frames[anchor_list_idx]['frame']
 
-    dets, det_fps = rt.track_racket_and_ball(
-        clip_mp4,
-        frame_range=(int(anchor_frame - TRACK_MARGIN_SEC * clip_fps),
-                     int(anchor_frame + TRACK_MARGIN_SEC * clip_fps)))
-    frame, conf, method = find_contact_frame(dets, anchor_frame, clip_fps)
-    meta = contact_frame_meta(dets, anchor_frame, clip_fps)
-    meta.update(_wrist_kinematics(frames, anchor_list_idx, clip_fps))
+    ev = compute_contact_evidence(clip_mp4, frames, clip_fps, anchor_frame, anchor_list_idx)
+    if ev is None:
+        return None
+    meta = ev['student_meta']
     meta['swing_key'] = key
-    meta['anchor_frame'] = anchor_frame
-    return frame, conf, method, meta, clip_fps
+    return ev['student_frame'], ev['student_confidence'], ev['student_method'], meta, clip_fps
 
 
 def process_swing(shot_type, swing, source_video, human_time, want_audio):
@@ -246,16 +205,136 @@ def process_swing(shot_type, swing, source_video, human_time, want_audio):
     return source
 
 
+# ── Practice-footage sweep (--practice) ─────────────────────────────────────
+# Separate from the broadcast sweep above: practice_mvp entries live in
+# pro_database.json under their own id scheme (practice_<n>), not
+# 03_swing_detection/*_swings_validated.json's (shot_type, swing_id) scheme,
+# and their contact-time ground truth comes from Jack's Pro Clip Review
+# corrections (clip_review_log.jsonl), not _human_labels()'s broadcast-only
+# parsing. Deliberately NOT called from correct_contact_time.py's request
+# path -- that endpoint is awaited synchronously by the review screen on
+# every submit, and _student_evidence() below is a ~10s MediaPipe pass; this
+# stays a separate batch/background sweep, same shape as --audio-only, run
+# whenever there's a new batch of reviewed practice corrections to pick up.
+
+def _practice_teacher_times():
+    """{practice_entry_id: corrected_contact_time_sec} for every practice_mvp
+    entry with a real Pro Clip Review verdict. 'contact_time_corrected' gives
+    the corrected time directly (same 'a -> b' note parsing _human_labels()
+    uses for the broadcast queue); 'label_confirmed' / 'shot_type_corrected'
+    mean the contact time shown was already correct when Jack reviewed it, so
+    the entry's current clip_contact_time_sec IS the human-verified label."""
+    with open(PRO_DB_PATH) as f:
+        db = json.load(f)
+    contact_by_id = {
+        e['id']: e.get('clip_contact_time_sec')
+        for e in db['entries'] if e.get('ingest') == 'practice_mvp'
+    }
+    out = {}
+    for eid, (verdict, note) in clip_review_log.latest_verdict_notes().items():
+        if not eid.startswith('practice_') or eid not in contact_by_id:
+            continue
+        if verdict not in clip_review_log.LABEL_REVIEW_VERDICTS:
+            continue
+        if verdict == 'contact_time_corrected' and note and '->' in note:
+            try:
+                out[eid] = float(note.split('->')[1].strip().rstrip('s'))
+                continue
+            except ValueError:
+                pass
+        if contact_by_id[eid] is not None:
+            out[eid] = contact_by_id[eid]
+    return out
+
+
+def _already_done_practice():
+    """practice_ entry ids already logged (source='human') in Phase C's
+    training log -- mirrors _already_done()'s resumability, scoped to the
+    practice id namespace."""
+    done = set()
+    for r in cflog.read_log():
+        m = r.get('student_meta') or {}
+        key = m.get('swing_key')
+        if key and key.startswith('practice_') and r.get('source') == 'human':
+            done.add(key)
+    return done
+
+
+def run_practice(limit=None):
+    teacher_times = _practice_teacher_times()
+    done = _already_done_practice()
+    # Read pro_database.json ONCE up front, not per-swing -- re-opening it on
+    # every iteration raced Jack's live Pro Clip Review session (which
+    # rewrites the whole file on every correction, non-atomically) and threw
+    # a JSONDecodeError mid-sweep the first time this ran concurrently with
+    # him reviewing. A single snapshot at sweep-start is both faster and
+    # race-free; missing a correction made mid-sweep just means it's picked
+    # up on the next run.
+    with open(PRO_DB_PATH) as f:
+        by_id = {e['id']: e for e in json.load(f)['entries']}
+
+    from collections import Counter
+    tally = Counter()
+    n = 0
+    for eid, teacher_sec in teacher_times.items():
+        if eid in done:
+            tally['already_done'] += 1
+            continue
+        if limit and n >= limit:
+            break
+        entry = by_id.get(eid)
+        if entry is None:
+            tally['entry_removed'] += 1
+            continue
+        n += 1
+        clip = os.path.join(PRO_CLIPS_DIR, entry['clip_path'])
+        if not os.path.exists(clip):
+            tally['clip_missing'] += 1
+            continue
+        try:
+            ev = _student_evidence(clip, eid, fps=None)
+        except Exception as e:  # noqa: BLE001
+            import traceback; traceback.print_exc()
+            tally[f'error:{type(e).__name__}'] += 1
+            continue
+        if ev is None:
+            tally['no_pose'] += 1
+            continue
+        student_frame, conf, method, meta, clip_fps = ev
+        teacher_frame = round(teacher_sec * clip_fps)
+        cflog.log_example(student_frame, conf, method, teacher_frame, clip_fps,
+                          source='human', student_meta=meta)
+        tally['human'] += 1
+        if n % 25 == 0:
+            print(f'  [{n}] {eid} -> logged   {dict(tally)}', file=sys.stderr)
+
+    print('\n=== practice sweep done ===')
+    for k, v in sorted(tally.items(), key=lambda t: -t[1]):
+        print(f'  {k:<22} {v}')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--shot-type', choices=['forehand', 'backhand', 'serve'])
     ap.add_argument('--limit', type=int)
     ap.add_argument('--audio-only', action='store_true', help='skip human-labelled swings')
     ap.add_argument('--human-only', action='store_true', help='only human-labelled swings')
+    ap.add_argument('--force-relog', action='store_true',
+                    help="re-process 'human'-labelled swings even if already logged "
+                         "(appends a fresh row; train_contact_frame_model dedups to newest). "
+                         "Use to backfill wrist-kinematics features onto pre-Phase-C rows.")
+    ap.add_argument('--practice', action='store_true',
+                    help='sweep practice_mvp entries reviewed in Pro Clip Review instead of '
+                         'the broadcast 03_swing_detection sweep -- separate id scheme/data '
+                         'source, mutually exclusive with the flags above.')
     args = ap.parse_args()
 
+    if args.practice:
+        run_practice(limit=args.limit)
+        return
+
     human = _human_labels()
-    done = _already_done()
+    done = _already_done(exclude_sources=('human',) if args.force_relog else ())
     shot_types = [args.shot_type] if args.shot_type else ['forehand', 'backhand', 'serve']
 
     from collections import Counter

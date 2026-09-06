@@ -20,7 +20,7 @@ const TABLES_IN_DELETE_ORDER = [
   'shared_analyses', 'swing_annotations', 'coach_notes',
   'friend_matches', 'friend_links', 'coach_links',
   'availability_posts', 'court_confirmations', 'court_watches',
-  'club_watches', 'club_courts', 'clubs', 'courts',
+  'club_watches', 'area_watches', 'club_name_confirmations', 'club_courts', 'clubs', 'courts',
   'reel_jobs', 'rally_clips', 'highlight_jobs',
   'celebrity_scores', 'password_resets', 'analysis_usage', 'analyses', 'users',
 ];
@@ -202,6 +202,52 @@ describe('value-domain violations', () => {
     expect(violationNames()).toEqual(['courts.coordinates']);
   });
 
+  test.each([
+    ['an impossible latitude', { latitude: 5000, longitude: -0.12, radius_km: 5 }],
+    ['an impossible longitude', { latitude: 51.5, longitude: 360, radius_km: 5 }],
+    ['a zero radius', { latitude: 51.5, longitude: -0.12, radius_km: 0 }],
+    ['a radius far bigger than a real area watch', { latitude: 51.5, longitude: -0.12, radius_km: 500 }],
+  ])('catches an area watch with %s', (_label, { latitude, longitude, radius_km }) => {
+    const user = makeUser('a@test.com');
+    db.prepare('INSERT INTO area_watches (user_id, latitude, longitude, radius_km) VALUES (?, ?, ?, ?)')
+      .run(user, latitude, longitude, radius_km);
+    expect(violationNames()).toEqual(['area_watches.coordinates_and_radius']);
+  });
+
+  test.each([
+    ['courts', () => makeCourt({}), 'courts.postcode'],
+    ['clubs', () => db.prepare("INSERT INTO clubs (name, latitude, longitude) VALUES ('C', 51.5, -0.12)").run().lastInsertRowid, 'clubs.postcode'],
+    ['area_watches', () => {
+      const user = makeUser('a@test.com');
+      return db.prepare('INSERT INTO area_watches (user_id, latitude, longitude, radius_km) VALUES (?, ?, ?, ?)')
+        .run(user, 51.5, -0.12, 5).lastInsertRowid;
+    }, 'area_watches.postcode'],
+  ])('catches a garbage postcode on %s', (table, makeRow, checkName) => {
+    const id = makeRow();
+    db.prepare(`UPDATE ${table} SET postcode = ? WHERE id = ?`).run('NOT A REAL POSTCODE', id);
+    expect(violationNames()).toEqual([checkName]);
+  });
+
+  test('accepts a real UK postcode shape (with or without the space)', () => {
+    const id1 = makeCourt({});
+    db.prepare('UPDATE courts SET postcode = ? WHERE id = ?').run('SW1A 1AA', id1);
+    expect(violationNames()).toEqual([]);
+    db.prepare('UPDATE courts SET postcode = ? WHERE id = ?').run('SW1A1AA', id1);
+    expect(violationNames()).toEqual([]);
+  });
+
+  test('catches name_verified set without any range check on a raw integer', () => {
+    const clubId = db.prepare("INSERT INTO clubs (name, latitude, longitude) VALUES ('C', 51.5, -0.12)").run().lastInsertRowid;
+    db.prepare('UPDATE clubs SET name_verified = 2 WHERE id = ?').run(clubId);
+    expect(violationNames()).toEqual(['clubs.name_verified']);
+  });
+
+  test('catches a club marked name_verified with no submitter', () => {
+    const clubId = db.prepare("INSERT INTO clubs (name, latitude, longitude) VALUES ('C', 51.5, -0.12)").run().lastInsertRowid;
+    db.prepare('UPDATE clubs SET name_verified = 1 WHERE id = ?').run(clubId);
+    expect(violationNames()).toEqual(['clubs.name_verification_consistency']);
+  });
+
   // A handful of vocabularies already have a schema-level CHECK constraint,
   // so a bad value can't be written at all -- not even with foreign keys off,
   // since PRAGMA foreign_keys has no effect on CHECK. The checker still covers
@@ -213,6 +259,7 @@ describe('value-domain violations', () => {
     ['drill_items.kind', "INSERT INTO drill_items (kind, shot_type, title, explanation) VALUES ('routine', 'forehand', 'T', 'E')"],
     ['celebrity_scores.shot_type', "INSERT INTO celebrity_scores (name, shot_type, score, added_by) VALUES ('X', 'volley', 50, 1)"],
     ['availability_posts.status', "INSERT INTO availability_posts (user_id, court_id, start_time, status) VALUES (1, 1, '2026-08-22', 'maybe')"],
+    ['clubs.name_source', "INSERT INTO clubs (name, latitude, longitude, name_source) VALUES ('C', 51.5, -0.12, 'guessed')"],
   ])('%s is refused by a schema CHECK constraint, not just by the checker', (_name, sql) => {
     expect(() => withoutConstraints(() => db.prepare(sql).run())).toThrow(/CHECK constraint failed/i);
   });
@@ -409,6 +456,43 @@ describe('orphan canaries', () => {
 
     withoutConstraints(() => db.prepare('DELETE FROM highlight_jobs WHERE id = ?').run(job));
     expect(violationNames()).toEqual(['rally_clips.job_id']);
+  });
+
+  test('catches an area watch whose user is gone', () => {
+    const user = makeUser('a@test.com');
+    db.prepare('INSERT INTO area_watches (user_id, latitude, longitude, radius_km) VALUES (?, ?, ?, ?)')
+      .run(user, 51.5, -0.12, 5);
+
+    withoutConstraints(() => db.prepare('DELETE FROM users WHERE id = ?').run(user));
+    expect(violationNames()).toEqual(['area_watches.user_id']);
+  });
+
+  test('catches a club whose name submitter is gone', () => {
+    const user = makeUser('a@test.com');
+    const clubId = db.prepare("INSERT INTO clubs (name, latitude, longitude, name_source, name_submitted_by) VALUES ('C', 51.5, -0.12, 'user', ?)")
+      .run(user).lastInsertRowid;
+
+    withoutConstraints(() => db.prepare('DELETE FROM users WHERE id = ?').run(user));
+    expect(violationNames()).toEqual(['clubs.name_submitted_by']);
+    expect(clubId).toBeTruthy(); // sanity: the club row itself is untouched
+  });
+
+  test('catches a club name confirmation whose club is gone', () => {
+    const user = makeUser('a@test.com');
+    const clubId = db.prepare("INSERT INTO clubs (name, latitude, longitude) VALUES ('C', 51.5, -0.12)").run().lastInsertRowid;
+    db.prepare('INSERT INTO club_name_confirmations (club_id, user_id) VALUES (?, ?)').run(clubId, user);
+
+    withoutConstraints(() => db.prepare('DELETE FROM clubs WHERE id = ?').run(clubId));
+    expect(violationNames()).toEqual(['club_name_confirmations.club_id']);
+  });
+
+  test('catches a club name confirmation whose user is gone', () => {
+    const user = makeUser('a@test.com');
+    const clubId = db.prepare("INSERT INTO clubs (name, latitude, longitude) VALUES ('C', 51.5, -0.12)").run().lastInsertRowid;
+    db.prepare('INSERT INTO club_name_confirmations (club_id, user_id) VALUES (?, ?)').run(clubId, user);
+
+    withoutConstraints(() => db.prepare('DELETE FROM users WHERE id = ?').run(user));
+    expect(violationNames()).toEqual(['club_name_confirmations.user_id']);
   });
 });
 
