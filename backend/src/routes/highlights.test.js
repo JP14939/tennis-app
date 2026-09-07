@@ -141,4 +141,34 @@ describe('PATCH /highlights/rallies/:id field validation', () => {
     expect(untouched.status).toBe(200);
     expect(untouched.body.boundary_note).toBeFalsy();
   });
+
+  // Regression test: outcome_tag sat right next to boundary_note in this
+  // same handler and is nullable the same way (null = "back to pending
+  // review"), but had the un-fixed `?? clip.outcome_tag` pattern -- an
+  // explicit null silently no-op'd instead of clearing the tag. Also
+  // confirms an omitted key still leaves an existing tag untouched.
+  test('an explicit null outcome_tag clears a previously-set tag', async () => {
+    const { id: userId, token } = makeUser('rally_cleartag@test.com', 'free');
+    const jobId = db.prepare(`INSERT INTO highlight_jobs (user_id, video_path, status) VALUES (?, 'x', 'done')`)
+      .run(userId).lastInsertRowid;
+    const clipId = db.prepare(`
+      INSERT INTO rally_clips (job_id, user_id, clip_path, start_sec, end_sec, duration_sec, swing_count, outcome_tag)
+      VALUES (?, ?, 'clip.mp4', 0, 1, 1, 1, 'winner_this_side')
+    `).run(jobId, userId).lastInsertRowid;
+
+    const cleared = await request(app)
+      .patch(`/api/highlights/rallies/${clipId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ outcome_tag: null });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.outcome_tag).toBeFalsy();
+
+    db.prepare(`UPDATE rally_clips SET outcome_tag = 'ace' WHERE id = ?`).run(clipId);
+    const untouched = await request(app)
+      .patch(`/api/highlights/rallies/${clipId}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ archived: true });
+    expect(untouched.status).toBe(200);
+    expect(untouched.body.outcome_tag).toBe('ace');
+  });
 });

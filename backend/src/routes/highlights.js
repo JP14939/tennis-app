@@ -377,11 +377,16 @@ router.patch('/highlights/rallies/:id', requireAuth, (req, res) => {
   // (JSON.stringify drops undefined-valued keys), and the stale note
   // silently kept poisoning tune_rally_gap.py's training data. Distinguish
   // "key present" (even if null/'', a real clear request) from "key absent"
-  // (no change intended) instead.
+  // (no change intended) instead. outcome_tag is nullable the same way (a
+  // null resets a rally back to "pending review", which GET
+  // /highlights/jobs's pending_review count depends on) but had the same
+  // un-fixed `?? clip.outcome_tag` pattern, silently no-oping an explicit
+  // `{"outcome_tag": null}` clear request.
+  const clearsOutcomeTag = Object.prototype.hasOwnProperty.call(req.body || {}, 'outcome_tag');
   const clearsBoundaryNote = Object.prototype.hasOwnProperty.call(req.body || {}, 'boundary_note');
 
   db.prepare(`UPDATE rally_clips SET outcome_tag = ?, archived = ?, boundary_note = ? WHERE id = ?`).run(
-    outcome_tag ?? clip.outcome_tag,
+    clearsOutcomeTag ? (outcome_tag ?? null) : clip.outcome_tag,
     archived !== undefined ? (archived ? 1 : 0) : clip.archived,
     clearsBoundaryNote ? (boundary_note ?? null) : clip.boundary_note,
     clip.id
