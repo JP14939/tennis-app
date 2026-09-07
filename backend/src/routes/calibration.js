@@ -17,6 +17,17 @@ const router = express.Router();
 // account can trigger it. Keyed by user id.
 const checkSetupLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 30, keyPrefix: 'check-setup', keyGenerator: (req) => req.user?.id ?? req.ip });
 
+// check-setup-live hits the same reasoning but a different resource: it
+// proxies to the single persistent calibration_server.py process (a ~300MB
+// model held in memory, see server.js) rather than spawning a fresh Python
+// process, but that process is shared across every user on this single-box
+// deploy, so unlimited requests here can still starve everyone else's live
+// feedback loop. The frontend's own polling cadence
+// (LiveCalibrationCamera.js's LIVE_CHECK_INTERVAL_MS) is one request every
+// 1.5s (~40/min) per active session -- this caps well above that for normal
+// use while still bounding a runaway or malicious client.
+const checkSetupLiveLimiter = rateLimit({ windowMs: 60 * 1000, max: 90, keyPrefix: 'check-setup-live', keyGenerator: (req) => req.user?.id ?? req.ip });
+
 const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads');
 const CHECKER = path.join(SCRIPTS_DIR, '00_utils', 'check_camera_setup.py');
 const CHECK_TIMEOUT_MS = 30 * 1000; // just angle inference on a few sampled frames, should be fast
@@ -78,7 +89,7 @@ router.post('/check-setup', requireAuth, checkSetupLimiter, upload.single('video
 // fresh. Non-fatal by design: the frontend treats a failure here as "no live
 // feedback this cycle", not an error state, so this route degrades to a
 // plain error response rather than anything more elaborate.
-router.post('/check-setup-live', requireAuth, uploadSnapshot.single('snapshot'), async (req, res) => {
+router.post('/check-setup-live', requireAuth, checkSetupLiveLimiter, uploadSnapshot.single('snapshot'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No snapshot uploaded (expected field "snapshot")' });
   }

@@ -7,8 +7,16 @@ const {
 } = require('../domain/invariants');
 const { validate, optional, oneOfMessage } = require('../validation/validateBody');
 const { safeJsonParse } = require('../utils/safeJsonParse');
+const { rateLimit } = require('../middleware/rateLimit');
 
 const router = express.Router();
+
+// Same brute-force reasoning as friends.js's linkLimiter (see its comment) --
+// POST /coach/link redeems a code through the exact same redeemInviteCode()
+// lookup, against coach_invite_codes instead of friend_codes, and had no cap
+// at all before this. Same keyGenerator shape as the other authenticated
+// limiters (user id with an IP fallback).
+const linkLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, keyPrefix: 'coach-link', keyGenerator: (req) => req.user?.id ?? req.ip });
 
 function isLinked(coachId, studentId) {
   return !!db.prepare('SELECT 1 FROM coach_links WHERE coach_id = ? AND student_id = ?').get(coachId, studentId);
@@ -28,7 +36,7 @@ router.post('/coach/invite-code', requireAuth, (req, res) => {
   res.status(201).json({ code });
 });
 
-router.post('/coach/link', requireAuth, (req, res) => {
+router.post('/coach/link', requireAuth, linkLimiter, (req, res) => {
   const { code } = req.body || {};
   if (!code) {
     return res.status(400).json({ error: 'code is required' });

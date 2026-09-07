@@ -11,6 +11,219 @@ scope or timing before starting.
 
 ---
 
+### 2026-09-07
+
+Context for this pass: the weekly scheduled "Future-ideas brainstorm"
+routine. Read `CLAUDE.md`, all of `HANDOVER.md` (through item #44, the
+DTW-calibration/z-depth/rotation-wraparound writeups, and all seven PR
+round-up sections through 2026-09-04), `STATUS.md`, `TODO_MANUAL.md` in
+full, and all six prior dated sections below (2026-08-23 through
+2026-09-01). Confirmed directly against the current tree on `master`
+(`dd9cda4`, PRs #28-30 already merged) rather than assuming: `Z_WEIGHT` is
+still pinned at `0.0` in `trajectory_compare.py` with a detailed
+do-not-re-enable-without-re-measuring comment, `_frame_dist()` still
+weighs every landmark equally regardless of MediaPipe's own per-landmark
+`visibility` score, `backend/package.json`/`frontend/package.json` have no
+error-tracking or analytics dependency of any kind (grepped for
+Sentry/Bugsnag/Datadog/Amplitude/Mixpanel/Segment/PostHog — zero hits),
+and uploaded/analysed video lives only as flat files under
+`backend/data/runtime/user_clips/` on the single Hetzner box (`S3_BUCKET`
+is still an unconfigured `.env` placeholder, never wired to any code
+path). Deliberately does not re-propose anything already sitting in the
+six prior sections' own lists or "already tried and declined" call-outs —
+`Z_WEIGHT` re-enablement, the direct-regression racket-keypoint model,
+freeform Claude ball-bbox labeling, coaching-tip-verifier training on
+synthetic pro-vs-pro data, `verify_shot_contact.py`'s removed
+`static_hold` speed-based rejection rule, and the friends system's
+deliberate single-sided/no-dedup match logging — nor items already open
+and tracked elsewhere as the actual next thing to do (the
+`detect_rallies.py` serve-gate bug, the shot-classifier retrain, the
+three backend-architecture calls, off-box DB backups, the Resend sender
+domain). Instead this pass specifically went looking for ground none of
+the prior six passes had touched at all — observability, product
+analytics, data portability, accessibility, and per-landmark confidence
+in the DTW distance itself — rather than re-slicing the drills/ball-speed/
+test-coverage/CI-gate/FK-enforcement/expo-av territory those passes
+already cover well.
+
+#### Product features (building on the DTW pro-comparison core loop)
+
+- **Self-service "download my data" export.** `DELETE /auth/me` (item #33)
+  already does real, verified right-to-erasure work, but there is no
+  matching right-to-*access* — `LEGAL_REVIEW_PREP.md`/
+  `PRIVACY_POLICY_DRAFT.md` describe what's collected but nothing lets a
+  user actually get a copy of it. A `GET /api/auth/export` returning the
+  requesting user's own rows (analyses, history, drill attempts, messages
+  they sent, court submissions) as a downloadable JSON — reusing the same
+  per-table audit `DELETE /auth/me` already did to find every
+  `users(id)`-referencing table — closes a real gap before a real beta
+  brings in users who aren't Jack. **S–M**. Unblocks: a materially more
+  complete privacy story ahead of the lawyer's next pass.
+- **Minimal funnel instrumentation before the first real beta cohort.**
+  STATUS.md's own top strategic open item is "a real beta launch hasn't
+  happened" — but right now there is no way to see *why* a beta user
+  bounced (picked a video but never confirmed the contact frame, marked
+  contact but the analysis failed, got a result but never opened
+  Tips/Compare/Share) beyond asking them directly. A handful of named
+  milestone events, logged server-side in the same append-only-log shape
+  already proven for the four teacher-student training logs (no new
+  infra, no third-party SDK required to start), would turn the first real
+  cohort into real signal instead of anecdote from day one. **S–M**.
+  Unblocks: making the beta actually diagnostic rather than just "did
+  people complain."
+- **An accessibility pass before App Store submission.** Never audited
+  anywhere in this doc or `HANDOVER.md` — no screen-reader labels
+  (`accessibilityLabel`/`accessibilityRole`) confirmed on the primary CTA
+  flow, no check of `PressableScale`/custom sliders (contact-frame scrub,
+  zoom slider, annotation canvas) against VoiceOver/TalkBack, no dynamic
+  type / minimum contrast pass against the Pine & Lime theme tokens. Apple
+  review has been known to bounce apps on obvious accessibility gaps, and
+  this app leans heavily on custom `PanResponder` gesture controls that
+  are exactly the kind of thing screen readers silently can't reach.
+  **M** — an audit first (which controls are actually unreachable),
+  fixes phased from there.
+- **Client-side video compression before upload.** `analyse.js` accepts
+  up to 200MB via `multer`, and nothing between picking a video and
+  `fetch`-ing it compresses or transcodes on-device — a real phone
+  recording (this project's own `IMG_5755.MOV`/`IMG_5756.MOV` test
+  footage) uploads at full device resolution/bitrate over whatever
+  network the user has. `expo-video`/`expo-av` and the wider Expo
+  ecosystem have on-device compression options; even a conservative
+  resolution/bitrate cap before the multipart upload starts would cut
+  real-world upload time and failure rate on cellular ahead of a beta
+  where Jack won't be there to explain "just wait, it's uploading."
+  **S–M**, pairs naturally with the `expo-av`→`expo-video` migration
+  already on the books.
+
+#### ML pipeline improvements (numbered `scripts/` stages)
+
+- **Weight `_frame_dist()`'s per-landmark distance by MediaPipe's own
+  `visibility` score instead of treating every present landmark as
+  equally trustworthy.** Confirmed directly in
+  `trajectory_compare.py`/`build_pro_database.py`: `visibility` is
+  already used as a hard pass/fail gate at extraction time
+  (`MIN_LANDMARK_VISIBILITY`) but once a landmark clears that bar, DTW's
+  `_frame_dist()` treats a barely-passing, motion-blurred wrist the same
+  as a cleanly-tracked shoulder. A confidence-weighted average (multiply
+  each landmark's distance contribution by `min(visibility_a,
+  visibility_b)` before averaging, instead of a flat `1/n`) is a much
+  smaller, safer change than the z-depth attempts — same landmarks, same
+  units, no new signal, no rescaling problem — and directly targets the
+  same "extremity landmarks are noisier near contact" issue item #32's
+  z-depth work ran into, from the 2D side instead. **M**, needs the same
+  before/after validation discipline (self-match test, cross-swing
+  discrimination check, real saved swings) every prior DTW change here
+  has used, but the risk profile is lower than z ever was.
+- **A standing, versioned regression fixture instead of "run 3-4 real
+  swings by hand" every time.** Every past change to the comparison
+  engine (the DTW calibration fix, both z-depth attempts, the
+  `sample_every` mismatch just fixed in PR #28, the rotation-wraparound
+  fix) was validated by manually picking a handful of real saved swings
+  and eyeballing before/after scores — real rigor, but ad hoc and
+  unrepeated automatically. A small fixed set of N real (video, contact
+  time, shot type) inputs with recorded baseline scores/top-matches,
+  checked into the repo (or `data/runtime/`) and re-run as part of the
+  Python test suite whenever `compare_swing.py`/`trajectory_compare.py`
+  changes, would catch a silent regression the next PR touching this path
+  introduces instead of relying on whoever's reviewing to remember to
+  hand-verify. **M**. Unblocks: safer iteration on both ideas above and
+  any future DTW/weighting experiment.
+- **Measure how often the live angle-window fallback actually fires in
+  production, not just in the abstract.** `compare_swing.py`'s
+  angle-filter falls back to the unfiltered candidate set whenever fewer
+  than 5 pro-database entries survive `abs(pro_angle - user_angle) <=
+  angle_window` — a real, shipped safety net, but there's no visibility
+  into how often real requests actually hit it. Hundreds of real
+  analyses now exist; a one-off script reading `data/runtime/
+  last_comparison.json`-shaped saved results (or re-deriving from stored
+  `angle_label` + `pro_id` pairs in `analyses`) could report the
+  fallback-trigger rate and which angle buckets trigger it most — turning
+  "the pro database's angle coverage might be thin somewhere" from a
+  guess into a measured, prioritizable gap. **S**.
+
+#### Data quality opportunities
+
+- **Audit which of the 216 coaching tips are actually ever selected in
+  production.** `tip_selector.py`'s `select_top_tips()` has been live and
+  scoring every real analysis for a while now, but nothing has checked
+  the *distribution* of which `issue_id`/severity-band combinations
+  actually get surfaced to real users vs. sitting unused. Hundreds of
+  real analyses is enough sample to answer this cheaply from
+  `analyses.result_json` (or the tip-training-log shape already used
+  elsewhere): a handful of issue types dominating (or one shot type's
+  tips never firing at all) would be a concrete, fixable
+  content/threshold problem instead of an assumption that all 216
+  phrasings are pulling their weight. **S**. Unblocks: knowing whether the
+  "expand the tips database" content item already on the books (2026-08-23
+  section) should target genuinely missing coverage or just polish tips
+  that rarely get seen anyway.
+- **Sweep for pre-fix orphaned upload directories left on the hosted
+  disk.** `bug-sweep/2026-09-04` (PR #29) fixed `analyse.js` leaking a
+  partially-written `USER_CLIPS_DIR/<uploadId>/` directory on a failed
+  `persistAndCrop()` — correct, but only for failures *after* that fix
+  landed. Every failed/timed-out analysis on the hosted server before
+  today has potentially left an orphaned directory behind with nothing
+  ever cleaning it up (no reaper job exists for this path at all, fixed
+  or not). A one-off script cross-referencing `USER_CLIPS_DIR`'s
+  subdirectories against `analyses.user_clip_url`/known-good upload ids,
+  removing anything with no matching row, would recover real disk space
+  on a box that's already carrying 151MB+ of ball-label data and a
+  growing video corpus. **S**.
+
+#### Technical debt worth paying down
+
+- **No error tracking or structured logging anywhere in production.**
+  Confirmed: neither `package.json` has any observability dependency, and
+  the backend's own error paths (`console.error`, 14 call sites) only
+  reach whoever happens to be watching the container's stdout at the
+  moment something breaks. For an app about to take on real beta users
+  outside Jack, this means a spike in failed `/api/analyse` calls, a
+  crashing subprocess, or a webhook silently failing would have no signal
+  beyond a user complaining (if they even bother). A minimal setup (a
+  free-tier Sentry project, or even a structured-JSON-log-plus-simple-
+  alert stopgap) scoped first to the routes that already matter most per
+  this doc's own repeated framing — `analyse.js`, `compareVideos.js`,
+  `billing.js`, `webhooks.js` — would be the single highest-leverage
+  pre-beta tech-debt item that isn't already on `TODO_MANUAL.md`'s list.
+  **S–M** for a minimal setup; **M** to wire it across every route that
+  matters.
+- **No concurrency control on the Python subprocess spawns, and no reuse
+  of a warm interpreter/loaded database between requests.** Every
+  `/api/analyse`/`/api/compare-videos` call spawns a brand-new Python
+  process that re-imports MediaPipe and re-reads/re-parses the full
+  631-entry `pro_database.json` from disk from scratch — by design, per
+  `CLAUDE.md`'s "never runs ML code in-process" rule, but that rule says
+  nothing about *how many* of these can run at once. The Hetzner box is
+  4 vCPU/8GB; nothing in `analyse.js` currently caps in-flight spawns, so
+  a handful of concurrent real beta users uploading at the same time
+  could contend for the same cores and start blowing the existing
+  2-minute timeout — a failure mode nobody has load-tested for, because
+  nobody has had concurrent real users yet. A basic in-process queue/
+  concurrency cap (Node has no dependency needed for a simple counting
+  semaphore) is the safe first step; a longer-lived worker process that
+  keeps the pro database loaded in memory between requests (instead of
+  re-reading it every time) is the real fix but a bigger architectural
+  change to the "always shells out" rule. **S** for the concurrency cap;
+  **L** for a persistent-worker redesign. Unblocks: the real beta launch
+  actually holding up under more than one user at a time.
+- **User-uploaded and pro-database video is served straight off the
+  single hosted VPS's local disk, with no CDN and no off-box copy.**
+  `backend/data/runtime/user_clips/` and the pro clip library both live
+  only on the Hetzner box; `AWS_REGION`/`S3_BUCKET` are still unconfigured
+  `.env` placeholders (confirmed, never `require()`'d by any route). This
+  is a different problem from the already-open off-box *database* backup
+  item in `TODO_MANUAL.md` — it's the user-facing video assets
+  themselves, which are what `SyncCompareScreen`/History playback/sharing
+  all directly depend on serving, growing unbounded with every real
+  upload and with no redundancy if that one disk has a problem. Doesn't
+  need to be solved with S3 specifically, but deserves the same explicit
+  "decide the timeline, on purpose" treatment the 2026-08-23 section
+  already gave the SQLite-vs-Postgres question, before it becomes a
+  bigger migration once there's real user video on there. **S** to
+  decide/scope; **L** if a CDN/object-storage migration is chosen.
+
+---
+
 ### 2026-09-01
 
 Context for this pass: a competitor-analysis pass, not a routine brainstorm —

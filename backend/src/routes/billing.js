@@ -92,7 +92,17 @@ router.post('/billing/sync', requireAuth, async (req, res) => {
     // to premium the instant RevenueCat confirms it, but a downgrade is only
     // ever the webhook's call.
     if (isPremium) {
-      db.prepare('UPDATE users SET tier = ? WHERE id = ?').run('premium', req.user.id);
+      // Gate on token_version so this can't resurrect tier='premium' on an
+      // account that DELETE /auth/me (or a password reset) has already
+      // touched since this token was issued -- account deletion explicitly
+      // resets tier='free' as part of anonymizing the row, and it bumps
+      // token_version at the same time specifically to invalidate
+      // in-flight requests like this one. Without this check, a billing
+      // sync whose RevenueCat fetch resolves after a concurrent account
+      // deletion commits would silently overwrite the anonymized row back
+      // to 'premium' forever, with no code path ever touching it again.
+      db.prepare('UPDATE users SET tier = ? WHERE id = ? AND token_version = ?')
+        .run('premium', req.user.id, req.user.tv ?? 0);
     }
     const { tier } = db.prepare('SELECT tier FROM users WHERE id = ?').get(req.user.id);
     res.json({ tier });

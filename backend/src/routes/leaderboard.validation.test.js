@@ -92,6 +92,34 @@ describe('POST /leaderboard/celebrities', () => {
   });
 });
 
+// Regression test for a bug found in the 2026-09-07 sweep: the route never
+// validated :id or checked whether a row actually existed, so it returned
+// 204 "success" for a nonexistent/malformed id the same as a real deletion
+// -- an admin typo in the id silently no-op'd instead of surfacing.
+describe('DELETE /leaderboard/celebrities/:id', () => {
+  test('deletes an existing entry', async () => {
+    const admin = makeAdmin();
+    const created = await addCelebrity(admin.token, validCelebrity);
+    const res = await request(app).delete(`/api/leaderboard/celebrities/${created.body.celebrity.id}`)
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(res.status).toBe(204);
+  });
+
+  test('404s on a nonexistent id instead of reporting success', async () => {
+    const admin = makeAdmin();
+    const res = await request(app).delete('/api/leaderboard/celebrities/999999')
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(res.status).toBe(404);
+  });
+
+  test.each(['abc', '1.5', '-1'])('rejects a malformed id %p with a 400, not a silent 204', async (id) => {
+    const admin = makeAdmin();
+    const res = await request(app).delete(`/api/leaderboard/celebrities/${id}`)
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(res.status).toBe(400);
+  });
+});
+
 describe('leaderboard queries', () => {
   test.each(['volley', 'Forehand', '', undefined])('reject the shot type %p', async (shotType) => {
     const { token } = makeUser();
