@@ -19,9 +19,10 @@ const router = express.Router();
 // impractical even unthrottled, but "impractical" isn't "impossible", and
 // every other guess-a-secret endpoint in this app (auth.js's login/
 // forgot-password limiters) already gets one for exactly this reason. Keyed
-// by user id, same as analyse.js's analyseLimiter -- this is an authenticated
-// route, so there's always a req.user.id to key on.
-const linkLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, keyPrefix: 'friends-link', keyGenerator: (req) => req.user.id });
+// by user id with an IP fallback, matching analyse.js/compareVideos.js/
+// calibration.js's limiters -- this route is authenticated so req.user.id is
+// always set, but keeping the same keyGenerator shape as the rest avoids drift.
+const linkLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, keyPrefix: 'friends-link', keyGenerator: (req) => req.user?.id ?? req.ip });
 
 // Friendship is symmetric -- always store/query the pair sorted ascending
 // so there's exactly one row per pair regardless of who initiated it.
