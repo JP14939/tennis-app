@@ -21,6 +21,14 @@ const express = require('express');
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
 const db = require('../db');
+
+// Mocked for the area-watch notification fan-out tests below (real delivery
+// needs a push_tokens row + a live fetch to Expo, neither relevant to
+// proving WHICH user ids get notified) -- doesn't affect any other test in
+// this file, none of which post availability or assert on notifications.
+jest.mock('../utils/pushNotifications');
+const { sendPushNotification } = require('../utils/pushNotifications');
+
 const courtsRouter = require('./courts');
 
 const app = express();
@@ -185,5 +193,86 @@ describe('GET /courts', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.courts.some((c) => c.name === 'Far Away Court')).toBe(false);
+  });
+
+  // Regression test: queryNearbyCourts previously never told the caller
+  // which courts they already watch -- FindGamesScreen.native.js's watched
+  // Set always started empty on load regardless of real state.
+  test('flags a court the user already watches, and leaves others unwatched', async () => {
+    const { token, id: userId } = makeUser('courts6@test.com');
+    const watchedId = db.prepare(`INSERT INTO courts (name, latitude, longitude, source) VALUES (?, ?, ?, 'osm')`)
+      .run('Watched Court', 40.71, -74.0).lastInsertRowid;
+    db.prepare(`INSERT INTO courts (name, latitude, longitude, source) VALUES (?, ?, ?, 'osm')`)
+      .run('Unwatched Court', 40.711, -74.001);
+    db.prepare('INSERT INTO court_watches (user_id, court_id) VALUES (?, ?)').run(userId, watchedId);
+
+    const res = await request(app)
+      .get('/api/courts')
+      .query({ lat: 40.7, lng: -74.0, radiusKm: 20 })
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    const byName = Object.fromEntries(res.body.courts.map((c) => [c.name, c.watched]));
+    expect(byName['Watched Court']).toBe(true);
+    expect(byName['Unwatched Court']).toBe(false);
+  });
+});
+
+describe('POST /courts/:id/availability — area-watch notification fan-out', () => {
+  beforeEach(() => sendPushNotification.mockClear());
+
+  test('notifies a user whose watched area reaches the posting court', async () => {
+    const poster = makeUser('poster@test.com');
+    const watcher = makeUser('area-watcher@test.com');
+    const courtId = db.prepare(`INSERT INTO courts (name, latitude, longitude, source) VALUES (?, ?, ?, 'osm')`)
+      .run('Riverside Court', 51.5, -0.12).lastInsertRowid;
+    // Court is ~1.1km from the area's center -- within its 5km radius.
+    db.prepare('INSERT INTO area_watches (user_id, latitude, longitude, radius_km) VALUES (?, ?, ?, ?)')
+      .run(watcher.id, 51.51, -0.12, 5);
+
+    const res = await request(app)
+      .post(`/api/courts/${courtId}/availability`)
+      .set('Authorization', `Bearer ${poster.token}`)
+      .send({ start_time: '2026-09-10T18:00:00.000Z' });
+
+    expect(res.status).toBe(201);
+    const notifiedIds = sendPushNotification.mock.calls.map((call) => call[0]);
+    expect(notifiedIds).toContain(watcher.id);
+  });
+
+  test('does not notify a user whose watched area does not reach the posting court', async () => {
+    const poster = makeUser('poster2@test.com');
+    const farWatcher = makeUser('far-area-watcher@test.com');
+    const courtId = db.prepare(`INSERT INTO courts (name, latitude, longitude, source) VALUES (?, ?, ?, 'osm')`)
+      .run('Faraway Court', 51.5, -0.12).lastInsertRowid;
+    // Court is ~150km from the area's center -- well outside its 5km radius.
+    db.prepare('INSERT INTO area_watches (user_id, latitude, longitude, radius_km) VALUES (?, ?, ?, ?)')
+      .run(farWatcher.id, 52.9, -0.12, 5);
+
+    const res = await request(app)
+      .post(`/api/courts/${courtId}/availability`)
+      .set('Authorization', `Bearer ${poster.token}`)
+      .send({ start_time: '2026-09-10T18:00:00.000Z' });
+
+    expect(res.status).toBe(201);
+    const notifiedIds = sendPushNotification.mock.calls.map((call) => call[0]);
+    expect(notifiedIds).not.toContain(farWatcher.id);
+  });
+
+  test('does not notify the poster about their own post even if their own area watch reaches it', async () => {
+    const poster = makeUser('poster3@test.com');
+    const courtId = db.prepare(`INSERT INTO courts (name, latitude, longitude, source) VALUES (?, ?, ?, 'osm')`)
+      .run('Home Court', 51.5, -0.12).lastInsertRowid;
+    db.prepare('INSERT INTO area_watches (user_id, latitude, longitude, radius_km) VALUES (?, ?, ?, ?)')
+      .run(poster.id, 51.5, -0.12, 5);
+
+    const res = await request(app)
+      .post(`/api/courts/${courtId}/availability`)
+      .set('Authorization', `Bearer ${poster.token}`)
+      .send({ start_time: '2026-09-10T18:00:00.000Z' });
+
+    expect(res.status).toBe(201);
+    const notifiedIds = sendPushNotification.mock.calls.map((call) => call[0]);
+    expect(notifiedIds).not.toContain(poster.id);
   });
 });

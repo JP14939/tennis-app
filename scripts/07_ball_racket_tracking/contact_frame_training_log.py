@@ -39,7 +39,8 @@ WITHIN_TOLERANCE_THRESHOLD = 0.90
 WINDOW = 100
 
 
-def log_example(student_frame, student_confidence, student_method, teacher_frame, fps, source, lock=None):
+def log_example(student_frame, student_confidence, student_method, teacher_frame, fps, source,
+                lock=None, student_meta=None):
     record = {
         'timestamp': time.time(),
         'student_frame': student_frame,
@@ -49,6 +50,11 @@ def log_example(student_frame, student_confidence, student_method, teacher_frame
         'fps': fps,
         'frame_error': teacher_frame - student_frame,
         'source': source,
+        # Extra geometric signals (ball/racket detection counts around the
+        # anchor, occlusion-gap length, min ball-racket distance) for
+        # train_contact_frame_model.py to learn a correction offset from --
+        # purely additive, stats()/read_log() ignore it.
+        'student_meta': student_meta or {},
     }
     os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
 
@@ -106,6 +112,6 @@ if __name__ == '__main__':
     print(f'{len(all_records)} logged examples total')
     overall = stats()
     print(f'Overall (last {WINDOW}): {json.dumps(overall)}')
-    for src in ('manual_review', 'user_submitted'):
+    for src in ('manual_review', 'user_submitted', 'pro_clip_review'):
         s = stats(source=src)
         print(f'  {src}: {json.dumps(s)}')

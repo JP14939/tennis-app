@@ -101,21 +101,25 @@ export default function DevSwingReviewScreen({ route, navigation }) {
   const next = candidates[index + 1];
   const fps = current?.fps || 30;
 
-  // Seek to just before the swing (so the windup is visible) and play,
-  // every time the current candidate changes.
+  // Play from the very start of the clip every time the current candidate
+  // changes. clip_url now points at a clip already cut down to just this
+  // one swing (with pre-roll baked in server-side via CLIP_PRE_SEC), so
+  // there's no need to seek forward from a peak-relative offset the way
+  // this used to when clip_url was the whole multi-swing rally clip.
   useEffect(() => {
-    if (!current || !videoRef.current) return;
-    const startSec = Math.max(0, current.peak_time_sec - 1.2);
-    videoRef.current.setPositionAsync(Math.round(startSec * 1000));
+    // Full-video reference entries (see list_swing_candidates.py's
+    // FULL_VIDEO_PREFIX) can be 30+ minutes -- don't blast into autoplay
+    // the instant one opens, let Jack tap to play when ready.
+    if (!current || !videoRef.current || current.is_full_video) return;
+    videoRef.current.setPositionAsync(0);
     videoRef.current.playAsync();
   }, [current]);
 
   const replay = useCallback(() => {
-    if (!current || !videoRef.current) return;
-    const startSec = Math.max(0, current.peak_time_sec - 1.2);
-    videoRef.current.setPositionAsync(Math.round(startSec * 1000));
+    if (!videoRef.current) return;
+    videoRef.current.setPositionAsync(0);
     videoRef.current.playAsync();
-  }, [current]);
+  }, []);
 
   // Fine contact-frame scrubbing: pause on the exact frame whenever
   // contactOffset changes, anchored on the user's own roughFrame pick (from
@@ -148,7 +152,13 @@ export default function DevSwingReviewScreen({ route, navigation }) {
           ...current,
           is_real_shot: isRealShot,
           shot_type: shotType ?? null,
-          contact_frame: contactFrame ?? null,
+          // contactFrame is captured from the cut sub-clip's local playback
+          // position -- add clip_start_frame back on to restore the original
+          // rally-clip frame numbering log_manual_review.py/
+          // contact_frame_training_log.py expect (the same coordinate system
+          // student_contact_frame_guess is already in). Must stay null on
+          // the "not a shot" path, not become clip_start_frame + null.
+          contact_frame: contactFrame != null ? contactFrame + (current.clip_start_frame ?? 0) : null,
         }),
       });
       if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -282,7 +292,7 @@ export default function DevSwingReviewScreen({ route, navigation }) {
           <TouchableOpacity
             activeOpacity={1}
             style={s.videoWrap}
-            onPress={step === 'contactRough' ? toggleRoughPlay : replay}
+            onPress={(step === 'contactRough' || current.is_full_video) ? toggleRoughPlay : replay}
           >
             <PlatformVideo
               ref={videoRef}
@@ -312,7 +322,15 @@ export default function DevSwingReviewScreen({ route, navigation }) {
             </View>
           )}
 
-          {step === 'outcome' && (
+          {current.is_full_video ? (
+            <View style={s.questionBlock}>
+              <Text style={s.question}>Full match video</Text>
+              <Text style={s.questionSub}>Browse for context -- no verdict needed here.</Text>
+              <TouchableOpacity style={s.answerBtn2} onPress={advance}>
+                <Text style={s.answerBtnText}>Next →</Text>
+              </TouchableOpacity>
+            </View>
+          ) : step === 'outcome' && (
             <View style={s.questionBlock}>
               <Text style={s.question}>Is this a real racket-to-ball strike?</Text>
               <Text style={s.questionSub}>Not camera fiddling, a ball bounce, tossing/catching, or just walking.</Text>

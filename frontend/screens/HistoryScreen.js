@@ -499,8 +499,8 @@ export default function HistoryScreen({ navigation, route }) {
     try {
       const data = await fetchHistory(token);
       if (!mountedRef.current) return;
-      setAnalyses(data.analyses);
-      setLimit(data.limit);
+      setAnalyses(data.analyses ?? []);
+      setLimit(data.limit ?? null);
     } catch {
       // Leave whatever was previously loaded rather than blanking the screen
       // on a transient network failure.
@@ -578,6 +578,7 @@ export default function HistoryScreen({ navigation, route }) {
         shotType: item.shot_type,
         flaggedNotShot: item.flagged_not_shot,
         confirmedRealShot: item.confirmed_real_shot,
+        matchFlagged: item.match_flagged,
       });
     } catch (err) {
       Alert.alert('Could not open analysis', err.message || 'Something went wrong');
@@ -827,6 +828,8 @@ async function navigateToWatchCompare(navigation, token, item) {
     overlayB: result.user_overlay_trajectory ?? null,
     racketPathA: top.pro_racket_overlay_trajectory ?? null,
     racketPathB: result.racket_overlay_trajectory ?? null,
+    ballPathA: top.pro_ball_overlay_trajectory ?? null,
+    ballPathB: result.ball_overlay_trajectory ?? null,
     labelA: formatProId(top.pro_id, top.player_name),
     labelB: 'You',
     analysisId: item.id,

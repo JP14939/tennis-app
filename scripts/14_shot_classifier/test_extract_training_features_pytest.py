@@ -6,7 +6,11 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from extract_training_features import extract_features, FEATURE_NAMES  # noqa: E402
+from extract_training_features import extract_features, FEATURE_NAMES, FEATURE_VERSION  # noqa: E402
+
+# _frame()'s defaults: shoulders y=0.3, hips y=0.6, both centred x=0.5 ->
+# torso length (body_scale) = 0.3. Every magnitude feature is divided by it.
+BODY_SCALE = 0.3
 
 
 def _lm(name, x, y, z=0.0, visibility=0.9):
@@ -37,12 +41,29 @@ def test_returns_every_declared_feature_name():
     assert set(features.keys()) == set(FEATURE_NAMES)
 
 
-def test_wrist_below_shoulder_gives_positive_margin_sign_matches_scorer():
-    # rs.y=0.3, rw.y=0.5 -> rs.y - rw.y = -0.2 (negative: wrist BELOW shoulder,
-    # matching score_forehand's "wrist not overhead" convention: y smaller = higher).
+def test_feature_version_is_set():
+    assert isinstance(FEATURE_VERSION, str) and FEATURE_VERSION
+
+
+def test_wrist_below_shoulder_gives_negative_margin_body_normalised():
+    # rs.y=0.3, rw.y=0.5 -> (rs.y - rw.y)/body_scale = -0.2/0.3 (negative:
+    # wrist BELOW shoulder, matching score_forehand's convention: y smaller = higher).
     peak = _frame()
     features = extract_features(peak, peak, [peak])
-    assert features['rw_y_rel_shoulder'] == -0.2
+    assert features['rw_y_rel_shoulder'] == round(-0.2 / BODY_SCALE, 4)
+
+
+def test_magnitude_features_scale_with_framing():
+    """Same pose shrunk toward frame centre (broadcast framing) -> body-
+    normalised features are ~unchanged, unlike raw image-space magnitudes."""
+    def shrink(lms, k=0.5):
+        return [{**l, 'x': 0.5 + (l['x'] - 0.5) * k, 'y': 0.4 + (l['y'] - 0.4) * k} for l in lms]
+    big = _frame()
+    small = shrink(big)
+    fb = extract_features(big, big, [big])
+    fs = extract_features(small, small, [small])
+    assert abs(fb['rw_y_rel_shoulder'] - fs['rw_y_rel_shoulder']) < 1e-6
+    assert abs(fb['wrist_separation'] - fs['wrist_separation']) < 1e-6
 
 
 def test_missing_landmark_gives_none_not_zero():
@@ -58,7 +79,7 @@ def test_wrist_velocity_from_prev_frame():
     prev = _frame(right_wrist=_lm('right_wrist', 0.40, 0.5))
     peak = _frame(right_wrist=_lm('right_wrist', 0.45, 0.5))
     features = extract_features(peak, prev, [peak])
-    assert features['rw_velocity'] == 0.05
+    assert features['rw_velocity'] == round(0.05 / BODY_SCALE, 4)
 
 
 def test_no_prev_frame_gives_none_velocity_not_a_crash():

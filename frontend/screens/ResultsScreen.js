@@ -1,24 +1,24 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet, SafeAreaView,
-  ScrollView, ActivityIndicator, Platform, Modal,
+  ScrollView, ActivityIndicator, Platform, Modal, Animated,
 } from 'react-native';
 import Alert from '../utils/alert';
 import { API_BASE } from '../config/api';
 import { SHOT_TYPES } from '../config/shotTypes';
 import { useAuth } from '../context/AuthContext';
-import { saveHistory, flagNotShot, confirmRealShot, correctShotType } from '../api/history';
+import { saveHistory, flagNotShot, confirmRealShot, correctShotType, flagMatch } from '../api/history';
 import { getNotes, addNote } from '../api/coach';
 import { colors, fonts, radius, spacing, scoreColor } from '../theme';
 import CourtBackground from '../components/CourtBackground';
 import ResultShareCard from '../components/ResultShareCard';
 import { captureAndShare } from '../utils/shareCard';
 import { playTapSound, playCompleteSound, playAchievementSound } from '../utils/sounds';
-import { BackChevronIcon, ShareIcon, CheckIcon, FlagIcon } from '../components/icons';
+import { BackChevronIcon, ShareIcon, CheckIcon, FlagIcon, ChevronDownIcon } from '../components/icons';
 import ScoreCard from '../components/ScoreCard';
-import AngleRow from '../components/AngleRow';
+import StatCard from '../components/StatCard';
 import PhaseBreakdown, { PHASE_LABELS, PHASE_ORDER, phaseColor } from '../components/PhaseBreakdown';
-import TipsSection from '../components/TipsSection';
+import TipsSection, { Collapsible, useRotate } from '../components/TipsSection';
 import FriendPickerModal from '../components/FriendPickerModal';
 import { shareSwing } from '../api/friends';
 import { logDrillPractice } from '../api/drills';
@@ -128,7 +128,7 @@ export default function ResultsScreen({ navigation, route }) {
   const {
     videoUri, shotType, contactTimeSec, viewDirectionHint,
     savedResult, analysisId: routeAnalysisId, canAddNotes,
-    flaggedNotShot = false, confirmedRealShot = false,
+    flaggedNotShot = false, confirmedRealShot = false, matchFlagged: matchFlaggedInitial = false,
     practiceStepId,
   } = route.params ?? {};
   const { token, isAuthenticated } = useAuth();
@@ -162,8 +162,15 @@ export default function ResultsScreen({ navigation, route }) {
 
   const [flagged, setFlagged] = useState(flaggedNotShot);
   const [confirmed, setConfirmed] = useState(confirmedRealShot);
+  const [matchFlagged, setMatchFlagged] = useState(matchFlaggedInitial);
   const [displayShotType, setDisplayShotType] = useState(shotType);
   const [showTypePicker, setShowTypePicker] = useState(false);
+
+  // Closed by default -- unlike TipsSection's tips (valuable, actionable),
+  // the phase breakdown is a deep-dive most users don't need on first look;
+  // the hero score is the payoff, this is opt-in detail below it.
+  const [phasesOpen, setPhasesOpen] = useState(false);
+  const phasesRotate = useRotate(phasesOpen);
 
   const [notes, setNotes] = useState([]);
   const loadNotes = () => {
@@ -205,6 +212,16 @@ export default function ResultsScreen({ navigation, route }) {
       await confirmRealShot(token, analysisId, nextConfirmed);
     } catch (err) {
       setConfirmed(!nextConfirmed); // revert on failure
+    }
+  };
+
+  const handleToggleMatchFlag = async () => {
+    const next = !matchFlagged;
+    setMatchFlagged(next);
+    try {
+      await flagMatch(token, analysisId, next);
+    } catch (err) {
+      setMatchFlagged(!next); // revert on failure
     }
   };
 
@@ -287,6 +304,12 @@ export default function ResultsScreen({ navigation, route }) {
 
   useEffect(() => {
     if (savedResult) {
+      // A savedResult with no analysisId (e.g. a shot analyzed straight out
+      // of a rally, via HighlightArchiveScreen's RallyBrowser) was never
+      // actually saved to History yet -- only opening an *already-saved*
+      // analysis (HistoryScreen, which always has an analysisId) means
+      // there's nothing left to do here.
+      if (!routeAnalysisId) saveToHistory(savedResult);
       return; // already have the full result — nothing to fetch
     }
     if (videoUri && shotType) {
@@ -388,6 +411,8 @@ export default function ResultsScreen({ navigation, route }) {
                   overlayB: result.user_overlay_trajectory ?? null,
                   racketPathA: top.pro_racket_overlay_trajectory ?? null,
                   racketPathB: result.racket_overlay_trajectory ?? null,
+                  ballPathA: top.pro_ball_overlay_trajectory ?? null,
+                  ballPathB: result.ball_overlay_trajectory ?? null,
                   labelA: formatProId(top.pro_id, top.player_name),
                   labelB: 'You',
                   analysisId,
@@ -396,6 +421,22 @@ export default function ResultsScreen({ navigation, route }) {
                 })}
               >
                 <Text style={s.compareBtnText}>Compare side-by-side →</Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Match-quality signal for the DTW comparison -- one tap, no
+                prompt. Only offered on a saved analysis (needs an id to
+                flag against). See backend history.js logMatchQualityFlag. */}
+            {analysisId && (
+              <TouchableOpacity
+                style={s.matchFlagLink}
+                onPress={handleToggleMatchFlag}
+                activeOpacity={0.7}
+              >
+                <FlagIcon size={11} color={matchFlagged ? colors.coral : colors.muted} />
+                <Text style={[s.matchFlagText, matchFlagged && s.matchFlagTextOn]}>
+                  {matchFlagged ? "Flagged — thanks, we'll review this match" : "This doesn't look like my swing"}
+                </Text>
               </TouchableOpacity>
             )}
 
@@ -495,24 +536,37 @@ export default function ResultsScreen({ navigation, route }) {
               </View>
             )}
 
-            {/* Angle info */}
-            <AngleRow
-              leftLabel="Your angle"
-              leftValue={result.angle_label ?? '—'}
-              leftSub={result.user_angle != null ? `${result.user_angle}°` : null}
-              rightLabel="Pro's angle"
-              rightValue={top.pro_angle != null ? `${top.pro_angle}°` : '—'}
-            />
+            {/* Ball speed at the net crossing -- absent (not dashed) when
+                unavailable, e.g. close-up framing or the net wasn't visible;
+                see scripts/07_ball_racket_tracking/ball_speed.py. */}
+            {result.ball_speed_kmh != null && (
+              <StatCard label="Ball speed at net" value={`${result.ball_speed_kmh} km/h`} />
+            )}
 
-            {/* Phase breakdown */}
-            <PhaseBreakdown
-              phases={phases}
-              analysisId={analysisId}
-              notes={notes}
-              canAddNotes={canAddNotes}
-              onAddNote={handleAddNote}
-              NotesBlock={NotesBlock}
-            />
+            {/* Phase breakdown -- collapsed by default, same accordion
+                primitives TipsSection already uses below */}
+            {phases && (
+              <>
+                <TouchableOpacity style={s.phaseToggle} onPress={() => setPhasesOpen((o) => !o)} activeOpacity={0.85}>
+                  <Text style={s.phaseToggleText}>See phase breakdown</Text>
+                  <Animated.View style={{ transform: [{ rotate: phasesRotate }] }}>
+                    <ChevronDownIcon size={14} color={colors.mutedDark} />
+                  </Animated.View>
+                </TouchableOpacity>
+                <Collapsible open={phasesOpen}>
+                  <View style={s.phaseReveal}>
+                    <PhaseBreakdown
+                      phases={phases}
+                      analysisId={analysisId}
+                      notes={notes}
+                      canAddNotes={canAddNotes}
+                      onAddNote={handleAddNote}
+                      NotesBlock={NotesBlock}
+                    />
+                  </View>
+                </Collapsible>
+              </>
+            )}
 
             {/* Coaching tips */}
             {top.tips?.length > 0 && <TipsSection tips={top.tips} />}
@@ -676,6 +730,12 @@ const s = StyleSheet.create({
     paddingVertical: 12, alignItems: 'center', marginBottom: 14,
   },
   sendBtnText: { color: colors.mutedDark, fontSize: 13.5, fontFamily: fonts.bold },
+  matchFlagLink: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, paddingVertical: 8, marginTop: -6, marginBottom: 14,
+  },
+  matchFlagText: { color: colors.muted, fontSize: 12, fontFamily: fonts.semibold },
+  matchFlagTextOn: { color: colors.coral },
   generalNotesWrap: { marginBottom: 26 },
 
   saveBanner: {
@@ -728,6 +788,12 @@ const s = StyleSheet.create({
   typePickerBtnTextActive: { color: colors.white },
 
   sectionTitle: { color: colors.ink, fontSize: 19, fontFamily: fonts.serif, marginBottom: 12 },
+  phaseToggle: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: colors.surface, borderRadius: radius.md, padding: 15, marginBottom: 22,
+  },
+  phaseToggleText: { color: colors.ink, fontSize: 14.5, fontFamily: fonts.bold },
+  phaseReveal: { marginTop: -12, paddingTop: 10 },
   // phaseTrack/phaseFill are still used directly by the share modal's own
   // mini breakdown replay below -- the main phase-breakdown section itself
   // now lives in components/PhaseBreakdown.js with its own copies.

@@ -24,6 +24,15 @@ import shot_classifier_ml_training_log as classifier_ml  # noqa: E402
 import shot_classifier_verifier  # noqa: E402
 import tip_training_log as tips  # noqa: E402
 import contact_frame_training_log as contact_frame  # noqa: E402
+import contact_frame_ml_training_log as contact_frame_ml  # noqa: E402
+
+# Read the model + its meta by path rather than importing
+# train_contact_frame_model (which pulls in sklearn at import) -- this
+# reporter runs behind a 30s Dev-route timeout.
+_CF_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..',
+                       'data', '07_ball_racket_tracking')
+CONTACT_FRAME_MODEL_PATH = os.path.join(_CF_DIR, 'contact_frame_model.pkl')
+CONTACT_FRAME_META_PATH = os.path.join(_CF_DIR, 'contact_frame_model_meta.json')
 
 
 def shot_contact_status():
@@ -137,7 +146,7 @@ def contact_frame_status():
     overall = contact_frame.stats()
     by_source = {
         src: contact_frame.stats(source=src)
-        for src in ('manual_review', 'user_submitted')
+        for src in ('manual_review', 'user_submitted', 'pro_clip_review')
     }
     return {
         'total_examples': len(all_records),
@@ -152,6 +161,31 @@ def contact_frame_status():
     }
 
 
+def contact_frame_ml_status():
+    """Trust status for the trained contact-frame corrector
+    (train_contact_frame_model.predict_contact_offset()) -- a SEPARATE gate
+    from contact_frame_status() above (the heuristic), so the model earns
+    trust independently. Reports CV metrics from the model's meta file so
+    the Dev screen can show whether it actually beats the heuristic."""
+    model_present = os.path.exists(CONTACT_FRAME_MODEL_PATH)
+    model_meta = None
+    if os.path.exists(CONTACT_FRAME_META_PATH):
+        with open(CONTACT_FRAME_META_PATH) as f:
+            model_meta = json.load(f)
+    return {
+        'model_present': model_present,
+        'model_meta': model_meta,
+        'trust_log': contact_frame_ml.stats(),
+        'total_examples': len(contact_frame_ml.read_log()),
+        'thresholds': {
+            'tolerance_frames': contact_frame_ml.TOLERANCE_FRAMES,
+            'min_examples_before_trust': contact_frame_ml.MIN_EXAMPLES_BEFORE_TRUST,
+            'within_tolerance_threshold': contact_frame_ml.WITHIN_TOLERANCE_THRESHOLD,
+            'window': contact_frame_ml.WINDOW,
+        },
+    }
+
+
 def main():
     print(json.dumps({
         'shot_contact': shot_contact_status(),
@@ -159,6 +193,7 @@ def main():
         'shot_classifier_ml': shot_classifier_ml_status(),
         'tip_selector': tip_selector_status(),
         'contact_frame': contact_frame_status(),
+        'contact_frame_ml': contact_frame_ml_status(),
     }))
 
 

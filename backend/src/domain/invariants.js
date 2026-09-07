@@ -59,6 +59,13 @@ const PHASE_KEYS = ['backswing', 'contact', 'follow_through', 'body_rotation'];
 const TIERS = ['free', 'premium'];
 const JOB_STATUSES = ['pending', 'processing', 'done', 'failed'];
 const COURT_SOURCES = ['osm', 'user'];
+
+// clubs.name_source: 'derived' means clusterCourts.js's own deriveName()
+// logic still owns the name and will overwrite it on every re-cluster;
+// 'user' means a crowd-submitted name reached CONFIRMATION_THRESHOLD
+// confirmations (routes/courts.js) and clusterCourts.js's reconcile() must
+// leave it alone from then on. See db.js's own comment on clubs.name_source.
+const NAME_SOURCES = ['derived', 'user'];
 const AVAILABILITY_STATUSES = ['open', 'cancelled'];
 
 // ── Length caps ─────────────────────────────────────────────────────────────
@@ -80,6 +87,8 @@ const MAX_LENGTHS = {
   pushToken: 200,
   celebrityName: 80,
   celebrityNote: 500,
+  areaWatchName: 80,
+  clubName: 120,
   drillTitle: 200,
   drillExplanation: 5000,
   drillStepLabel: 200,
@@ -120,6 +129,7 @@ const isPhaseKey = isOneOf(PHASE_KEYS);
 const isTier = isOneOf(TIERS);
 const isJobStatus = isOneOf(JOB_STATUSES);
 const isCourtSource = isOneOf(COURT_SOURCES);
+const isNameSource = isOneOf(NAME_SOURCES);
 const isAvailabilityStatus = isOneOf(AVAILABILITY_STATUSES);
 
 // A similarity/score is a PERCENTAGE -- 0 means nothing matched, 100 means a
@@ -141,6 +151,31 @@ function isLatitude(value) {
 
 function isLongitude(value) {
   return typeof value === 'number' && Number.isFinite(value) && value >= -180 && value <= 180;
+}
+
+// An area_watches radius, in km. Floored above 0 so a zero/negative radius
+// (matches nothing, or -- worse -- inverts a BETWEEN-style range check the
+// way a negative courts radiusKm once did, see routes/courts.js's own
+// comment on that bug) can't get in; capped well under a whole city so a
+// typo'd radius (e.g. meters entered where km was expected) can't turn one
+// area watch into a firehose of every availability post in the region.
+const MIN_AREA_WATCH_RADIUS_KM = 0.1;
+const MAX_AREA_WATCH_RADIUS_KM = 20;
+
+function isRadiusKm(value) {
+  return typeof value === 'number' && Number.isFinite(value)
+    && value >= MIN_AREA_WATCH_RADIUS_KM && value <= MAX_AREA_WATCH_RADIUS_KM;
+}
+
+// A real UK postcode shape (outward code + inward code, optional space --
+// postcodes.io itself always returns one WITH the space, e.g. "SW1A 1AA").
+// Only ever server-written (utils/postcodeLookup.js), never user-submitted,
+// so this exists for integrityChecks.js to prove at rest, not for
+// validateBody.js to reject a request with.
+const UK_POSTCODE_PATTERN = /^[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2}$/i;
+
+function isOptionalPostcode(value) {
+  return value === undefined || value === null || (typeof value === 'string' && UK_POSTCODE_PATTERN.test(value));
 }
 
 // Sets won or lost in one match. A tennis match is best-of-3 or best-of-5, so
@@ -240,12 +275,15 @@ module.exports = {
   TIERS,
   JOB_STATUSES,
   COURT_SOURCES,
+  NAME_SOURCES,
   AVAILABILITY_STATUSES,
   MAX_LENGTHS,
   MAX_SETS_IN_A_MATCH,
   MAX_VIDEO_SECONDS,
   MIN_PLAUSIBLE_YEAR,
   MAX_PLAUSIBLE_YEAR,
+  MIN_AREA_WATCH_RADIUS_KM,
+  MAX_AREA_WATCH_RADIUS_KM,
   isOneOf,
   isShotType,
   isDrillShotType,
@@ -255,16 +293,19 @@ module.exports = {
   isTier,
   isJobStatus,
   isCourtSource,
+  isNameSource,
   isAvailabilityStatus,
   isScore,
   isLatitude,
   isLongitude,
+  isRadiusKm,
   isSetCount,
   isTimestampSec,
   isIsoDateTime,
   isPositiveIntegerId,
   isText,
   isOptionalText,
+  isOptionalPostcode,
   isBoundedJsonArray,
   isBoundaryNote,
 };

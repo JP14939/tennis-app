@@ -5,10 +5,13 @@
 process.env.DB_PATH = ':memory:';
 process.env.JWT_SECRET = 'test-secret';
 
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
 const db = require('../db');
+const { DATA_DIR } = require('../config/paths');
 const historyRouter = require('./history');
 
 const app = express();
@@ -66,6 +69,72 @@ describe('PATCH /history/:id mutually-exclusive verdict flags', () => {
 
     const row = db.prepare('SELECT flagged_not_shot, confirmed_real_shot FROM analyses WHERE id = ?').get(id);
     expect(!!row.flagged_not_shot && !!row.confirmed_real_shot).toBe(false);
+  });
+});
+
+// Regression: logShotTypeCorrection() used to log a bare {claude_pick, ...}
+// record with no clip_path/contact_time_sec at all -- extract_training_
+// features_from_log.py's very first filter drops any row missing those, so
+// every "Wrong shot type?" correction a real user ever made was silently
+// thrown away instead of becoming training data.
+describe('PATCH /history/:id shot_type correction logs clip_path + contact_time_sec', () => {
+  const SHOT_LOG_PATH = path.join(DATA_DIR, '14_shot_classifier', 'shot_classifier_training_log.jsonl');
+  const CLIP_DIR = path.join(DATA_DIR, 'runtime', 'user_clips', 'test_flywheel_upload');
+  const CLIP_PATH = path.join(CLIP_DIR, 'clip.mp4');
+
+  beforeAll(() => {
+    fs.mkdirSync(CLIP_DIR, { recursive: true });
+    fs.writeFileSync(CLIP_PATH, 'fake clip bytes');
+  });
+  afterAll(() => {
+    fs.rmSync(CLIP_DIR, { recursive: true, force: true });
+  });
+
+  function lastLoggedRecord() {
+    const lines = fs.readFileSync(SHOT_LOG_PATH, 'utf8').trim().split('\n');
+    return JSON.parse(lines[lines.length - 1]);
+  }
+
+  test('a real correction logs a resolvable clip_path and the saved contact_time_sec', async () => {
+    const { token } = makeUser('history_flywheel1@test.com');
+    const saved = await request(app)
+      .post('/api/history')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        shotType: 'forehand',
+        matches: [{ overall_score: 80 }],
+        user_clip_url: '/user-clips/test_flywheel_upload/clip.mp4',
+        contact_time_sec: 1.234,
+      });
+    expect(saved.status).toBe(201);
+
+    const res = await request(app)
+      .patch(`/api/history/${saved.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ shot_type: 'backhand' });
+    expect(res.status).toBe(200);
+
+    const record = lastLoggedRecord();
+    expect(record.claude_pick).toBe('backhand');
+    expect(record.source).toBe('user_flag');
+    expect(record.clip_path).toBe(CLIP_PATH);
+    expect(record.contact_time_sec).toBe(1.234);
+  });
+
+  test('a correction on a row with no user_clip_url logs a null clip_path, not a crash', async () => {
+    const { token } = makeUser('history_flywheel2@test.com');
+    const saved = await saveShot(token); // saveShot's body has no user_clip_url
+    expect(saved.status).toBe(201);
+
+    const res = await request(app)
+      .patch(`/api/history/${saved.body.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ shot_type: 'backhand' });
+    expect(res.status).toBe(200);
+
+    const record = lastLoggedRecord();
+    expect(record.clip_path).toBeNull();
+    expect(record.contact_time_sec).toBeNull();
   });
 });
 

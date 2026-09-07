@@ -22,42 +22,12 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '06_database_build'))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '00_utils'))
-from build_pro_database import JOBS, KEY_LANDMARKS, PRE_SEC, POST_SEC, MIN_CONFIDENCE  # noqa: E402
+from build_pro_database import JOBS, MIN_CONFIDENCE  # noqa: E402
+from trajectory_extraction import build_pose_index, build_swing_overlay  # noqa: E402,F401
 from paths import DATA_DIR  # noqa: E402
 
 DB_PATH  = os.path.join(DATA_DIR, '06_pro_database', 'pro_database.json')
 OUT_PATH = os.path.join(DATA_DIR, '06_pro_database', 'overlay_trajectories.json')
-
-
-def build_pose_index(frames):
-    index = {}
-    for f in frames:
-        if f['landmarks']:
-            index[f['frame']] = {lm['name']: lm for lm in f['landmarks']}
-    return index
-
-
-def build_swing_overlay(pose_index, fps, peak_frame, clip_start_frame):
-    """Same PRE_SEC/POST_SEC contact window as extract_swing_trajectory(),
-    but keeps raw image-space x/y instead of normalising. 't' is seconds
-    relative to the CLIP FILE's own frame 0 (clip_start_frame), not the
-    contact frame -- the clip video that actually gets played back was cut
-    starting at clip_start_frame (detect_swings.py's PRE_SWING_SEC/
-    POST_SWING_SEC window, a *different* and wider window than PRE_SEC/
-    POST_SEC below), so this is the timestamp convention that lines up with
-    that video's own playhead position, not pro_database.json's
-    contact-relative `trajectory[].t`."""
-    lo = peak_frame - int(PRE_SEC * fps)
-    hi = peak_frame + int(POST_SEC * fps)
-    trajectory = []
-    for f in sorted(fr for fr in pose_index if lo <= fr <= hi):
-        lm_dict = pose_index[f]
-        landmarks = {}
-        for name in KEY_LANDMARKS:
-            lm = lm_dict.get(name)
-            landmarks[name] = {'x': lm['x'], 'y': lm['y']} if lm and lm.get('visibility', 0) >= 0.3 else None
-        trajectory.append({'t': round((f - clip_start_frame) / fps, 4), 'landmarks': landmarks})
-    return trajectory
 
 
 def main():

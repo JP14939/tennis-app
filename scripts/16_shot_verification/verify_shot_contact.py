@@ -25,8 +25,8 @@ sys.path.insert(0, os.path.join(SCRIPTS_DIR, '07_ball_racket_tracking'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '12_video_crop'))
 
 from racket_tracker import (  # noqa: E402
-    track_racket_and_ball, find_contact_frame, ball_departure_confirmed,
-    get_model, RACKET_CLASS, BALL_CLASS, CONF_THRESHOLD, _center,
+    track_racket_and_ball, find_contact_frame, contact_frame_meta, ball_departure_confirmed,
+    get_model, get_ball_model, detect_ball, RACKET_CLASS, BALL_CLASS, CONF_THRESHOLD, _center,
 )
 from crop_to_subject import _frame_bbox  # noqa: E402
 
@@ -72,6 +72,9 @@ def track_racket_and_ball_cropped(video_path, frames_by_idx, frame_range, model=
     *within* one frame, never across frames.
     """
     model = model or get_model()
+    ball_model = get_ball_model()
+    racket_classes = [RACKET_CLASS] if ball_model is not None else [RACKET_CLASS, BALL_CLASS]
+
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise RuntimeError(f'Cannot open video: {video_path}')
@@ -87,7 +90,7 @@ def track_racket_and_ball_cropped(video_path, frames_by_idx, frame_range, model=
         if not ret:
             break
         crop, scale, x0, y0 = _crop_and_upscale(frame, frames_by_idx.get(idx))
-        results = model.predict(crop, classes=[RACKET_CLASS, BALL_CLASS], conf=CONF_THRESHOLD, verbose=False)
+        results = model.predict(crop, classes=racket_classes, conf=CONF_THRESHOLD, verbose=False)
         racket_box = racket_conf = ball_box = ball_conf = None
         for box in results[0].boxes:
             cls = int(box.cls[0])
@@ -95,8 +98,10 @@ def track_racket_and_ball_cropped(video_path, frames_by_idx, frame_range, model=
             xyxy = box.xyxy[0].tolist()
             if cls == RACKET_CLASS and (racket_conf is None or conf > racket_conf):
                 racket_box, racket_conf = xyxy, conf
-            if cls == BALL_CLASS and (ball_conf is None or conf > ball_conf):
+            if ball_model is None and cls == BALL_CLASS and (ball_conf is None or conf > ball_conf):
                 ball_box, ball_conf = xyxy, conf
+        if ball_model is not None:
+            ball_box, ball_conf = detect_ball(crop)
         detections.append({
             'frame': idx,
             'racket_box': racket_box, 'racket_conf': racket_conf,
@@ -126,13 +131,15 @@ def track_racket_tip_and_ball_cropped(video_path, frames_by_idx, frame_range):
     left_edge/right_edge if tip wasn't predicted that frame) is where
     contact actually happens -- returned here as a zero-size point "box"
     so it plugs into find_contact_frame()/the trajectory fit unchanged.
-    Ball detection stays the plain COCO detector (no fine-tuned ball model
-    exists), on the same cropped-and-upscaled frame.
+    Ball detection uses the fine-tuned ball model (get_ball_model()) when
+    available, falling back to the plain COCO detector's ball class
+    otherwise -- same fallback pattern as track_racket_and_ball_cropped().
     """
     from track_racket_in_clip import _models, _detect_racket_keypoints
 
     racket_detector, kp_model = _models()
-    ball_model = get_model()
+    finetuned_ball_model = get_ball_model()
+    coco_ball_model = get_model() if finetuned_ball_model is None else None
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -160,12 +167,15 @@ def track_racket_tip_and_ball_cropped(video_path, frames_by_idx, frame_range):
                     racket_conf = 0.5  # model doesn't expose a per-keypoint score; fixed placeholder
                     break
 
-        ball_results = ball_model.predict(crop, classes=[BALL_CLASS], conf=CONF_THRESHOLD, verbose=False)
-        ball_box = ball_conf = None
-        for box in ball_results[0].boxes:
-            conf = float(box.conf[0])
-            if ball_conf is None or conf > ball_conf:
-                ball_box, ball_conf = box.xyxy[0].tolist(), conf
+        if finetuned_ball_model is not None:
+            ball_box, ball_conf = detect_ball(crop)
+        else:
+            ball_box = ball_conf = None
+            ball_results = coco_ball_model.predict(crop, classes=[BALL_CLASS], conf=CONF_THRESHOLD, verbose=False)
+            for box in ball_results[0].boxes:
+                conf = float(box.conf[0])
+                if ball_conf is None or conf > ball_conf:
+                    ball_box, ball_conf = box.xyxy[0].tolist(), conf
 
         detections.append({
             'frame': idx,
@@ -287,6 +297,26 @@ EXTRA_PAD_SEC = 0.5
 DEFAULT_MIN_CONFIDENCE = 0.3
 
 
+def _ml_contact_offset(method, confidence, fps, cf_meta):
+    """The trained contact-frame corrector's offset (frames to add to the
+    heuristic guess), but ONLY when it has independently earned trust
+    (contact_frame_ml_training_log). Returns None otherwise -- callers then
+    use the heuristic guess unchanged. Never raises."""
+    try:
+        import contact_frame_ml_training_log as ml_log
+        if not ml_log.should_trust_student():
+            return None
+        from train_contact_frame_model import predict_contact_offset
+        offset, available = predict_contact_offset({
+            'student_method': method, 'student_confidence': confidence,
+            'fps': fps, 'student_meta': cf_meta, 'source': 'user_submitted',
+        })
+        return offset if available else None
+    except Exception as e:
+        print(f'  [contact-frame-ml] offset skipped: {e}', file=sys.stderr)
+        return None
+
+
 def verify_swings(video_path, swings, fps, frames=None, search_window_sec=SEARCH_WINDOW_SEC,
                    use_crop=True, use_keypoints=False):
     """
@@ -320,6 +350,11 @@ def verify_swings(video_path, swings, fps, frames=None, search_window_sec=SEARCH
                 detections, _ = track_racket_and_ball(video_path, frame_range=frame_range)
             frame, conf, method = find_contact_frame(
                 detections, peak_frame, fps, search_window_sec=search_window_sec)
+            cf_meta = contact_frame_meta(detections, peak_frame, fps, search_window_sec=search_window_sec)
+            heuristic_frame = frame
+            ml_offset = _ml_contact_offset(method, conf, fps, cf_meta)
+            if ml_offset is not None:
+                frame = frame + ml_offset
             speed_at_contact = peak_speed = None
             if method in ('ball_racket_proximity',) or method.startswith('ball_occlusion_gap'):
                 # Diagnostic only -- NOT used to reject the candidate. This
@@ -351,13 +386,19 @@ def verify_swings(video_path, swings, fps, frames=None, search_window_sec=SEARCH
                     conf, method = departure_conf, 'ball_departure_confirmed'
         except Exception as e:
             frame, conf, method, speed_at_contact, peak_speed = peak_frame, 0.0, f'error: {e}', None, None
+            heuristic_frame, ml_offset = frame, None
         # find_contact_frame()'s actual guessed frame was computed above but
         # never kept on the swing dict -- only confidence/method were. Added
         # for contact_frame_training_log.py (needs the real frame number as
         # the "student" side of a frame-distance comparison), purely
         # additive so existing callers reading contact_confidence/
-        # contact_method are unaffected.
+        # contact_method are unaffected. contact_frame_guess is the value
+        # actually used downstream -- ML-corrected when the model is trusted
+        # (contact_frame_ml_training_log), otherwise identical to the
+        # heuristic guess.
         sw['contact_frame_guess'] = frame
+        sw['contact_frame_guess_heuristic'] = heuristic_frame
+        sw['contact_frame_ml_offset'] = ml_offset
         sw['contact_confidence'] = conf
         sw['contact_method'] = method
         sw['racket_speed_at_contact'] = round(speed_at_contact, 1) if speed_at_contact is not None else None

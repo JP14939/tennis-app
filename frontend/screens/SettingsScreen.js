@@ -76,6 +76,23 @@ export default function SettingsScreen({ navigation }) {
     }
   };
 
+  // ── Playing hand ──────────────────────────────────────────────────────
+  // Drives whether the backend mirrors an uploaded swing before matching it
+  // against the (all right-handed) pro database.
+  const [handed, setHanded] = useState(user?.handed === 'left' ? 'left' : 'right');
+
+  const chooseHand = async (value) => {
+    if (value === handed) return;
+    const prev = handed;
+    setHanded(value);
+    try {
+      await updateUser({ handed: value });
+    } catch (err) {
+      setHanded(prev);
+      Alert.alert('Could not update', err.message || 'Something went wrong');
+    }
+  };
+
   // ── Sound effects ──────────────────────────────────────────────────────
   // Local device preference, not synced to the backend -- unlike
   // notifications_enabled above, nothing server-side needs to know this.
@@ -191,6 +208,23 @@ export default function SettingsScreen({ navigation }) {
               trackColor={{ false: colors.border, true: colors.primary }}
               thumbColor={colors.white}
             />
+          </View>
+        </Section>
+
+        <Section title="Playing hand">
+          <Text style={s.switchSub}>Used to match your swing correctly — left-handers are compared against a mirrored version of the pros.</Text>
+          <View style={s.handRow}>
+            {['right', 'left'].map((opt) => (
+              <TouchableOpacity
+                key={opt}
+                style={[s.handPill, handed === opt && s.handPillActive]}
+                onPress={() => chooseHand(opt)}
+              >
+                <Text style={[s.handPillText, handed === opt && s.handPillTextActive]}>
+                  {opt === 'right' ? 'Right-handed' : 'Left-handed'}
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
         </Section>
 
@@ -311,6 +345,15 @@ const s = StyleSheet.create({
   switchRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   switchLabel: { color: colors.ink, fontSize: 14, fontFamily: fonts.semibold },
   switchSub: { color: colors.muted, fontSize: 11.5, marginTop: 2, fontFamily: fonts.regular },
+
+  handRow: { flexDirection: 'row', gap: 10, marginTop: 10 },
+  handPill: {
+    flex: 1, borderRadius: radius.pill, paddingVertical: 11, alignItems: 'center',
+    borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bg,
+  },
+  handPillActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  handPillText: { color: colors.ink, fontSize: 13, fontFamily: fonts.bold },
+  handPillTextActive: { color: colors.white },
 
   toggleRow: { paddingVertical: 4 },
   toggleRowText: { color: colors.primary, fontSize: 13.5, fontFamily: fonts.bold },

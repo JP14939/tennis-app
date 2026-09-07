@@ -7,7 +7,11 @@ import { useAuth } from '../context/AuthContext';
 import { API_BASE } from '../config/api';
 import { playTapSound } from '../utils/sounds';
 import { useWindowWidth } from '../utils/responsive';
+import { formatTime } from '../utils/formatTime';
 import { colors, fonts, radius, spacing } from '../theme';
+
+// How many rallies show before "See all N rallies" -- see RallyBrowser below.
+const TOP_RALLIES_COUNT = 5;
 
 // Backend's GET /highlights/archive has no LIMIT (backend/src/routes/
 // highlights.js) -- an active user's tagged-rally archive is unbounded, and
@@ -139,11 +143,204 @@ const rc = StyleSheet.create({
   videoWrap: { borderRadius: radius.sm, overflow: 'hidden', backgroundColor: '#000' },
 });
 
+// A rally's individual shots (per rally_shots -- see backend/src/db.js),
+// undifferentiated by which player hit them (near/far-court player
+// detection doesn't exist yet -- see TODO_MANUAL.md). Tapping a chip seeks
+// the rally's own clip to that shot's contact frame for a quick preview,
+// then "Analyze this shot" sends just that shot through the same
+// pro-matcher pipeline /api/analyse uses.
+function ShotChip({ shot, active, onPress }) {
+  const label = shot.shot_type.charAt(0).toUpperCase() + shot.shot_type.slice(1);
+  return (
+    <TouchableOpacity style={[rb.shotChip, active && rb.shotChipActive]} onPress={onPress} activeOpacity={0.8}>
+      <Text style={[rb.shotChipText, active && rb.shotChipTextActive]}>{label}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function RallyCard({ rally, token, navigation }) {
+  const [selectedShotIndex, setSelectedShotIndex] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const videoRef = useRef(null);
+  const windowWidth = useWindowWidth();
+  const videoWidth = Math.min(windowWidth - 48, 500);
+  const videoHeight = Math.round(videoWidth * 0.56);
+
+  const shots = rally.shots ?? [];
+  const selectedShot = shots.find((sh) => sh.shot_index === selectedShotIndex) ?? null;
+
+  const selectShot = (shot) => {
+    setSelectedShotIndex(shot.shot_index);
+    setLoaded(true); // deferred mount, same reasoning as HighlightReviewScreen's ClipRow
+  };
+
+  // Every shot in a rally shares the same underlying clip (rally.clip_url
+  // never changes), so the video only ever mounts once -- onVideoReady
+  // (below) fires exactly once too, the first time a shot is selected.
+  // Tapping a DIFFERENT shot afterward must still re-seek even though the
+  // video is already loaded and won't fire onReadyForDisplay/loadedmetadata
+  // again -- this effect covers that case; onVideoReady covers the very
+  // first selection, before the video element/ref even exists yet.
+  useEffect(() => {
+    if (loaded && selectedShot) {
+      videoRef.current?.setPositionAsync(selectedShot.contact_time_sec * 1000);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedShotIndex, loaded]);
+
+  // Fires once the video is actually ready to seek (onReadyForDisplay
+  // native-side, loadedmetadata on web) -- see PlatformVideo's onVideoSize.
+  // Needed in addition to the effect above because the ref isn't attached
+  // (and the seek would silently no-op) until the video actually mounts.
+  const onVideoReady = () => {
+    if (selectedShot) videoRef.current?.setPositionAsync(selectedShot.contact_time_sec * 1000);
+  };
+
+  const analyzeShot = async () => {
+    if (!selectedShot) return;
+    setAnalyzing(true);
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/highlights/rallies/${rally.id}/shots/${selectedShot.shot_index}/analyze`,
+        { method: 'POST', headers: { Authorization: `Bearer ${token}` } }
+      );
+      // A 2xx whose body isn't JSON means something between us and the
+      // backend answered instead (e.g. an ngrok/proxy interstitial) -- same
+      // failure mode api/history.js's handle() guards against. Without this,
+      // res.json() throwing here was still caught below, but as an opaque
+      // "Unexpected token..." message instead of an honest one.
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(res.ok ? `Unexpected non-JSON response from ${res.url}` : 'Analysis failed');
+      }
+      if (!res.ok) throw new Error(data.error || 'Analysis failed');
+      navigation.navigate('Results', { savedResult: data, shotType: selectedShot.shot_type });
+    } catch (err) {
+      Alert.alert('Could not analyze shot', err.message || 'Something went wrong');
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  return (
+    <View style={rb.rallyCard}>
+      <View style={rb.rallyMetaRow}>
+        <Text style={rb.rallyTime}>{formatTime(rally.start_sec)}</Text>
+        <Text style={rb.rallyMeta}>{rally.duration_sec.toFixed(1)}s · {rally.swing_count} swings</Text>
+      </View>
+
+      {shots.length > 0 ? (
+        <View style={rb.shotRow}>
+          {shots.map((shot) => (
+            <ShotChip
+              key={shot.shot_index}
+              shot={shot}
+              active={selectedShotIndex === shot.shot_index}
+              onPress={() => selectShot(shot)}
+            />
+          ))}
+        </View>
+      ) : (
+        <Text style={rb.noShotsText}>No individual shots detected for this rally yet.</Text>
+      )}
+
+      {selectedShot && (
+        <View style={rb.previewWrap}>
+          {loaded && (
+            <View style={rb.videoWrap}>
+              <PlatformVideo
+                ref={videoRef}
+                uri={`${API_BASE}${rally.clip_url}`}
+                width={videoWidth}
+                height={videoHeight}
+                onVideoSize={onVideoReady}
+              />
+            </View>
+          )}
+          <TouchableOpacity
+            style={[rb.analyzeBtn, analyzing && rb.analyzeBtnDisabled]}
+            onPress={() => { playTapSound(); analyzeShot(); }}
+            disabled={analyzing}
+          >
+            {analyzing
+              ? <ActivityIndicator size="small" color={colors.white} />
+              : <Text style={rb.analyzeBtnText}>Analyze this shot</Text>}
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
+}
+
+// Ranked "best rallies first" -- duration is the primary signal (same idea
+// the reel builder's default already used), swing_count as a tiebreaker so a
+// long rally that's mostly dead time doesn't outrank a shorter one with more
+// actual shots. Top 5 visible by default, "See all" reveals the rest -- a
+// plain toggle, not an animated accordion (a growing/shrinking list reads
+// differently from a details panel; see TipsSection/PhaseBreakdown for that
+// pattern instead).
+function RallyBrowser({ rallies, token, navigation }) {
+  const [expanded, setExpanded] = useState(false);
+  if (rallies.length === 0) return null;
+
+  const sorted = [...rallies].sort((a, b) => b.duration_sec - a.duration_sec || b.swing_count - a.swing_count);
+  const visible = expanded ? sorted : sorted.slice(0, TOP_RALLIES_COUNT);
+
+  return (
+    <View style={rb.wrap}>
+      <Text style={rb.sectionTitle}>Rallies</Text>
+      {visible.map((rally) => (
+        <RallyCard key={rally.id} rally={rally} token={token} navigation={navigation} />
+      ))}
+      {sorted.length > TOP_RALLIES_COUNT && (
+        <TouchableOpacity onPress={() => setExpanded((e) => !e)} style={rb.seeAllBtn}>
+          <Text style={rb.seeAllText}>
+            {expanded ? 'Show fewer' : `See all ${sorted.length} rallies`}
+          </Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
+const rb = StyleSheet.create({
+  wrap: { marginBottom: 12 },
+  sectionTitle: { color: colors.ink, fontSize: 16, fontFamily: fonts.bold, marginBottom: 10 },
+  rallyCard: {
+    backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.md, padding: 14, marginBottom: 10,
+  },
+  rallyMetaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 },
+  rallyTime: { color: colors.ink, fontSize: 14, fontFamily: fonts.bold },
+  rallyMeta: { color: colors.muted, fontSize: 12, fontFamily: fonts.regular },
+  noShotsText: { color: colors.muted, fontSize: 12, fontFamily: fonts.regular },
+  shotRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  shotChip: {
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.pill,
+    paddingHorizontal: 12, paddingVertical: 8,
+  },
+  shotChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  shotChipText: { color: colors.mutedDark, fontSize: 12, fontFamily: fonts.bold },
+  shotChipTextActive: { color: colors.white },
+  previewWrap: { marginTop: 12 },
+  videoWrap: { borderRadius: radius.sm, overflow: 'hidden', backgroundColor: '#000', marginBottom: 10 },
+  analyzeBtn: { backgroundColor: colors.primary, borderRadius: radius.sm, paddingVertical: 11, alignItems: 'center' },
+  analyzeBtnDisabled: { opacity: 0.6 },
+  analyzeBtnText: { color: colors.white, fontSize: 13, fontFamily: fonts.bold },
+  seeAllBtn: { alignItems: 'center', paddingVertical: 10 },
+  seeAllText: { color: colors.primary, fontSize: 13, fontFamily: fonts.bold },
+});
+
 export default function HighlightArchiveScreen({ navigation }) {
   const { token } = useAuth();
   const [loading, setLoading] = useState(true);
   const [clips, setClips] = useState([]);
   const [jobs, setJobs] = useState([]);
+  // jobId -> rallies[] (each carrying .shots) -- fetched per done job below,
+  // since GET /highlights/jobs (the summary list) doesn't include rallies.
+  const [rallyData, setRallyData] = useState({});
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
 
@@ -159,6 +356,18 @@ export default function HighlightArchiveScreen({ navigation }) {
       if (!mountedRef.current) return;
       setClips(archiveData.clips ?? []);
       setJobs(jobsData.jobs ?? []);
+
+      const doneJobIds = (jobsData.jobs ?? []).filter((j) => j.status === 'done').map((j) => j.id);
+      const details = await Promise.all(doneJobIds.map(async (jobId) => {
+        try {
+          const res = await fetch(`${API_BASE}/api/highlights/jobs/${jobId}`, { headers: { Authorization: `Bearer ${token}` } });
+          const data = await res.json();
+          return [jobId, res.ok ? (data.rallies ?? []) : []];
+        } catch {
+          return [jobId, []];
+        }
+      }));
+      if (mountedRef.current) setRallyData(Object.fromEntries(details));
     } catch {
       // Leave whatever was previously loaded rather than blanking the
       // screen on a transient network failure.
@@ -209,7 +418,12 @@ export default function HighlightArchiveScreen({ navigation }) {
         </TouchableOpacity>
       ))}
 
-      {doneJobs.map(job => <ReelCard key={job.id} job={job} token={token} />)}
+      {doneJobs.map(job => (
+        <View key={job.id}>
+          <ReelCard job={job} token={token} />
+          <RallyBrowser rallies={rallyData[job.id] ?? []} token={token} navigation={navigation} />
+        </View>
+      ))}
 
       {failedJobs.length > 0 && (
         <View style={s.failedBanner}>

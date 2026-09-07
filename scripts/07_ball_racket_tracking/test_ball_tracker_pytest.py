@@ -9,7 +9,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from ball_tracker import BallTracker, track_ball  # noqa: E402
+from ball_tracker import BallTracker, track_ball, track_ball_states  # noqa: E402
 
 
 def _center_fn(box, det):
@@ -52,6 +52,21 @@ def test_gap_much_longer_than_max_eventually_stops_being_bridged():
     assert 8 not in track_by_frame  # deep inside the gap, must not be fabricated
 
 
+def test_default_max_gap_bridges_four_frames_but_not_six():
+    # Default max_gap_frames is 4 -- a 4-frame occlusion at contact is still
+    # bridged; a 6-frame one is too long to keep predicting through.
+    true_path = {f: (2.0 * f, 1.0 * f) for f in range(20)}
+    four = [_det(f, c) for f, c in true_path.items() if f not in range(5, 9)]
+    six = [_det(f, c) for f, c in true_path.items() if f not in range(5, 11)]
+
+    bridged = dict(track_ball(four, 0, 19, _center_fn))
+    assert all(f in bridged for f in range(5, 9))
+
+    dropped = dict(track_ball(six, 0, 19, _center_fn))
+    assert 5 in dropped  # within the streak cap
+    assert 9 not in dropped  # past it
+
+
 def test_outlier_measurement_is_rejected_not_snapped_to():
     tracker = BallTracker(0.0, 0.0)
     # Establish a clear rightward trend so the filter has real velocity
@@ -83,6 +98,54 @@ def test_consistent_measurement_is_accepted():
 
 def test_empty_detections_returns_empty_track():
     assert track_ball([], 0, 10, _center_fn) == []
+
+
+def test_track_ball_states_reports_converging_velocity_and_covariance():
+    # Constant-velocity path (2, 1) per frame -- the filter's velocity
+    # estimate should converge on the true motion and its position
+    # covariance should shrink from the large initial uncertainty.
+    true_path = {f: (2.0 * f, 1.0 * f) for f in range(12)}
+    detections = [_det(f, c) for f, c in true_path.items()]
+
+    states = track_ball_states(detections, 0, 11, _center_fn)
+    assert [s['frame'] for s in states] == list(range(12))
+
+    last = states[-1]
+    assert abs(last['vel'][0] - 2.0) < 0.3
+    assert abs(last['vel'][1] - 1.0) < 0.3
+    # covariance trace collapses once real measurements keep arriving
+    early_trace = states[1]['cov'][0][0] + states[1]['cov'][1][1]
+    late_trace = last['cov'][0][0] + last['cov'][1][1]
+    assert late_trace < early_trace
+    assert last['accepted'] and not last['predicted']
+    assert last['mahalanobis_d2'] is not None
+
+
+def test_track_ball_states_predict_only_frames_ignores_the_measurement():
+    true_path = {f: (2.0 * f, 1.0 * f) for f in range(12)}
+    detections = [_det(f, c) for f, c in true_path.items()]
+
+    states = {s['frame']: s for s in track_ball_states(
+        detections, 0, 11, _center_fn, predict_only_frames=(6,))}
+
+    assert states[6]['measurement'] is None
+    assert states[6]['predicted'] is True
+    assert states[6]['mahalanobis_d2'] is None
+    # still close to the true position -- coasted, not snapped
+    assert abs(states[6]['pos'][0] - 12.0) < 1.5
+
+
+def test_track_ball_states_extrapolate_frames_emits_past_last_detection():
+    true_path = {f: (2.0 * f, 1.0 * f) for f in range(10)}
+    detections = [_det(f, c) for f, c in true_path.items()]
+
+    states = track_ball_states(detections, 0, 9, _center_fn, extrapolate_frames=3)
+    frames = [s['frame'] for s in states]
+    assert frames[-3:] == [10, 11, 12]
+    for s in states[-3:]:
+        assert s['predicted'] and s['measurement'] is None
+    # constant-velocity projection stays on the line
+    assert abs(states[-1]['pos'][0] - 24.0) < 2.0
 
 
 def test_single_detection_predicts_a_stationary_track_then_stops():

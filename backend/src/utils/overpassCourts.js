@@ -2,17 +2,9 @@
 // one-off `scripts/seedCourts.js` CLI and by the self-healing lazy-seed path
 // in `routes/courts.js` (GET /courts seeds an area on first empty query).
 const db = require('../db');
+const { boundingBox } = require('./geo');
 
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
-
-function boundingBox(lat, lng, radiusKm) {
-  const latDelta = radiusKm / 111;
-  const lngDelta = radiusKm / (111 * Math.cos((lat * Math.PI) / 180) || 1);
-  return {
-    south: lat - latDelta, north: lat + latDelta,
-    west: lng - lngDelta, east: lng + lngDelta,
-  };
-}
 
 function elementLatLng(el) {
   if (el.type === 'node') return { latitude: el.lat, longitude: el.lon };

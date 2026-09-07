@@ -187,6 +187,48 @@ def height_ratio_from_keypoints(kp):
     return sum(ratios) / len(ratios)
 
 
+def net_roll_deg(kp):
+    """
+    In-plane camera roll (tilt about the optical axis), in degrees, from the
+    slope of the net's top cord -- a physically horizontal line, so any
+    apparent slope in the image is the camera being canted. Positive follows
+    image coords (y down): the net's right end sitting lower than its left
+    reads as a positive angle.
+
+    `kp` is run_net_keypoint_model()'s dict. Returns None unless BOTH
+    net_top_left and net_top_right were detected -- this is a pure
+    left-to-right slope measurement, a single post base can't provide it.
+    """
+    if 'net_top_left' not in kp or 'net_top_right' not in kp:
+        return None
+    (lx, ly), (rx, ry) = kp['net_top_left'], kp['net_top_right']
+    if rx == lx and ry == ly:
+        return None
+    # Order by x so "right end lower -> positive" holds regardless of which
+    # keypoint the model labelled left/right on a heavily canted frame.
+    if lx > rx:
+        (lx, ly), (rx, ry) = (rx, ry), (lx, ly)
+    return math.degrees(math.atan2(ry - ly, rx - lx))
+
+
+# Roll-correction band, shared by compare_swing.py (user side) and
+# enrich_pro_camera_roll.py (pro database). Below MIN it's within
+# net-keypoint noise and not worth rotating; above MAX it's more likely a
+# bad detection or a genuine phone-orientation problem than a slightly
+# tilted mount, and silently rotating it away would hide that.
+ROLL_CORRECTION_MIN_DEG = 3.0
+ROLL_CORRECTION_MAX_DEG = 25.0
+
+
+def usable_roll(roll_deg):
+    """Return roll_deg when it's in the correctable band, else None."""
+    if roll_deg is None:
+        return None
+    if ROLL_CORRECTION_MIN_DEG <= abs(roll_deg) <= ROLL_CORRECTION_MAX_DEG:
+        return roll_deg
+    return None
+
+
 def detect_net_endpoints(frame):
     """
     Detect the tennis net as the dominant horizontal line in the middle of the frame.
@@ -492,8 +534,13 @@ def _angle_from_frame(frame, landmarker):
     """
     Compute camera angle from a single frame.
     Returns (net_width, net_center_x, net_y, player_x, player_vis, post_height_frac,
-    ankle_y, used_keypoints, height_ratio, stance_width_ratio, shoulder_tilt_deg)
-    or None if net not found.
+    ankle_y, used_keypoints, height_ratio, stance_width_ratio, shoulder_tilt_deg,
+    net_roll) or None if net not found.
+
+    net_roll is the in-plane camera-roll angle from the net-cord slope (deg,
+    see net_roll_deg()), only available when used_keypoints is True; None
+    otherwise. Appended at the end for the same positional-unpacking reason
+    stance_width_ratio/shoulder_tilt_deg were.
     post_height_frac/ankle_y are the older, raw/uncalibrated Hough-based vertical
     signal; height_ratio is the newer, validated keypoint-model-based one (only
     available when used_keypoints is True and a post base was detected).
@@ -523,6 +570,7 @@ def _angle_from_frame(frame, landmarker):
     net_center_x = (left_x + right_x) / 2
     post_height_frac = detect_post_height(frame, left_x, right_x, net_y)
     height_ratio = height_ratio_from_keypoints(kp) if used_keypoints else None
+    net_roll = net_roll_deg(kp) if used_keypoints else None
 
     mp_landmarks = _run_landmarker(frame, landmarker) if landmarker is not None else detect_pose(frame)
     player_x = None
@@ -572,7 +620,7 @@ def _angle_from_frame(frame, landmarker):
             shoulder_tilt_deg = round(wrapped, 1) if abs(dx) >= abs(dy) else None
 
     return (net_width, net_center_x, net_y, player_x, player_vis, post_height_frac, ankle_y,
-            used_keypoints, height_ratio, stance_width_ratio, shoulder_tilt_deg)
+            used_keypoints, height_ratio, stance_width_ratio, shoulder_tilt_deg, net_roll)
 
 
 # View-direction margin: fraction of the player's own on-screen height
@@ -683,7 +731,7 @@ def check_camera_setup_frame(frame, landmarker=None):
         }
 
     (net_width, net_center_x, net_y, player_x, player_vis, post_height_frac, ankle_y,
-     used_keypoints, height_ratio, stance_width_ratio, shoulder_tilt_deg) = result
+     used_keypoints, height_ratio, stance_width_ratio, shoulder_tilt_deg, _net_roll) = result
 
     apparent_ratio = min(net_width / FULL_NET_FRACTION, 1.0)
     angle = math.degrees(math.acos(max(apparent_ratio, 0.001)))
@@ -847,13 +895,17 @@ def infer_camera_angle(video_path, frame_number=None, landmarker=None, view_dire
     # Use the measurement closest to the median width
     best = min(measurements, key=lambda m: abs(m[0] - median_width))
     (net_width, net_center_x, net_y, player_x, player_vis, post_height_frac, ankle_y,
-     used_keypoints, _, stance_width_ratio, shoulder_tilt_deg) = best
+     used_keypoints, _, stance_width_ratio, shoulder_tilt_deg, _net_roll) = best
     n_keypoint_frames = sum(1 for m in measurements if m[7])
 
     # Vertical elevation: median height_ratio across whichever sampled frames
     # got one (keypoint-model frames with a detected post base), not just the
     # `best` frame -- more robust than relying on a single sample.
     height_ratios = sorted(m[8] for m in measurements if m[8] is not None)
+    # In-plane camera roll: same median-across-samples treatment as
+    # height_ratio -- m[11] is net_roll (None on non-keypoint frames).
+    roll_samples = sorted(m[11] for m in measurements if m[11] is not None)
+    median_roll = roll_samples[len(roll_samples) // 2] if roll_samples else None
     median_height_ratio = height_ratios[len(height_ratios) // 2] if height_ratios else None
 
     # Stance/tilt: same "closest-to-median-net-width" frame's values as the
@@ -887,6 +939,12 @@ def infer_camera_angle(video_path, frame_number=None, landmarker=None, view_dire
         'stance_width_ratio': stance_width_ratio,
         'shoulder_tilt_deg':  shoulder_tilt_deg,
         'framing_status':     framing_label(stance_width_ratio, shoulder_tilt_deg),
+        # In-plane camera roll from the net-cord slope (deg). None when no
+        # keypoint-model frame yielded both net-top points. Consumed by
+        # compare_swing.py (user side) and enrich_pro_camera_roll.py to
+        # rotate trajectories level before DTW -- see usable_roll().
+        'camera_roll_deg':    round(median_roll, 1) if median_roll is not None else None,
+        'camera_roll_source': 'net_keypoints' if median_roll is not None else None,
     }
 
     # --- Primary: angle from net foreshortening ---
@@ -992,9 +1050,11 @@ def infer_angle_from_source(source_video_path, peak_time_sec, landmarker=None):
 
     best = min(measurements, key=lambda m: abs(m[0] - median_width))
     (net_width, net_center_x, net_y, player_x, player_vis, post_height_frac, ankle_y,
-     used_keypoints, _, _stance_width_ratio, _shoulder_tilt_deg) = best
+     used_keypoints, _, _stance_width_ratio, _shoulder_tilt_deg, _net_roll) = best
     height_ratios = sorted(m[8] for m in measurements if m[8] is not None)
     median_height_ratio = height_ratios[len(height_ratios) // 2] if height_ratios else None
+    roll_samples = sorted(m[11] for m in measurements if m[11] is not None)
+    median_roll = roll_samples[len(roll_samples) // 2] if roll_samples else None
 
     apparent_ratio = min(net_width / FULL_NET_FRACTION, 1.0)
     net_angle = math.degrees(math.acos(max(apparent_ratio, 0.001)))
@@ -1036,6 +1096,8 @@ def infer_angle_from_source(source_video_path, peak_time_sec, landmarker=None):
         'post_height_frac': round(post_height_frac, 4) if post_height_frac is not None else None,
         'ankle_y':           round(ankle_y, 4) if ankle_y is not None else None,
         'elevation_gap':     round(ankle_y - net_y, 4) if ankle_y is not None else None,
+        'camera_roll_deg':    round(median_roll, 1) if median_roll is not None else None,
+        'camera_roll_source': 'net_keypoints' if median_roll is not None else None,
     }
 
     return angle_deg, confidence, debug

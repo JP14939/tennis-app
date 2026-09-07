@@ -5,7 +5,7 @@ Called by the Express backend via child_process.spawn.
 Writes progress/debug to stderr and a single JSON object to stdout.
 
 Usage:
-  python pro_matcher.py <video_path> <shot_type> [--top N] [--angle-window N] [--contact-time SEC]
+  python pro_matcher.py <video_path> <shot_type> [--top N] [--angle-window N] [--contact-time SEC] [--handedness left|right]
 
 Output (stdout):
   {
@@ -14,6 +14,7 @@ Output (stdout):
     "user_angle": 38.2,
     "angle_label": "Semi-front",
     "angle_conf": 0.87,
+    "ball_speed_kmh": 118.4,  # or null -- see scripts/07_ball_racket_tracking/ball_speed.py
     "matches": [
       {
         "rank": 1,
@@ -50,6 +51,8 @@ def main():
     parser.add_argument('--contact-time', type=float, default=None, help='User-marked contact time in seconds')
     parser.add_argument('--view-direction-hint', choices=['front', 'back'], default=None,
                          help='User-stated filming position, used only if server-side detection is inconclusive')
+    parser.add_argument('--handedness', choices=['left', 'right'], default='right',
+                         help="Player's dominant hand; 'left' mirrors the uploaded swing before matching")
     args = parser.parse_args()
 
     if not os.path.exists(args.video):
@@ -58,7 +61,8 @@ def main():
 
     try:
         result = compare(args.video, args.shot_type, top_n=args.top, angle_window=args.angle_window,
-                          contact_time_sec=args.contact_time, view_direction_hint=args.view_direction_hint)
+                          contact_time_sec=args.contact_time, view_direction_hint=args.view_direction_hint,
+                          handedness=args.handedness)
         print(json.dumps(result))
     except Exception as e:
         # Some failures inside compare() (e.g. "Cannot open video: <path>")

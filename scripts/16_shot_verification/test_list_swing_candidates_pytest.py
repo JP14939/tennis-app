@@ -16,7 +16,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from list_swing_candidates import merge_duplicate_swings, MERGE_WINDOW_SEC  # noqa: E402
+from list_swing_candidates import merge_duplicate_swings, MERGE_WINDOW_SEC, _partition_job_files  # noqa: E402
 
 FPS = 30.0
 
@@ -79,3 +79,40 @@ def test_unordered_input_is_sorted_before_merging():
     late = _swing(peak_frame=1000, contact_frame_guess=1005, contact_confidence=0.9)
     merged = merge_duplicate_swings([late, early], FPS)
     assert merged == [early, late]
+
+
+# _partition_job_files(): a job's raw source video can be hardlinked in
+# under the 'full_video' prefix to make it browsable in Swing Review for
+# context, without ever going through pose extraction/swing detection --
+# job 9 hung for 10+ minutes and timed out when a 2.18GB full match video
+# was instead placed as 'rally_007.mp4', where it got treated identically
+# to a real (short) rally clip. These tests cover the directory split that
+# keeps the two kinds of file from ever being confused with each other.
+
+def test_partitions_rally_clips_and_full_video_separately(tmp_path):
+    (tmp_path / 'rally_001.mp4').write_bytes(b'')
+    (tmp_path / 'rally_002.mp4').write_bytes(b'')
+    (tmp_path / 'full_video.mp4').write_bytes(b'')
+
+    clips, full_videos = _partition_job_files(str(tmp_path))
+    assert clips == ['rally_001.mp4', 'rally_002.mp4']
+    assert full_videos == ['full_video.mp4']
+
+
+def test_no_full_video_file_returns_empty_list(tmp_path):
+    (tmp_path / 'rally_001.mp4').write_bytes(b'')
+
+    clips, full_videos = _partition_job_files(str(tmp_path))
+    assert clips == ['rally_001.mp4']
+    assert full_videos == []
+
+
+def test_unrelated_files_are_excluded_from_both(tmp_path):
+    (tmp_path / 'rally_001.mp4').write_bytes(b'')
+    (tmp_path / 'full_video.mp4').write_bytes(b'')
+    (tmp_path / '.DS_Store').write_bytes(b'')
+    (tmp_path / 'notes.json').write_bytes(b'')
+
+    clips, full_videos = _partition_job_files(str(tmp_path))
+    assert clips == ['rally_001.mp4']
+    assert full_videos == ['full_video.mp4']

@@ -14,8 +14,6 @@ Output: data/pro_database.json
 
 import json
 import os
-import math
-import statistics
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -44,14 +42,23 @@ def relative_clip_path(clip_path):
         return clip_path
     return os.path.relpath(clip_path, PRO_CLIPS_DIR).replace('\\', '/')
 
-# Upper-body landmarks used for comparison (ignore legs)
-KEY_LANDMARKS = [
-    'nose',
-    'left_shoulder', 'right_shoulder',
-    'left_elbow',    'right_elbow',
-    'left_wrist',    'right_wrist',
-    'left_hip',      'right_hip',
-]
+# Pure pose-math (KEY_LANDMARKS, build_pose_index, get_shoulder_ref,
+# normalise_landmarks, trajectory_scale, PRE_SEC, POST_SEC,
+# MIN_TRAJECTORY_POINTS, extract_swing_trajectory) moved to
+# trajectory_extraction.py 2026-08-27 so split_pro_clip.py can reuse it
+# without this file's own infer_angle.py (mediapipe) import. Re-imported
+# here rather than redefined -- every name below is re-exported from this
+# module's own namespace exactly as before, so compare_swing.py,
+# compare_videos.py, track_racket_in_clip.py,
+# train_tip_selector_on_amateur_footage.py,
+# build_pro_overlay_trajectories.py, and test_build_pro_database_pytest.py
+# (all of which do `from build_pro_database import <one of these names>`)
+# keep working completely unchanged.
+from trajectory_extraction import (  # noqa: E402
+    KEY_LANDMARKS, MIN_LANDMARK_VISIBILITY, PRE_SEC, POST_SEC, MIN_TRAJECTORY_POINTS,
+    build_pose_index, get_shoulder_ref, normalise_landmarks, trajectory_scale,
+    extract_swing_trajectory,
+)
 
 JOBS = [
     {
@@ -112,128 +119,6 @@ JOBS = [
 ]
 
 MIN_CONFIDENCE = 0.5
-
-
-# ── Pose helpers ──────────────────────────────────────────────────────────────
-
-def build_pose_index(frames):
-    index = {}
-    for f in frames:
-        if f['landmarks']:
-            index[f['frame']] = {lm['name']: lm for lm in f['landmarks']}
-    return index
-
-
-MIN_LANDMARK_VISIBILITY = 0.3
-
-
-def get_shoulder_ref(lm_dict):
-    ls = lm_dict.get('left_shoulder')
-    rs = lm_dict.get('right_shoulder')
-    if not ls or not rs:
-        return None, None, None
-    # Every other landmark normalise_landmarks() outputs is gated on this same
-    # 0.3 visibility threshold -- the shoulders themselves weren't, even
-    # though mid_x/mid_y become the translation ORIGIN every other landmark in
-    # the frame is measured against. An occluded/low-confidence shoulder still
-    # gets a real (non-null) x/y from MediaPipe, so `not ls or not rs` alone
-    # never catches it -- it would silently shift every "confident" landmark
-    # in that frame by however wrong the shoulder guess was, worst right at
-    # contact where occlusion is most likely. Reject the whole frame instead.
-    if ls.get('visibility', 0) < MIN_LANDMARK_VISIBILITY or rs.get('visibility', 0) < MIN_LANDMARK_VISIBILITY:
-        return None, None, None
-    mid_x = (ls['x'] + rs['x']) / 2
-    mid_y = (ls['y'] + rs['y']) / 2
-    width = math.sqrt((ls['x'] - rs['x'])**2 + (ls['y'] - rs['y'])**2)
-    return mid_x, mid_y, width
-
-
-def normalise_landmarks(lm_dict, scale=None):
-    """Return normalised (x, y, z) for KEY_LANDMARKS. Returns None if ref missing.
-
-    `scale` should be a single stable shoulder-width value shared across an
-    entire trajectory (see trajectory_scale()) rather than this frame's own
-    shoulder width. Shoulder width fluctuates ~30% frame-to-frame as the body
-    rotates through a swing (foreshortening), so dividing by the per-frame
-    width amplifies ordinary pose-detection noise into large coordinate swings
-    at exactly the frames that matter (mid-swing, near contact). Translation
-    (mid_x/mid_y) is still taken per-frame since it should track the body.
-
-    z: MediaPipe already reports a z per landmark (roughly hip-centered depth,
-    same normalized-image-width units as x/y) on every frame -- previously
-    captured at extraction and never read again past this function. No
-    translation offset for z (MediaPipe's own origin is already usable),
-    same `scale` divisor as x/y for consistency. Note MediaPipe's z is a
-    rougher, noisier monocular depth estimate than x/y -- callers that
-    consume it (trajectory_compare.py, phase_breakdown.py) should treat it
-    as a lower-confidence signal, not equally trustworthy to x/y."""
-    mid_x, mid_y, width = get_shoulder_ref(lm_dict)
-    # mid_x can legitimately be 0.0 (shoulder midpoint sitting exactly at the
-    # frame's left edge) -- `not mid_x` treated that as "missing" the same as
-    # get_shoulder_ref()'s real missing-ref case (None), incorrectly
-    # dropping a valid frame. width is never a valid 0.0 (two distinct
-    # shoulder points), so `width < 0.01` alone still correctly guards that.
-    if mid_x is None or width < 0.01:
-        return None
-    if scale is None:
-        scale = width
-
-    result = {}
-    for name in KEY_LANDMARKS:
-        lm = lm_dict.get(name)
-        if lm and lm.get('visibility', 0) >= MIN_LANDMARK_VISIBILITY:
-            result[name] = {
-                'x': round((lm['x'] - mid_x) / scale, 4),
-                'y': round((lm['y'] - mid_y) / scale, 4),
-                'z': round(lm['z'] / scale, 4) if lm.get('z') is not None else None,
-            }
-        else:
-            result[name] = None
-    return result
-
-
-def trajectory_scale(lm_dicts):
-    """Median shoulder width across a window of raw landmark dicts — a
-    single stable scale for the whole trajectory instead of per-frame width."""
-    widths = [w for lm in lm_dicts if lm and (w := get_shoulder_ref(lm)[2]) is not None and w >= 0.01]
-    return statistics.median(widths) if widths else None
-
-
-# ── Trajectory extraction for one swing ──────────────────────────────────────
-
-PRE_SEC = 0.5
-POST_SEC = 1.0
-MIN_TRAJECTORY_POINTS = 5
-
-
-def extract_swing_trajectory(swing, pose_index, fps):
-    """
-    Sample every available pose frame (native ~20fps from extract_poses.py)
-    from PRE_SEC before to POST_SEC after the peak (contact) frame, instead
-    of 3 fixed snapshots — this preserves the actual shape/speed of the swing
-    for DTW comparison rather than compressing it to 3 points.
-
-    Returns a list of {'t': seconds relative to contact, 'landmarks': {...}},
-    or None if too few usable frames are found.
-    """
-    peak = swing['peak_frame']
-    lo = peak - int(PRE_SEC * fps)
-    hi = peak + int(POST_SEC * fps)
-
-    window_frames = [pose_index[f] for f in range(lo, hi + 1) if f in pose_index]
-    scale = trajectory_scale(window_frames)
-    if scale is None:
-        return None
-
-    trajectory = []
-    for f in sorted(fr for fr in pose_index if lo <= fr <= hi):
-        norm = normalise_landmarks(pose_index[f], scale)
-        if norm is not None:
-            trajectory.append({'t': round((f - peak) / fps, 4), 'landmarks': norm})
-
-    if len(trajectory) < MIN_TRAJECTORY_POINTS:
-        return None
-    return trajectory
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
