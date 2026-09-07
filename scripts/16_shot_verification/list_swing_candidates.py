@@ -16,34 +16,64 @@ excluded from the output -- otherwise reopening this tool for the same job
 (a reload, navigating away and back) would re-serve the exact same full
 list every time, forcing a full re-review of everything already done.
 
+Also cuts each surviving swing out of its shared rally clip into its own
+short file (clip_url points at that per-swing clip, not the full rally
+clip), so DevSwingReviewScreen.js shows a genuinely trimmed video per swing
+instead of re-scrubbing the same long clip once per swing found in it.
+
 Usage:
   python list_swing_candidates.py <job_id>
 
 Output (stdout): {"candidates": [{job_id, rally_id, swing_index,
-  peak_time_sec, peak_frame, duration_sec, student_contact_confidence,
-  student_contact_method, student_shot_type, student_shot_scores}, ...]}
+  peak_time_sec, peak_frame, clip_url, clip_start_frame, fps,
+  student_contact_confidence, student_contact_method,
+  student_contact_frame_guess, student_shot_type, student_shot_scores}, ...]}
 """
 import contextlib
 import json
 import os
 import sys
 
+import cv2
+
 SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '00_utils'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '02_pose_extraction'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '03_swing_detection'))
+sys.path.insert(0, os.path.join(SCRIPTS_DIR, '04_clip_extraction'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '16_shot_verification'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '14_shot_classifier'))
 
 from paths import DATA_DIR  # noqa: E402
 from extract_poses import extract_poses  # noqa: E402
-from detect_swings import compute_wrist_velocity, find_swing_peaks, THRESHOLD_PERCENTILE, MIN_SWING_GAP_SEC  # noqa: E402
+from detect_swings import compute_wrist_velocity, find_swing_peaks, SHOT_WINDOWS, THRESHOLD_PERCENTILE, MIN_SWING_GAP_SEC  # noqa: E402
+from extract_clips import extract_clip  # noqa: E402
 from verify_shot_contact import verify_swings, filter_verified_swings  # noqa: E402
 from classify_shot import classify  # noqa: E402
 from reviewed_candidates_log import get_reviewed_set  # noqa: E402
+from video_io import reencode_to_h264  # noqa: E402
 
 HIGHLIGHT_CLIPS_DIR = os.path.join(DATA_DIR, 'runtime', 'highlight_clips', '13')
 POSES_CACHE_DIR = os.path.join(DATA_DIR, 'runtime', 'shot_verification_batch', 'poses')
+
+# Per-swing cut clips live in a SIBLING dir to HIGHLIGHT_CLIPS_DIR, not
+# nested inside it -- a file inside `.../13/{job_id}/` would get picked up
+# by main()'s `f.startswith('rally_')` rally-clip enumeration on the next
+# run. Anything under runtime/highlight_clips/ is already served by
+# server.js's single express.static mount, so this needs no backend changes.
+SWING_CLIPS_DIR = os.path.join(DATA_DIR, 'runtime', 'highlight_clips', '13_swings')
+CLIP_PRE_SEC = max(w[0] for w in SHOT_WINDOWS.values())
+CLIP_POST_SEC = max(w[1] for w in SHOT_WINDOWS.values())
+
+# A job's raw source video can be hardlinked in under this prefix (see
+# add_full_video_reference.py) to make it browsable in Swing Review for
+# context, WITHOUT ever being run through pose extraction/swing detection --
+# a full-length match video (hours, gigabytes) through that per-frame
+# pipeline is exactly what hung job 9 for 10+ minutes until it hit
+# dev.js's request timeout (see HANDOVER.md). Deliberately a distinct
+# prefix from 'rally_' so it can never collide with/be mistaken for a real
+# rally clip by the glob below.
+FULL_VIDEO_PREFIX = 'full_video'
 
 # find_swing_peaks() (shared with detect_rallies.py etc.) sometimes splits
 # one real swing into two candidates -- its velocity curve can dip without
@@ -147,6 +177,21 @@ def get_poses(job_id, rally_id, clip_path):
         return json.load(f)
 
 
+def _partition_job_files(job_dir):
+    """
+    Splits a job's clip directory into (rally clip filenames, full-video
+    reference filenames) -- pulled out as a pure function so this split is
+    unit-testable without mocking cv2/pose extraction/YOLO (see
+    test_list_swing_candidates_pytest.py). Anything matching neither prefix
+    (a stray pose-cache file, .DS_Store, etc.) is ignored by both.
+    """
+    all_files = os.listdir(job_dir)
+    clips = sorted(f for f in all_files if f.startswith('rally_') and f.endswith('.mp4'))
+    full_video_files = sorted(
+        f for f in all_files if f.startswith(FULL_VIDEO_PREFIX) and f.endswith('.mp4'))
+    return clips, full_video_files
+
+
 def main():
     if len(sys.argv) < 2:
         print(json.dumps({'error': 'usage: list_swing_candidates.py <job_id>'}))
@@ -160,7 +205,7 @@ def main():
 
     reviewed = get_reviewed_set(job_id)
 
-    clips = sorted(f for f in os.listdir(job_dir) if f.startswith('rally_') and f.endswith('.mp4'))
+    clips, full_video_files = _partition_job_files(job_dir)
     candidates = []
     for clip_name in clips:
         rally_id = int(clip_name.replace('rally_', '').replace('.mp4', ''))
@@ -175,39 +220,98 @@ def main():
             swings = merge_duplicate_swings(swings, fps)
             classify_frames = _as_classify_frames(frames)
 
-            for i, sw in enumerate(swings, 1):
-                if (rally_id, i) in reviewed:
-                    continue  # already given a verdict in a previous session -- don't re-serve it
-                shot_type = scores = None
-                try:
-                    result = classify(clip_path, sw['peak_time'], frames_fps=(classify_frames, fps))
-                    shot_type, scores = result['shot_type'], result['scores']
-                except Exception:
-                    pass  # student classification failing isn't fatal -- just omit it, Jack can still review
+            # Swings still needing a candidate emitted (already-reviewed ones
+            # skipped) are the only ones worth opening the source clip for --
+            # cheap early-exit when a rally is fully reviewed already.
+            pending = [(i, sw) for i, sw in enumerate(swings, 1) if (rally_id, i) not in reviewed]
+            cap = None
+            if pending:
+                cap = cv2.VideoCapture(clip_path)
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-                candidates.append({
-                    'job_id': job_id, 'rally_id': rally_id, 'swing_index': i,
-                    'peak_time_sec': sw['peak_time'], 'peak_frame': sw['peak_frame'],
-                    'fps': fps,
-                    'clip_url': f'/highlight-clips/13/{job_id}/{clip_name}',
-                    # student_is_real_shot mirrors exactly what
-                    # get_verified_shot_contact() derives student_is_shot as
-                    # (filter_verified_swings on this one swing) -- needed by
-                    # log_manual_review.py to log a real (student_pick,
-                    # teacher_pick) pair, not just Jack's verdict alone.
-                    'student_is_real_shot': bool(filter_verified_swings([sw])),
-                    'student_contact_confidence': sw.get('contact_confidence'),
-                    'student_contact_method': sw.get('contact_method'),
-                    # find_contact_frame()'s actual guessed frame (see
-                    # verify_shot_contact.py's contact_frame_guess addition
-                    # this session) -- the "student" side of the new
-                    # contact_frame_training_log.py comparison.
-                    'student_contact_frame_guess': sw.get('contact_frame_guess'),
-                    'student_shot_type': shot_type,
-                    'student_shot_scores': scores,
-                })
+            try:
+                for i, sw in pending:
+                    shot_type = scores = None
+                    try:
+                        result = classify(clip_path, sw['peak_time'], frames_fps=(classify_frames, fps))
+                        shot_type, scores = result['shot_type'], result['scores']
+                    except Exception:
+                        pass  # student classification failing isn't fatal -- just omit it, Jack can still review
+
+                    # Cut this swing out of the shared rally clip into its own
+                    # short file, so Swing Review shows a genuinely trimmed
+                    # clip per swing instead of re-scrubbing the same long
+                    # rally video for every swing found in it. Reuses the same
+                    # extract_clip()/reencode_to_h264() combo already proven
+                    # in ingest_raw_footage_to_history.py. Skipped if already
+                    # cut on a previous run of this job (file-exists cache,
+                    # same pattern as get_poses() above).
+                    os.makedirs(os.path.join(SWING_CLIPS_DIR, job_id), exist_ok=True)
+                    swing_clip_path = os.path.join(SWING_CLIPS_DIR, job_id, f'rally_{rally_id}_swing_{i}.mp4')
+                    start_frame = max(0, int(sw['peak_frame'] - CLIP_PRE_SEC * fps))
+                    end_frame = min(total_frames - 1, int(sw['peak_frame'] + CLIP_POST_SEC * fps))
+                    if not os.path.exists(swing_clip_path):
+                        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                        extract_clip(cap, start_frame, end_frame, swing_clip_path, fps, fourcc)
+                        reencode_to_h264(swing_clip_path)
+
+                    candidates.append({
+                        'job_id': job_id, 'rally_id': rally_id, 'swing_index': i,
+                        # peak_time_sec is relative to the CUT SUB-CLIP's own
+                        # timeline (what DevSwingReviewScreen.js seeks/displays
+                        # against); peak_frame stays in the original rally
+                        # clip's frame numbering, matching
+                        # student_contact_frame_guess below and everything
+                        # contact_frame_training_log.py compares it against.
+                        'peak_time_sec': round((sw['peak_frame'] - start_frame) / fps, 3),
+                        'peak_frame': sw['peak_frame'],
+                        'fps': fps,
+                        'clip_url': f'/highlight-clips/13_swings/{job_id}/rally_{rally_id}_swing_{i}.mp4',
+                        # Original-rally-clip frame number the sub-clip starts
+                        # at -- DevSwingReviewScreen.js adds this back onto
+                        # whatever contact frame it captures (in the sub-clip's
+                        # local coordinates) before submitting a verdict, so
+                        # log_manual_review.py keeps getting frame numbers in
+                        # the same coordinate system as student_contact_frame_guess.
+                        'clip_start_frame': start_frame,
+                        # student_is_real_shot mirrors exactly what
+                        # get_verified_shot_contact() derives student_is_shot as
+                        # (filter_verified_swings on this one swing) -- needed by
+                        # log_manual_review.py to log a real (student_pick,
+                        # teacher_pick) pair, not just Jack's verdict alone.
+                        'student_is_real_shot': bool(filter_verified_swings([sw])),
+                        'student_contact_confidence': sw.get('contact_confidence'),
+                        'student_contact_method': sw.get('contact_method'),
+                        # find_contact_frame()'s actual guessed frame (see
+                        # verify_shot_contact.py's contact_frame_guess addition
+                        # this session) -- the "student" side of the new
+                        # contact_frame_training_log.py comparison.
+                        'student_contact_frame_guess': sw.get('contact_frame_guess'),
+                        'student_shot_type': shot_type,
+                        'student_shot_scores': scores,
+                    })
+            finally:
+                if cap is not None:
+                    cap.release()
         except Exception as e:
             print(f'  rally {rally_id}: FAILED -- {e}', file=sys.stderr)
+
+    # Full-source-video reference entries -- browse-only, never pose-
+    # extracted/swing-detected (that's exactly what hung job 9 -- see
+    # FULL_VIDEO_PREFIX's comment above). No DB row, no verdict submission
+    # path; DevSwingReviewScreen.js just lets Jack scrub it for context and
+    # move on (is_full_video: True is its cue to skip the verdict stepper).
+    for i, fname in enumerate(full_video_files, 1):
+        candidates.append({
+            'job_id': job_id, 'rally_id': None, 'swing_index': i,
+            'is_full_video': True,
+            'clip_url': f'/highlight-clips/13/{job_id}/{fname}',
+            'peak_time_sec': 0, 'peak_frame': 0, 'fps': None,
+            'clip_start_frame': 0,
+            'student_is_real_shot': None, 'student_contact_confidence': None,
+            'student_contact_method': None, 'student_contact_frame_guess': None,
+            'student_shot_type': None, 'student_shot_scores': None,
+        })
 
     print(json.dumps({'candidates': candidates}))
 

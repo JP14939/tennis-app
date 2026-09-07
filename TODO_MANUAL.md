@@ -4,214 +4,464 @@ Everything here needs a human clicking through a dashboard, creating an
 account, or physically testing with a device — none of it is something I
 can do myself. Grouped chronologically by session below; skim for `~~struck
 through~~` (resolved) vs. plain (still open) headings if you're catching up.
+Resolved entries are kept short (breadcrumb only) — this file was compressed
+2026-08-26 to cut ~45% of dead weight (finished checklists, superseded
+runbooks); nothing open was trimmed.
 
-**Quick status as of 2026-08-22, for a fresh chat starting cold:**
-**a large amount of local work is uncommitted** — a database-verification
-framework, two audit-round fixes, and native-device bug fixes (see
-`HANDOVER.md` item #42 for the full picture) are all sitting in the working
-tree, tested and green (418 backend tests, `npm run verify:db` clean, web
-bundle builds), but never committed or pushed. One exception: a one-line
-SQL fix to `courts.js` was deployed directly to the hosted server today
-(isolated from the rest of this uncommitted work) and is live. Real open
-items, cheapest first:
-- **Commit and push today's work** — nothing lost, just never asked for.
-  See the new section below for what's in scope.
-- **Resend account** needed for password reset emails to actually send
-  (`RESEND_API_KEY` unset) — see "self-serve password reset" section below.
-- **IMG_5823.MOV**: dry-run only (6 candidates), never Claude-verified.
-- **230 ball-label frames** waiting on manual review in the Dev Page's
-  Ball Label tool.
-- **IMG_5755.MOV**: ~$2.70 Claude verification spend, waiting on a go-ahead.
-- **20 high-camera-angle pro clips**: offered to generate contact sheets
-  for a first-pass review, never followed up.
-- RevenueCat's `active_entitlements`/`items` field-name loose end
-  (only matters if Premium ever unlocks late instead of instantly).
+**For a quick "what actually matters right now," read `STATUS.md`** (repo
+root) instead of this block — it's a short, hand-curated, actively-overwritten
+snapshot, not another log entry that goes stale the moment something below
+gets resolved.
 
 ---
 
-## ~~Tomorrow: finish wiring up payments~~ — resolved 2026-08-19
+## New from the 2026-09-05 session (Find Games revamp: mesh clubs, watches, postcodes, club naming)
 
-RevenueCat is connected and a monthly payment plan is live (done directly
-by Jack, not verified step-by-step from this side). Annual/other plan
-tiers weren't mentioned as done — add one later if you want a second
-price point. Left the original checklist below for reference in case
-anything needs revisiting (e.g. the `active_entitlements` vs `items`
-field-name loose end in step 11, if Premium ever seems to unlock late
-instead of instantly).
+Full detail: `HANDOVER.md` "Session 2026-09-05". Nothing here is blocked —
+it's all built and tested, just needs your eyes on a real device.
 
-Context: the code side of RevenueCat/Stripe payments is built and the
-backend logic is tested (webhook grant/revoke, audit logging) — but nothing
-can go live until you do the account setup below. See the payments plan
-this was built from for the full picture; this is just the "your turn" list.
+1. **Click through the whole Find Games revamp on a real phone** —
+   `npx expo start`, Find Games tab. Specifically: tap "Watch an area", drop
+   a pin, drag the radius slider, save it, confirm it actually saved (open
+   "My Watches" and check the Areas section shows it); open a court and
+   confirm its "Notify me" pill already shows "Watching" if you'd
+   previously watched it (this was broken before — always started
+   unwatched on load, regardless of real state); open a court that's part
+   of a club, suggest a name in the new "unverified name" banner, then
+   confirm it from a second account; unwatch a court/club/area from the My
+   Watches screen and confirm the row disappears.
+2. **Decide whether to re-run `node scripts/clusterCourts.js`** now that
+   the clustering algorithm changed from a 250m running-centroid to a true
+   100m node-mesh graph. Not run yet this session (only the algorithm and
+   its tests were built/verified) — a real re-run against the ~33k-court
+   local DB will re-shuffle some club boundaries (a straight line of
+   closely-spaced courts that used to split into multiple 250m clusters may
+   now merge into one, and vice versa for anything that was only within
+   250m via centroid drift, not real 100m adjacency). Existing
+   `club_watches` should carry over correctly (the new
+   `deleteOrphanedClubs()` cleanup + `reconcile()`'s existing court-overlap
+   matching both got test coverage for this), but worth eyeballing the
+   before/after club list once, not blindly trusting it.
+3. **The postcode backfill already ran** against your local dev DB
+   (16,711/33,222 courts resolved) — nothing to do here, just noting it so
+   a future session doesn't re-run it by accident thinking it's still
+   pending. Re-running is safe/idempotent regardless (only touches rows
+   where `postcode IS NULL`) if more courts get seeded later and you want
+   to top it up.
+4. Nothing pushed or deployed — same as every other item below.
 
-1. **Create a RevenueCat account** (revenuecat.com) and a new project.
-2. **Connect a Stripe account in test mode** to it (RevenueCat's dashboard
-   walks you through this under Project Settings → Payment Gateways →
-   Stripe/Web Billing).
-3. **Create an entitlement** named exactly `premium` (this matches
-   `REVENUECAT_ENTITLEMENT_ID=premium` already set in `backend/.env` — if
-   you name it something else, update that env var to match instead).
-4. **Create a product + package + offering** for the subscription (e.g.
-   "RallyMax Premium", monthly, whatever price you want to test with) and
-   attach it to the `premium` entitlement.
-5. **Grab your keys** from RevenueCat's dashboard:
-   - The **public Web Billing API key** → put in `frontend/.env` (copy from
-     `frontend/.env.example` if `frontend/.env` doesn't exist yet) as
-     `EXPO_PUBLIC_REVENUECAT_WEB_API_KEY`.
-   - Your **Project ID** → `backend/.env` as `REVENUECAT_PROJECT_ID`.
-   - A **v2 secret API key** with `customer_information:customers:read`
-     permission (Dashboard → API Keys → create a new v2 key with that scope)
-     → `backend/.env` as `REVENUECAT_SECRET_API_KEY`.
-6. **Set a webhook shared secret**: pick any random string yourself, put it
-   in `backend/.env` as `REVENUECAT_WEBHOOK_SECRET`.
-7. **Start a tunnel** so RevenueCat can reach your laptop (it isn't hosted
-   yet, on purpose — see "Later" below):
-   ```
-   ngrok http 5000
-   ```
-   Copy the `https://....ngrok-free.app` URL it gives you.
-8. **Configure the webhook in RevenueCat**: Dashboard → Project Settings →
-   Integrations → Webhooks → add
-   `https://<your-ngrok-url>/api/webhooks/revenuecat`, and set the
-   Authorization header value to the exact same string you put in
-   `REVENUECAT_WEBHOOK_SECRET` in step 6.
-9. **Restart the backend** (`npm run dev` in `backend/`) so it picks up the
-   new `.env` values, and start the frontend web build (`npx expo start`,
-   press `w`).
-10. **Do one real test purchase**: log in as a test user in the app, go to
-    the Premium tab, use a
-    [Stripe test card](https://docs.stripe.com/testing) (e.g.
-    `4242 4242 4242 4242`, any future expiry/CVC) to buy the subscription.
-11. **Check it actually worked**:
-    - The Premium screen should unlock immediately (no logout/login needed).
-    - In `backend/data/app.db`, `SELECT tier FROM users WHERE email = '...'`
-      should say `premium`.
-    - `SELECT * FROM payment_events ORDER BY id DESC LIMIT 5` should show the
-      `INITIAL_PURCHASE` event.
-    - **Known loose end to verify here**: `backend/src/routes/billing.js`
-      has a comment flagging that the exact JSON key RevenueCat's REST API
-      wraps entitlements in (`active_entitlements` vs `items`) wasn't
-      confirmed against a real response. If step 10 didn't unlock Premium
-      instantly (only via the webhook, a few seconds later), that's
-      probably why — check the backend console log for
-      `[billing/sync] failed:` and tell me what it says; I'll fix the field
-      name.
-12. Send a manual `EXPIRATION` test event from RevenueCat's dashboard
-    (Customer view → simulate event, or via their test tools) and confirm
-    `tier` flips back to `free` and Premium re-locks.
+---
+
+## New from the 2026-09-04 session (dev-workflow fixes, flywheels, Phase C rejected)
+
+Full detail: `HANDOVER.md` "Session 2026-09-04".
+
+1. **Keep reviewing the practice-footage queue in Pro Clip Review** — 201/333
+   done. No change to the workflow itself; two new things happen
+   automatically as you go, no separate step: each reviewed entry becomes
+   eligible for live matching (previously any unreviewed entry could be
+   shown to a real user), and its corrected shot type flows into classifier
+   training. Every ~50-100 more reviewed clips, worth asking me to re-run
+   `extract_training_features_from_pro_verdicts.py` +
+   `evaluate_shot_classifiers.py --set both` to see the phone-accuracy
+   number move.
+2. **Decide whether to pursue the Phase C contact-frame model further.**
+   It failed its ship gate twice this session (see `STATUS.md` item 5) —
+   the "predict a correction offset" framing doesn't seem to have signal in
+   the current features. Options if you want to keep going: different
+   features, a more conservative model, or predicting the frame directly
+   instead of an offset. Not urgent — it's not live-consequential either way.
+3. **Look at the ball/racket tracker audit images** and decide if
+   fine-tuning the ball/racket YOLO detector (flagged since
+   `audit_ball_confidence_at_contact.py`, never acted on) is worth doing now
+   that there's visual evidence serves are the weak point:
+   `data/07_ball_racket_tracking/contact_review/<clip_id>/*.jpg` — start
+   with `practice_100126`, `practice_100109`, `practice_100005` (the worst
+   misses, over 85 frames off).
+4. **Copy `pro_database.json` + `overlay_trajectories.json` to the server**
+   — still don't do this yet, see item 4 under the 2026-09-03 section below
+   for why (practice review isn't far enough along).
+5. Everything else from local dev this session (ngrok, video codec, review
+   UI) needed no action from you and is already fixed — see `STATUS.md`
+   item 7 if curious.
+6. **Decide whether/when to prioritize the architecture-deepening backlog**
+   an `/improve-codebase-architecture` review surfaced this session (report:
+   `%TEMP%\architecture-review-20260904-233151.html`). Candidate A (the
+   highlights.js job-runners) is already done. B (`compare_swing.py`'s
+   `compare()` — the single most-modified file in the repo, no seams for its
+   8 inline special cases), C (three duplicate contact/swing-peak-detection
+   implementations with no shared interface), and D (two small duplications
+   in the Pro Clip Review pipeline) are not started — see `HANDOVER.md`'s
+   "Architecture review" entry for the full writeup. Not urgent; B is the
+   highest-leverage of the three but needs its own design pass before
+   touching it.
+
+## New from the 2026-09-03 session (audio-review-all + practice footage)
+
+Full detail: `HANDOVER.md` "Session 2026-09-03". **See "New from the
+2026-09-04 session" below for current status — most of this is resolved or
+superseded.**
+
+1. ~~Work the Pro Clip Review queue.~~ — in progress, not blocked on
+   anything: 354/359 broadcast entries label-reviewed, only 5 left (machine
+   audio-fills to eyeball). Practice-footage queue below is the real
+   remaining work.
+2. ~~Decide on the practice-footage ingest.~~ — resolved 2026-09-03: the
+   `--use-claude` run completed (333 entries, 225 forehand/70 serve/38
+   backhand, ~$5). Jack chose to keep and manually review rather than
+   revert. **201/333 reviewed as of 2026-09-04**, ongoing.
+3. ~~yt-dlp~~ — resolved, now 2026.08.19, merges DASH via bundled ffmpeg.
+4. **Copy `pro_database.json` + `overlay_trajectories.json` to the server**
+   — still open, don't do yet. Wait until the practice review pass is
+   further along (currently ~60%) or unreviewed/lower-quality practice
+   entries would go live — the match-pool filter added 2026-09-04 protects
+   *local* matching from this, but a straight file copy to the server
+   bypasses that filter's whole point if done mid-review.
+5. ~~Phase C — run the labelling pass + retrain, then copy the model.~~ —
+   **done, and rejected.** Ran the full labelling pass (`--audio-only` +
+   the new `--practice` sweep, see 2026-09-04 below) and retrained twice.
+   **Failed its own ship gate both times** — the corrected model is worse
+   than the raw heuristic on every tolerance band. **Do not copy
+   `contact_frame_model.pkl` to the server** — it would make contact
+   detection worse, not better, if the runtime trust gate ever turned it on
+   (it currently can't — 0 of the required 50 real production examples).
+
+## New from the 2026-09-02 evening session (commit + detect_rallies + Phase B.2)
+
+Full detail: `HANDOVER.md` "Session 2026-09-02 (later still)".
+
+1. **Push the 16 local commits.** `master` is 16 commits ahead of `origin`
+   (`a694e37..343f4a1`) — the whole session, committed thematically. The
+   sandbox blocks `git push` to `master`; Jack runs it. Touches `backend/**`
+   and `scripts/**` → will trigger one auto-deploy.
+2. **Copy the rebuilt pro-DB data files to the server** (gitignored, CD never
+   touches `data/`): `data/06_pro_database/pro_database.json`,
+   `overlay_trajectories.json`, and the new `pro_clip_contact_predictions.json`.
+   The DB went 796 → 415 entries this session with audio-anchored contact times.
+   Without the copy the live server keeps the old 796-entry DB.
+3. **~111 flagged pro clips need a quick human contact-mark pass.** The audio
+   detector wasn't confident on them (`pro_clip_contact_predictions.json`,
+   `confident: false`). They keep their placeholder contact time until marked
+   in the Dev tool's "Fix contact time".
+4. **Run `detect_rallies.py` on a real match clip with audio** to confirm the
+   fix: the serve share in `swings_verified` should drop and `rallies_detected`
+   should go above 0 on footage that genuinely has rallies (IMG_5755 was the
+   canonical failing case).
+5. **Review the uncommitted camera-roll work.**
+   `scripts/05_angle_detection/review_camera_roll.py` (new) + a
+   `compare_swing.py` `--camera-roll` / `camera_roll_override` change appeared
+   in the working tree mid-session (a routine or another Claude session), left
+   uncommitted. Coherent follow-up to the committed camera-roll feature —
+   review and commit or discard.
+6. **Dev task, not manual:** `scripts/15_batch_analysis/analyze_rallies_parallel.py`
+   still feeds the verifier the wrist peak — it runs on the audio-less cut
+   clips so it can't use audio; needs its own contact fix (e.g. the visual
+   student model, Phase C.4).
+
+## New from the 2026-09-02 session (contact detection + shot classifier)
+
+Full technical detail: `HANDOVER.md` "Session 2026-09-02 (later)". Working
+plan: `C:\Users\jackp\.claude\plans\okay-where-do-things-woolly-pond.md`.
+~~None of this session's code is committed.~~ **Committed 2026-09-02 evening**
+(see the block above).
+
+1. **Source more footage — this is now the single highest-leverage manual
+   task.**
+   - **Amateur backhand footage** is the real bottleneck for the shot
+     classifier — there are only **10** backhand training examples (vs ~50
+     forehand / ~57 serve). Everything else about the classifier is blocked on
+     this. Phone-style / instructional / rally footage, not broadcast.
+     Labels go via `data/08_coaching_ai/amateur_swing_labels.json`.
+   - **Pro footage for the database** — the Pro Clip Review left only **21
+     serve** clips (77 % excluded), plus forehand 215 / backhand 123. Jack
+     wants the DB bigger. New source compilations go through the
+     `scripts/01`–`06` offline pipeline.
+
+2. **Test the live audio contact detection on a real phone.** Record a swing
+   with the in-app camera (`recordAsync` keeps an audio track), **do not mark
+   the contact frame**, upload. In the backend logs for that analysis, look for
+   `Contact auto-detected via AUDIO onset at X.XXXs (confidence ...)`. Confirm
+   the similarity score / pro match look sane. This is the one bit of Phase B.1
+   that couldn't be verified locally (no phone-recorded clip with audio on
+   disk).
+
+3. ~~**Decision — run the pro-DB contact-time fill (Phase B.2)?**~~ **DONE
+   2026-09-02 evening.** Audio detector ran over the kept clips, 108 confident
+   fills applied + re-anchored, 111 flagged for a human pass (see the evening
+   block above), DB rebuilt 796 → 415. Validation vs the 196 hand marks:
+   confident picks median 13 ms / 96% within 50 ms.
+
+4. **Decision — the shot classifier.** Retraining is coded and ready but the
+   results need Jack's call:
+   - Ship the v2 body-normalised **amateur-only** model? (Marginal — backhand
+     F1 0.30→0.40 on a 10-example test set, i.e. within noise. The body-norm +
+     version-safety infra is worth keeping regardless.)
+   - Build a **separate pipeline model** (`shot_classifier_pipeline_model.pkl`,
+     amateur + pro) for `detect_rallies.py` / `analyze_rallies_parallel.py`?
+     Pro data gives backhand F1 0.63 there (n = 161, real) but hurts the live
+     phone model.
+   - Neither is urgent, and **the serve over-prediction that's actually
+     blocking rally detection is probably a contact-frame problem, not a
+     classifier one** (see HANDOVER §7 / item below).
+
+5. **Note for whoever picks up Sprint 2 (`detect_rallies` serve-gate):** before
+   touching `apply_serve_gate()`, wire the accurate contact detection into
+   `detect_rallies` — it currently feeds the Claude shot verifier a frame ~13
+   frames off (the swing-detector wrist-peak), which makes groundstrokes look
+   like serves. That may be most of the "everything is a serve" problem.
+
+6. **Front-view pro clips** — clips around **swing_id ~2015** (forehand source
+   job 2) are filmed from the front (camera at the net), so pose landmarks are
+   mirrored vs. the rest. Handle when rebuilding the pro DB (view-direction
+   correction or exclusion).
+
+## New from the 2026-09-01 session
+
+1. **Competitive analysis of SevenSix** (`SevenSix AS`, Norway) from a full
+   walkthrough video Jack recorded of their app
+   (`C:\Users\jackp\Downloads\HQZE8437.MP4`). Same pose-extraction +
+   compare-to-a-pro core loop as RallyMax, iOS-only. Read: not a capital or
+   tech threat (~$550K raised total, ~4.0–4.34 rating on ~62–80 ratings,
+   visible reliability problems, shipped-then-killed features); the real
+   risk is their tennis-federation distribution bet. Pricing observed: UK
+   £149.99/yr or £14.99/mo + 14-day trial; US $22.99/mo, $229/yr, plus
+   pay-per-swing tiers. Full teardown summarised in `STATUS.md`'s new
+   "Competitive" block and the `docs/future-ideas.md` `### 2026-09-01`
+   context paragraph.
+2. **Ideas logged** to `docs/future-ideas.md` (`### 2026-09-01`, house
+   format) and `AI's_ideas.md` refreshed to that pass (it was 3 passes
+   behind). `STATUS.md` and `HANDOVER.md` stale facts corrected in the same
+   pass (ball detector Phase 3 shipped, IMG_5755 verification done, backend
+   auto-deploys now, serve-gate bug surfaced, `HANDOVER.md` got the
+   "Quick status" line `CLAUDE.md` points at).
+3. **New human-only / product-decision items from the teardown:**
+   - Test the **pre-record framing / pose-lock gate** idea on a real phone —
+     folds into the existing "Test Record now" item below, same session.
+   - **Product call**: adopt a collapsed one-glance "hero result" as the
+     default `ResultsScreen.js` state (score ring + one worst-phase line,
+     everything else a tap away), the way SevenSix does?
+   - **Product call**: build named, points-scored challenges (SevenSix has
+     "Compare to the AO23" / "Weekly Biomech" on its Training tab)?
+   - **Competitor watch**: check SevenSix's App Store release notes +
+     regional pricing ~monthly — they price-test and churn features, so the
+     read goes stale.
+4. **Still open, now also blocking a product idea**: the `detect_rallies.py`
+   `apply_serve_gate()` bug (2026-08-26 item 5) and the shot-classifier
+   retrain (2026-08-26 item 4). The serve-gate fix is the prerequisite for
+   promoting session-upload swing auto-split to the primary capture flow.
+
+---
+
+## New from the 2026-08-26 session
+
+1. **Merged PRs #13–#16** (logic review, bug sweep, security review,
+   future-ideas) from today's scheduled routines — reviewed diffs directly,
+   ran the full test suite (478 backend + 61 Python) in an isolated git
+   worktree before merging, pushed to master. Note for future sessions:
+   the sandbox's permission classifier blocks a direct `git push` to
+   `master` outright — Jack has to run that command himself even after
+   everything's reviewed/merged/tested locally.
+2. **Ball detector Phase 3 shipped.** Fine-tuned YOLO model
+   (`data/10b_ball_detection/yolo_ball_run_v1/`) wired into production
+   (`racket_tracker.py`, `verify_shot_contact.py`) — confirmed live via
+   the original unmodified audit script: **95% detection / 0.548 avg
+   confidence** at contact, up from the generic model's ~50%/0.41.
+3. **Contact-verification rules+ML model shipped.** Trained on ~1,000
+   logged Claude verdicts, wired into `verify_shot_contact_verified.py`
+   with its own trust gate (`shot_contact_ml_training_log.py`), mirroring
+   the existing shot-classifier ML pattern — skips Claude once it proves
+   out, same as every other teacher-student loop in this app.
+4. **Shot-type classifier: real bug found and fixed, training not yet
+   re-run.** `extract_training_features_from_log.py` was pose-extracting
+   *entire* raw source videos (found stuck 10+ hours on a 2.2GB file)
+   instead of the ~1.5s window it actually needs around each contact
+   frame, plus a path-separator dedup bug that would've double-processed
+   the same video. Both fixed — re-running now correctly produces 102 real
+   training rows in under a minute (was 5, wrongly, before the fix). Next
+   step: run `train_shot_classifier_model.py` on the combined dataset and
+   report CV metrics — not done yet.
+5. **⚠️ Real pipeline bug found, NOT YET FIXED — needs your call.**
+   Investigating why those 102 rows skew serve-heavy, you correctly
+   pushed back that `IMG_5755.MOV` is real rally play, not serve practice.
+   Confirmed a genuine bug in `scripts/11_highlight_clipping/
+   detect_rallies.py`'s `apply_serve_gate()`: it treats a >6s gap since
+   the last *detected* swing as "the point ended," but the swing detector
+   itself misses most real rally shots (only 54 of 290 candidates in
+   IMG_5755 confirmed real), so that gap is usually a detection gap, not
+   a real point boundary. Result: **100% of confirmed real forehands
+   (12/12) in IMG_5755 were discarded** by this gate — the actual reason
+   `rallies_detected: 0` despite genuine rallies happening. Affects the
+   rally-grouping/highlight-clip feature specifically. Tell me when you
+   want this fixed (decouple the point-boundary gap from detection
+   reliability) — not started.
+6. **Routine schedule changed — applied by you via the routines UI**, not
+   something I have tool access to edit directly (I can only see/manage
+   the per-PR check-in sessions each routine spawns, not the routines'
+   own recurring schedule). New schedule, replacing the table below:
+
+   | Routine | Cadence | Cron (UTC) | Fires at |
+   | --- | --- | --- | --- |
+   | Logic review | every 3 days | `0 3 */3 * *` | 03:00 |
+   | Bug sweep | every 3 days | `15 3 */3 * *` | 03:15 |
+   | Security review | every 3 days | `30 3 */3 * *` | 03:30 |
+   | Future-ideas brainstorm | **weekly, Mondays** | `45 3 * * 1` | 03:45 |
+   | Docs round-up | every 3 days | `0 4 */3 * *` | 04:00 |
+   | **Training-data drift watch (new)** | every 3 days | `15 4 */3 * *` | 04:15 |
+
+   The new drift-watch routine checks the ML training logs
+   (`shot_classifier_training_log.jsonl`, `shot_contact_training_log.jsonl`,
+   and their `_ml_` counterparts) for detection-bias/class-skew anomalies —
+   exactly the class of bug found in item 5 above. Reports findings; opens
+   a normal PR (branch `training-drift-watch/YYYY-MM-DD`) only if it finds
+   a real pipeline bug, same rules as bug sweep. Doesn't retrain models —
+   that stays manual, same as every other model in this app.
+   `*/3` on day-of-month resets each month boundary (occasional 1-2 day
+   gap at month start) — the pragmatic standard-cron way to say "every 3
+   days," not a perfectly rolling interval.
+7. **Noted, not yet acted on**: several hourly PR check-in loops for
+   already-merged PRs (#9–#12) are still re-arming daily instead of
+   stopping themselves, as their own instructions say they should once a
+   PR is merged. Worth a cleanup pass — not investigated or killed yet.
+8. **Job #9 (IMG_5755 manual Swing Review) is ready** — Dev Page → Swing
+   Review, cache pre-warmed, all 7 rally clips present plus the full
+   video hardlinked in as an 8th candidate (no extra disk usage).
+
+---
+
+## Still open — payments loose end
+
+RevenueCat/Stripe setup fully resolved 2026-08-19 (monthly plan live).
+One thing never confirmed: whether Premium unlocks *instantly* on
+purchase or only via the webhook a few seconds later — if it's ever
+noticeably delayed, check `backend/src/routes/billing.js`'s
+`active_entitlements` vs `items` field-name comment, likely culprit.
+Annual/other price tiers were never added — optional, add later if wanted.
 
 ---
 
 ## Also on the list: data quality & manual testing
 
-**Review the high-camera-angle pro database entries.** Flagged as a known
-gap since before this session — `infer_angle.py`'s Hough/keypoint detection
-can't fully distinguish a genuine side-on camera from one positioned behind
-the baseline (they look geometrically similar: a narrow net either way).
-Checked the actual numbers tonight: **20 of 631 pro database entries** have
-`camera_angle > 65°` — 14 forehand, 6 backhand, 0 serve. These are real
-swings currently being matched against and scored for real users, so a
-wrongly-labeled one could quietly produce a bad match/DTW comparison.
-- List: run
-  `python -c "import json; db=json.load(open('data/06_pro_database/pro_database.json')); [print(e['id'], e['camera_angle'], e['clip_path']) for e in db['entries'] if e.get('camera_angle') and e['camera_angle']>65]"`
-  from `scripts/` (venv activated) to get the full 20 with their clip paths.
-- For each: watch the clip (`clip_path`), decide if the framing is genuinely
-  side-on (keep) or actually behind-the-baseline (the entry's angle is
-  wrong — either fix `camera_angle` manually in `pro_database.json` or
-  remove the entry entirely if the swing itself is otherwise unusable).
-- **You don't have to do this eyeballing alone** — this is the same kind of
-  visual review I did this session for labeling amateur swing footage
-  (contact sheets, batches of frames). If you want, I can generate contact
-  sheets for these 20 clips and do a first-pass read on which look
-  genuinely side-on vs. mislabeled, then you make the final call on the
-  handful that are ambiguous. Just say so next time.
+**Review the high-camera-angle pro database entries.** **20 of 631** pro
+database entries have `camera_angle > 65°` (14 forehand, 6 backhand, 0
+serve) — real swings currently being matched/scored for real users, so a
+wrongly-labeled one could quietly produce a bad match. List them: run
+`python -c "import json; db=json.load(open('data/06_pro_database/pro_database.json')); [print(e['id'], e['camera_angle'], e['clip_path']) for e in db['entries'] if e.get('camera_angle') and e['camera_angle']>65]"`
+from `scripts/` (venv activated). For each: watch the clip, decide if the
+framing is genuinely side-on (keep) or actually behind-the-baseline (fix
+`camera_angle` or remove the entry). Offer stands: I can generate contact
+sheets and do a first-pass read for you if you want.
 
-**Test "Record now" (live camera calibration) on a real phone — genuinely
-needs a real check, higher priority than it might look.** This is a live
-feedback loop (repeated snapshots → `calibration_server.py` → positioning
-badge updates in your hand as you move the phone), not a one-shot
-request/response — the kind of thing that can look fine in a curl test
-against a single frame but feel laggy, jittery, or just wrong once it's
-actually running continuously while someone's trying to adjust their
-camera. I confirmed the backend/calibration-server side end-to-end via
-curl, but never watched the live loop itself. Run `npx expo start`, scan
-into Expo Go, try "Record now" from the upload screen, and check: does the
-badge update feel responsive (not laggy/stale), does it flicker between
-states unhelpfully, and does the messaging (net not found / height
-warnings / "looks good") actually make sense as you physically move the
-phone around.
+**Test "Record now" (live camera calibration) on a real phone.** Never
+click-tested the *live* feedback loop itself (only curl'd the backend in
+isolation) — run `npx expo start`, try "Record now," check the
+positioning badge feels responsive and the messaging makes sense as you
+move the phone.
 
-**Keep `frontend/config/api.js`'s LAN-IP fallback current.** If Expo Go
-suddenly can't reach the backend and nothing else changed, this is almost
-always why — check `ipconfig` and update the fallback IP in that file (or
-just set `EXPO_PUBLIC_API_BASE` in `frontend/.env` instead, which now
-overrides it).
+**Keep `frontend/config/api.js`'s LAN-IP fallback current** if Expo Go
+ever can't reach the backend and nothing else changed — check `ipconfig`,
+or set `EXPO_PUBLIC_API_BASE` in `frontend/.env` instead (overrides it).
 
 ---
 
 ## Later — deferred on purpose, don't forget these exist
 
-~~**Rotate the leaked Anthropic API key.**~~ — resolved 2026-08-19, Jack
-rotated `ANTHROPIC_API_KEY`.
-
-~~**Hosting.**~~ — resolved 2026-08-19, Jack has this hosted now.
-**Double-check, since these weren't explicitly confirmed done:**
-`EXPO_PUBLIC_API_BASE` in `frontend/.env` actually points at the real
-server (not still the LAN IP fallback), and the RevenueCat webhook URL in
-RevenueCat's dashboard points at the real server rather than the old ngrok
-tunnel (an expired/closed ngrok URL there would silently break tier
-upgrades via webhook, though `/api/billing/sync` would still work as a
-fallback since it hits RevenueCat directly).
+~~API key rotation~~ and ~~hosting~~ — both resolved 2026-08-19.
 
 **Apple App Store prep**, closer to submission time:
 - Apple Developer Program enrollment ($99/yr).
 - Set up an EAS development build (`eas build`) — plain Expo Go can't do
-  real in-app purchases or Google Sign-In, both already hit this limit
-  earlier in the project.
+  real in-app purchases or Google Sign-In.
 - Add native iOS purchases via RevenueCat's native SDK once the EAS build
-  exists — this is a client-side slot-in, the backend webhook/entitlement
-  logic already built today doesn't change for it.
-- Privacy policy URL, app icons/screenshots, permission usage strings
-  (photo library / camera / microphone access).
-- Get the backend hosted (see above) *before* submitting — Apple's
-  reviewers need a working backend during review, and won't be on your
-  home Wi-Fi.
-
-~~**Not yet committed to git**~~ — resolved 2026-08-18, everything through
-that session's Drills & Lessons/theme/DB-audit work is now committed.
+  exists (backend webhook/entitlement logic doesn't change for it).
+- Privacy policy URL, app icons/screenshots, permission usage strings.
+- Backend is already hosted (done) — needed before submission, done.
 
 ---
 
-## New from the 2026-08-18 session
+## Still open from earlier sessions
 
-**Click through today's UI changes for real** — all verified via API calls
-and the Metro bundler (compiles cleanly, real curl/database checks), but
-none of it was actually clicked through as a live user this session:
-- Swing Review's new rough-pick contact-marking step (History... actually
-  Dev Page → Swing Review → pick a job → mark a real shot → confirm the
-  rough scrub feels right before the fine ±50 slider takes over).
-- ~~Rally Boundary Review's lazy video loading~~ — resolved 2026-08-25,
-  click-tested live on a job with several pending clips: videos only
-  start loading once tapped, not all at once, as intended.
-- Drills & Lessons: History → Drills segment should now show 30 real
-  drills instead of "coming soon"; try adding a test lesson via Dev Page →
-  Drills & Lessons Editor and confirm the Lessons segment/Premium page
-  entry behave as expected for a free vs. premium account.
-
-**Seeing the new Android icon/splash for real needs a native build.** The
-new mascot-based `android-icon-*.png`/`splash-icon.png` files are correct
-on disk (verified by re-reading them), but Android icon/splash rendering
-only happens at native-build time — you won't see them in Expo Go. Needs
-an Expo prebuild or EAS build to actually check (same build step already
-needed for App Store prep above — worth doing together).
-
-~~**Data-quality: `coaching_tips_database.json` mojibake encoding bug.**~~
-— checked 2026-08-20, couldn't reproduce: scanned the whole file
-programmatically for the mangled-character pattern and for em/en dashes
-generally, found zero of either. Looks like it was already fixed at some
-point between when this was flagged and now (unclear exactly when/how).
-Leaving this line struck rather than deleted in case it resurfaces —
-if you spot mangled punctuation in a tip again, it's worth a fresh look.
+- **Click through Swing Review's rough-pick contact-marking step** as a
+  live user (Dev Page → Swing Review → pick a job → mark a shot → confirm
+  the rough scrub feels right) — verified via API only, never clicked
+  through.
+- **Android icon/splash needs a native build to actually see** — correct
+  on disk, but Android only renders them at native-build time, invisible
+  in Expo Go. Same build step as the App Store prep above.
+- **GitHub repo is public** (flipped from private 2026-08-20 for sharing)
+  — flip back to private when done sharing:
+  `gh repo edit JP14939/tennis-app --visibility private`.
+- ~~Mojibake encoding bug~~, ~~Rally Boundary Review lazy loading~~,
+  ~~Drills & Lessons showing real content~~ — all resolved/verified, prior
+  sessions.
+- **85 old History rows (2026-08-14 batch) have no watchable video on the
+  hosted server** — those videos were only ever created locally, never
+  copied to the host. A brand-new upload works fine; this only affects
+  that specific old local batch. Fix would be a one-time `scp`/`tar` copy
+  of `data/runtime/user_clips/8_*` to the host — not done, no decision to
+  spend the effort on recovering old test data.
+- **z-depth is disabled in DTW comparison** (`Z_WEIGHT = 0.0` in
+  `trajectory_compare.py`) — a past attempt tanked similarity scores
+  45-75% because MediaPipe's z needs its own measured-spread rescaling,
+  not a reused x/y divisor. Re-enabling needs that rescale + re-validation
+  against real saved swings.
+- **True 3D pose extraction** — bigger/later idea; MediaPipe's z is a
+  monocular guess, a real upgrade needs multi-camera triangulation or a
+  depth-aware model.
+- **No fault/ball-landing/in-or-out detection anywhere** — caps how far
+  serve-gating or point-by-point scoring can go. Bigger separate project.
+- **Single-player tracking only** — no opponent/dual-player awareness;
+  relevant if "which side served" or doubles support is ever wanted (came
+  up directly in the serve-gate bug found this session, item 5 above).
+- **More coaching tip content** — expanding
+  `data/08_coaching_ai/coaching_tips_database.json` is pure content work,
+  always helps coverage.
+- **Pose sampling is sparse (`sample_every=3`)** on both the pro database
+  and user uploads — plausibly caps real comparison accuracy (fast
+  moments like contact can be off by up to ~1/3 frame interval), not just
+  overlay smoothness (already fixed separately). Increasing density needs
+  re-extracting the ~1281-clip pro database (~60-90 min job) and
+  re-running the amateur eval set to confirm quality actually improves.
+  Not done — real pipeline change, worth doing once prioritized.
+- **Pro database needs a manual clip-quality review pass** — beyond the
+  high-camera-angle entries above, some of the ~914 clips are mismatched,
+  slow-motion, or span two different swings. **Pro Clip Review** Dev Page
+  tool exists for this (watch/tag ok / mismatched / slow-motion / spans
+  two swings / don't-use / cut-to-fix, verdicts logged). Once enough are
+  reviewed, a rebuild script excluding flagged entries isn't built yet.
+- **Camera elevation calibrated on only 2 known-elevated reference
+  videos.** Cheaper fix than more vision-side patching: capture phone
+  accelerometer/gyroscope tilt at record time instead of inferring it.
+- **No enforced convention for `optionalAuth` vs `requireAuth` per
+  route** — root cause of a free-tier-cap bypass fixed 2026-08-22; each
+  known site is patched, but the *next* new route could repeat it. Needs
+  a lint rule or route-manifest assertion — I can just build it, no
+  decision needed from you.
+- **SQLite foreign keys are never enforced** (`PRAGMA foreign_keys` off)
+  — root cause of 3 orphaned-row bugs, each individually fixed. Turning
+  it on needs a full audit of every DELETE (some are intentionally
+  partial) — needs your call before attempting, risk of breaking account/
+  history deletion if done wrong.
+- **SQLite still stands in for the Postgres `DATABASE_URL` implies** —
+  `pg` installed but unused. Not urgent, flagged so it doesn't silently
+  become permanent by default. Needs your call on timing.
+- **`expo-av` must be migrated before the SDK 55 upgrade.** Deprecated in
+  SDK 54 (currently pinned), removed outright in 55. Two call sites need
+  *different* replacement packages: `PlatformVideo.native.js` →
+  `expo-video` (must preserve its hand-written ref interface, shared with
+  the `.web.js` platform file), `utils/sounds.js` → `expo-audio` (not
+  currently installed). `expo-video` was previously removed as
+  dead-weight; re-add as part of the real migration.
+- **Ball-speed feature scoped, not built.** Recommended approach:
+  net-keypoint local scale calibration, v1 metric = speed at the net
+  crossing (disclosed limitation, not off-racket-at-contact). No action
+  unless you want to greenlight implementation.
+- **Local dev password reset**: `jack.p14370@gmail.com` on local
+  (port 8090) was reset directly in `backend/data/app.db` to a password
+  given in chat, not recorded here. `RESEND_API_KEY` still isn't
+  configured locally, so the real email flow won't work on local dev
+  until Resend is set up (account/API key/sender domain — same shape as
+  the RevenueCat setup above, not detailed further here since it's a
+  standard 3rd-party dashboard flow).
 
 ---
 
@@ -1103,3 +1353,69 @@ can decide for itself):
 No code changes made this run (nothing to fix — the scripts and their
 trust-gating logic read fine on inspection; there's simply no data
 reachable to run them against), so no PR opened.
+
+---
+
+## Resolved — history/breadcrumbs only
+
+- ~~RevenueCat 12-step setup~~ — 2026-08-19, live (see "Still open —
+  payments loose end" above for the one lingering question).
+- ~~Not yet committed to git~~ — 2026-08-18.
+- ~~39 unprocessed clips in Downloads~~ (`IMG_5757`-`5774`, `5795`-`5815`,
+  2 misc) — run 2026-08-20, **0 real swings confirmed across all of it**,
+  $0 spent (trusted-bucket auto-reject). Not worth re-running as-is.
+- ~~GitHub repo created~~ — 2026-08-20 (see "still open" note above re:
+  visibility).
+- ~~Hosted backend redeploy~~ — 2026-08-21. Root cause: `/opt/tennis_app`
+  on the VPS wasn't a real git repo (one-time file copy, not `git clone`)
+  — converted in place. SSH key `~/.ssh/rallymax_key` works for the VPS
+  (`root@167.233.107.31`), use it over fighting password auth. Superseded
+  2026-08-25 by real CD (`.github/workflows/deploy.yml`) — manual
+  `git pull`+`docker compose` is no longer needed for code, only for
+  `data/` file transfers (still manual) and `.env` edits (still manual).
+- ~~Password reset email flow~~ — built and tested 2026-08-20, needs a
+  real Resend account to send real emails (see "still open" list above).
+- ~~Premium folded into Home + Lessons~~ — 2026-08-20 evening, per user
+  feedback (6 tabs → 5, straight-to-checkout on tap).
+- ~~Ball detector Phase 1/2 (data sourcing + labeling)~~ — 2026-08-20,
+  354 labels logged including manual-review backlog. 5 static-decoy clips
+  flagged and confirmed excluded 2026-08-25. Constant-velocity Kalman
+  ball tracker also shipped as a complementary (not substitute) fix.
+  **Phase 3 (fine-tuning) shipped this session, item 2 above.**
+- ~~Shot classifier trained on real labeled data (not rule-based only)~~
+  — 2026-08-19, 63.8% CV accuracy vs. rule-based 50%. Own trust gate,
+  Claude stays teacher until it earns trust. **Log-derived data extraction
+  bug found/fixed this session, item 4 above.**
+- ~~`list_swing_candidates.py` classify() bug~~ — 2026-08-19, was silently
+  passing `None` for every `student_shot_type` ever served.
+- ~~Camera angle fallback when net isn't visible~~ — 2026-08-20,
+  court-sideline Hough detector, confidence capped low. Not yet validated
+  against real net-position footage (no known-good reference clips yet).
+- ~~Coaching tip manual QA tool~~ — 2026-08-19, **Tip Review** Dev Page.
+- ~~Tip severity shown to users~~ — 2026-08-20, mild/moderate/severe pill.
+- ~~No CI/CD~~ — 2026-08-25, `.github/workflows/deploy.yml` auto-redeploys
+  on push to master (code paths only).
+- ~~Python-subprocess spawn boundary duplicated 12x~~ — 2026-08-22,
+  centralized in `backend/src/utils/runPythonJson.js`.
+- ~~5 scheduled daily routines connected~~ — 2026-08-23, ran as designed.
+  **Schedule changed this session, item 6 above — see that entry for the
+  current cron table, this is now historical only.**
+- ~~PRs #1-#4 (2026-08-23 round)~~, ~~#5-#8 (2026-08-24)~~,
+  ~~#9-#12 (2026-08-25)~~, ~~#13-#16 (2026-08-26)~~ — all scheduled-routine
+  PRs reviewed and merged same-day or next-day each round. Two real merge
+  conflicts hand-resolved on the 2026-08-23 round (`analyse.js`,
+  `drills.js` — both had independent duplicate fixes from two different
+  routines, combined the better parts of each). Per-PR fix summaries live
+  in `HANDOVER.md`'s "Scheduled-routine PR round-up" sections if the
+  specific detail of an old fix ever matters again.
+- ~~Off-box database backups~~ — 2026-08-25. B2 bucket
+  `rallymax-db-backups`, `rclone` remote `b2remote` on the VPS, cron job
+  in `root`'s crontab (3am UTC). Auth verified live; a real file landing
+  in the bucket after an actual 3am run was the last unconfirmed step as
+  of 2026-08-25 — check the bucket if this hasn't been eyeballed since.
+- ~~5 flagged ball-label clips reviewed~~ — 2026-08-25, all confirmed
+  decoys, excluded from Phase 3 training data.
+- ~~Coaching-tip Claude verifier was silently live on every real
+  request~~ — found and disabled 2026-08-23 (contradicted docs describing
+  it as unused/offline-only). Open question, never decided: should it
+  ever go live again with a real kill switch/budget, or stay offline.

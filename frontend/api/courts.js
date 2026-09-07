@@ -76,6 +76,56 @@ export function unwatchClub(token, courtId) {
   }).then((res) => (res.ok ? undefined : handle(res)));
 }
 
+// Crowd-sourced club naming -- POST proposes/overwrites the name (resets
+// verification, same as routes/courts.js's own comment on
+// club_name_confirmations); the confirm endpoint is a separate call, same
+// two-step shape as confirmCourt() above.
+export function suggestClubName(token, clubId, name) {
+  return fetch(`${API_BASE}/api/clubs/${clubId}/name`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ name }),
+  }).then(handle);
+}
+
+export function confirmClubName(token, clubId) {
+  return fetch(`${API_BASE}/api/clubs/${clubId}/name/confirm`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  }).then(handle);
+}
+
+// Direct-by-club-id unwatch, for the My Watches screen (it only ever has the
+// watched clubs list itself -- no associated court id -- to work from,
+// unlike CourtSheet's per-court "Watching" pill, which resolves the club
+// from a court id it already has). No matching create function -- watching
+// a club is still only initiated from a specific court's sheet.
+export function unwatchClubById(token, clubId) {
+  return fetch(`${API_BASE}/api/courts/club-watch/${clubId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  }).then((res) => (res.ok ? undefined : handle(res)));
+}
+
+// Area watch is a standalone resource (a dropped pin + radius), unlike
+// court/club watch which toggle a watch flag on an existing entity -- so
+// this creates/deletes the watch row directly instead of resolving it from
+// a court id.
+export function createAreaWatch(token, { name, latitude, longitude, radiusKm }) {
+  return fetch(`${API_BASE}/api/courts/area-watch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ name, latitude, longitude, radius_km: radiusKm }),
+  }).then(handle);
+}
+
+export function deleteAreaWatch(token, areaWatchId) {
+  return fetch(`${API_BASE}/api/courts/area-watch/${areaWatchId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  }).then((res) => (res.ok ? undefined : handle(res)));
+}
+
 export function getAvailability(token, courtId) {
   return fetch(`${API_BASE}/api/courts/${courtId}/availability`, {
     headers: { Authorization: `Bearer ${token}` },

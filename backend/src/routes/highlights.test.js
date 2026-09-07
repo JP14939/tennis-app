@@ -95,6 +95,87 @@ describe('POST /highlights/jobs/:id/reel premium gate', () => {
   });
 });
 
+describe('GET /highlights/jobs/:id rally shots', () => {
+  test('each rally carries its persisted shots, ordered by shot_index; a rally with none gets shots: []', async () => {
+    const { id: userId, token } = makeUser('shots_get@test.com', 'free');
+    const jobId = db.prepare(`INSERT INTO highlight_jobs (user_id, video_path, status) VALUES (?, 'x', 'done')`)
+      .run(userId).lastInsertRowid;
+    const withShotsId = db.prepare(`
+      INSERT INTO rally_clips (job_id, user_id, clip_path, start_sec, end_sec, duration_sec, swing_count)
+      VALUES (?, ?, 'clip_a.mp4', 0, 10, 10, 2)
+    `).run(jobId, userId).lastInsertRowid;
+    const noShotsId = db.prepare(`
+      INSERT INTO rally_clips (job_id, user_id, clip_path, start_sec, end_sec, duration_sec, swing_count)
+      VALUES (?, ?, 'clip_b.mp4', 20, 25, 5, 1)
+    `).run(jobId, userId).lastInsertRowid;
+    // Inserted out of order to confirm the query orders by shot_index itself.
+    db.prepare(`INSERT INTO rally_shots (rally_clip_id, shot_index, shot_type, contact_time_sec) VALUES (?, 1, 'backhand', 4.5)`).run(withShotsId);
+    db.prepare(`INSERT INTO rally_shots (rally_clip_id, shot_index, shot_type, contact_time_sec) VALUES (?, 0, 'forehand', 1.2)`).run(withShotsId);
+
+    const res = await request(app)
+      .get(`/api/highlights/jobs/${jobId}`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    const withShots = res.body.rallies.find((r) => r.id === withShotsId);
+    const noShots = res.body.rallies.find((r) => r.id === noShotsId);
+    expect(withShots.shots).toEqual([
+      { shot_index: 0, shot_type: 'forehand', contact_time_sec: 1.2 },
+      { shot_index: 1, shot_type: 'backhand', contact_time_sec: 4.5 },
+    ]);
+    expect(noShots.shots).toEqual([]);
+  });
+});
+
+describe('POST /highlights/rallies/:id/shots/:shotIndex/analyze', () => {
+  test('rejects a non-integer shotIndex with 400 before any lookup', async () => {
+    const { token } = makeUser('shots_badindex@test.com', 'free');
+    const res = await request(app)
+      .post('/api/highlights/rallies/1/shots/not-a-number/analyze')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(400);
+  });
+
+  test('a nonexistent rally clip is a 404', async () => {
+    const { token } = makeUser('shots_noclip@test.com', 'free');
+    const res = await request(app)
+      .post('/api/highlights/rallies/999999/shots/0/analyze')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(404);
+  });
+
+  test("another user's rally clip is a 404, not exposed via ownership leak", async () => {
+    const { id: ownerId } = makeUser('shots_owner@test.com', 'free');
+    const { token: otherToken } = makeUser('shots_other@test.com', 'free');
+    const jobId = db.prepare(`INSERT INTO highlight_jobs (user_id, video_path, status) VALUES (?, 'x', 'done')`)
+      .run(ownerId).lastInsertRowid;
+    const clipId = db.prepare(`
+      INSERT INTO rally_clips (job_id, user_id, clip_path, start_sec, end_sec, duration_sec, swing_count)
+      VALUES (?, ?, 'clip.mp4', 0, 5, 5, 1)
+    `).run(jobId, ownerId).lastInsertRowid;
+    db.prepare(`INSERT INTO rally_shots (rally_clip_id, shot_index, shot_type, contact_time_sec) VALUES (?, 0, 'forehand', 1.0)`).run(clipId);
+
+    const res = await request(app)
+      .post(`/api/highlights/rallies/${clipId}/shots/0/analyze`)
+      .set('Authorization', `Bearer ${otherToken}`);
+    expect(res.status).toBe(404);
+  });
+
+  test('a rally clip with no shot at that index is a 404', async () => {
+    const { id: userId, token } = makeUser('shots_missingindex@test.com', 'free');
+    const jobId = db.prepare(`INSERT INTO highlight_jobs (user_id, video_path, status) VALUES (?, 'x', 'done')`)
+      .run(userId).lastInsertRowid;
+    const clipId = db.prepare(`
+      INSERT INTO rally_clips (job_id, user_id, clip_path, start_sec, end_sec, duration_sec, swing_count)
+      VALUES (?, ?, 'clip.mp4', 0, 5, 5, 0)
+    `).run(jobId, userId).lastInsertRowid;
+
+    const res = await request(app)
+      .post(`/api/highlights/rallies/${clipId}/shots/0/analyze`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('PATCH /highlights/rallies/:id field validation', () => {
   test('rejects a non-string outcome_tag with 400 instead of a 500 crash', async () => {
     const { id: userId, token } = makeUser('rally_badtag@test.com', 'free');

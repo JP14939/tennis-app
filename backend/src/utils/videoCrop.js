@@ -43,13 +43,18 @@ function cropToSubject(inputPath, outputPath) {
   });
 }
 
-// Moves a multer-uploaded file into persistent storage (so it survives past
-// this request, unlike the old immediate-delete behaviour) and crops it.
-// Returns { originalPath, croppedPath } -- croppedPath is null if cropping
-// failed, which callers treat as "no cropped version available".
-async function persistAndCrop(uploadPath, destDir) {
+// Moves (or, with deleteSource:false, copies) a source video into persistent
+// storage and crops it. Returns { originalPath, croppedPath } -- croppedPath
+// is null if cropping failed, which callers treat as "no cropped version
+// available".
+//
+// deleteSource defaults to true (analyse.js's original behaviour: the source
+// is a throwaway multer upload). Pass false when the source must survive
+// this call -- e.g. highlights.js analyzing one shot out of a persisted rally
+// clip that other shots in the same rally still need.
+async function persistAndCrop(sourcePath, destDir, { deleteSource = true } = {}) {
   fs.mkdirSync(destDir, { recursive: true });
-  const ext = path.extname(uploadPath) || '.mp4';
+  const ext = path.extname(sourcePath) || '.mp4';
   const originalPath = path.join(destDir, `original${ext}`);
   // renameSync (not copy) worked fine in local dev where uploads and
   // data/ live on the same filesystem, but fails hard in the hosted
@@ -58,8 +63,8 @@ async function persistAndCrop(uploadPath, destDir) {
   // can't cross filesystem boundaries. Confirmed live: every real
   // /api/analyse request 500'd on this exact error post-hosting. Copy +
   // unlink works across filesystems and is the standard fix for EXDEV.
-  fs.copyFileSync(uploadPath, originalPath);
-  fs.unlinkSync(uploadPath);
+  fs.copyFileSync(sourcePath, originalPath);
+  if (deleteSource) fs.unlinkSync(sourcePath);
   const croppedPath = await cropToSubject(originalPath, path.join(destDir, 'cropped.mp4'));
   return { originalPath, croppedPath };
 }

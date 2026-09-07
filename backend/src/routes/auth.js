@@ -49,6 +49,7 @@ function publicUser(user) {
     username: user.username,
     tier: user.tier,
     notifications_enabled: !!user.notifications_enabled,
+    handed: user.handed || 'right',
   };
 }
 
@@ -242,7 +243,7 @@ router.get('/auth/me', requireAuth, (req, res) => {
 });
 
 router.patch('/auth/me', requireAuth, (req, res) => {
-  const { name, notifications_enabled, username } = req.body || {};
+  const { name, notifications_enabled, username, handed } = req.body || {};
 
   if (name !== undefined && typeof name !== 'string') {
     return res.status(400).json({ error: 'Name must be a string' });
@@ -260,6 +261,9 @@ router.patch('/auth/me', requireAuth, (req, res) => {
   // inverting the caller's actual intent instead of rejecting the request.
   if (notifications_enabled !== undefined && typeof notifications_enabled !== 'boolean') {
     return res.status(400).json({ error: 'notifications_enabled must be a boolean' });
+  }
+  if (handed !== undefined && handed !== 'left' && handed !== 'right') {
+    return res.status(400).json({ error: "handed must be 'left' or 'right'" });
   }
 
   let normalisedUsername;
@@ -289,12 +293,14 @@ router.patch('/auth/me', requireAuth, (req, res) => {
       UPDATE users
       SET name = COALESCE(?, name),
           notifications_enabled = COALESCE(?, notifications_enabled),
-          username = COALESCE(?, username)
+          username = COALESCE(?, username),
+          handed = COALESCE(?, handed)
       WHERE id = ?
     `).run(
       name !== undefined ? name.trim() : null,
       notifications_enabled !== undefined ? (notifications_enabled ? 1 : 0) : null,
       normalisedUsername !== undefined ? normalisedUsername : null,
+      handed !== undefined ? handed : null,
       user.id
     );
   } catch (err) {
@@ -395,6 +401,7 @@ router.delete('/auth/me', requireAuth, async (req, res) => {
     db.prepare('DELETE FROM push_tokens WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM court_watches WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM club_watches WHERE user_id = ?').run(userId);
+    db.prepare('DELETE FROM area_watches WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM court_confirmations WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM availability_posts WHERE user_id = ?').run(userId);
     db.prepare('DELETE FROM friend_codes WHERE user_id = ?').run(userId);

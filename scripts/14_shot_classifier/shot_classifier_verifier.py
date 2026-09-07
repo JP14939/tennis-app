@@ -95,7 +95,21 @@ def _frame_to_base64_jpeg(frame):
     return base64.b64encode(buf.tobytes()).decode('ascii')
 
 
-def build_verification_prompt(student_scores, student_pick):
+def build_verification_prompt(student_scores, student_pick, blind=False):
+    """blind=True omits the rule classifier's pick/scores entirely -- an
+    unprimed classification, for measuring whether telling Claude the
+    student's guess biases it toward agreeing (see
+    scripts/17_amateur_eval/evaluate_pro_review_labels.py)."""
+    if blind:
+        return """This image shows a tennis player at the moment of contact during a swing, captured from match footage.
+
+Judge from the image alone: is this a forehand, backhand, or serve? Consider racket-arm side, body orientation, arm/racket height relative to the shoulder, and stance.
+
+Respond with ONLY a JSON object, no other text:
+{
+  "shot_type": "forehand" | "backhand" | "serve",
+  "reasoning": "one sentence explaining what in the image supports your judgment"
+}"""
     scores_desc = ', '.join(f'{k}={v:.3f}' for k, v in student_scores.items())
     return f"""This image shows a tennis player at the moment of contact during a swing, captured from match footage.
 
@@ -111,7 +125,7 @@ Respond with ONLY a JSON object, no other text:
 }}"""
 
 
-def verify_shot(frame, student_scores, student_pick, model='claude-haiku-4-5-20251001'):
+def verify_shot(frame, student_scores, student_pick, model='claude-haiku-4-5-20251001', blind=False):
     """
     Calls the Anthropic API (vision) to get Claude's independent shot-type
     judgment from the contact frame image. Returns
@@ -124,7 +138,7 @@ def verify_shot(frame, student_scores, student_pick, model='claude-haiku-4-5-202
 
     client = anthropic.Anthropic(api_key=_load_api_key())
     image_b64 = _frame_to_base64_jpeg(frame)
-    prompt = build_verification_prompt(student_scores, student_pick)
+    prompt = build_verification_prompt(student_scores, student_pick, blind=blind)
 
     response = client.messages.create(
         model=model,

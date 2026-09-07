@@ -13,6 +13,9 @@ build/
 
 # Pipeline data output (12GB+, not suited for git without LFS) — see HANDOVER.md
 /data/
+# Pipeline data / one-off dumps that escaped into the scripts tree
+/scripts/data/
+/scripts/_baseline4_out.json
 
 # Pretrained COCO weights auto-downloaded by ultralytics on first use (not
 # fine-tuned, not original work, redownload automatically wherever missing)

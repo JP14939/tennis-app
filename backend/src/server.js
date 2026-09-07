@@ -86,6 +86,14 @@ app.use('/drill-clips', express.static(path.join(DATA_DIR, 'runtime', 'drill_cli
 // Static candidate frames (JPEGs, not video) for the Dev Page's manual
 // ball-labeling tool -- see the ball detector project's plan.
 app.use('/ball-label-frames', express.static(path.join(DATA_DIR, '10b_ball_detection', 'candidate_frames')));
+// Original, uncut compilation videos the pro database was built from --
+// serves "View in source footage" on the Pro Clip Review Dev Page tool
+// (Sprint 0 of the 2026-08-27 ML reliability plan), so a flagged clip can be
+// checked against full surrounding context instead of just its isolated
+// ~3s cut. These files are large (100MB-1.3GB); express.static supports
+// HTTP Range requests out of the box, so seeking to a specific timestamp
+// doesn't require downloading the whole file first.
+app.use('/source-footage', express.static(path.join(DATA_DIR, '01_source_videos')));
 
 // Standalone reset-password.html (self-serve password reset, 2026-08-20)
 // -- served from the backend directly rather than through the Expo app,

@@ -118,6 +118,37 @@ describe('PATCH /history/:id', () => {
     const row = db.prepare('SELECT flagged_not_shot, confirmed_real_shot FROM analyses WHERE id = ?').get(analysisId);
     expect(row).toEqual({ flagged_not_shot: 0, confirmed_real_shot: 1 });
   });
+
+  test('rejects an empty body', async () => {
+    const { id, token } = makeUser();
+    const analysisId = makeAnalysis(id);
+    const res = await request(app).patch(`/api/history/${analysisId}`)
+      .set('Authorization', `Bearer ${token}`).send({});
+    expect(res.status).toBe(400);
+  });
+
+  test('accepts a match-quality flag and records it on the row', async () => {
+    const { id, token } = makeUser();
+    const analysisId = makeAnalysis(id);
+    const res = await request(app).patch(`/api/history/${analysisId}`)
+      .set('Authorization', `Bearer ${token}`).send({ match_flagged: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body.match_flagged).toBe(true);
+    expect(db.prepare('SELECT match_flagged FROM analyses WHERE id = ?').get(analysisId).match_flagged).toBe(1);
+  });
+
+  test('a match flag is independent of the real-shot verdicts', async () => {
+    const { id, token } = makeUser();
+    const analysisId = makeAnalysis(id);
+    await request(app).patch(`/api/history/${analysisId}`)
+      .set('Authorization', `Bearer ${token}`).send({ confirmed_real_shot: true });
+    await request(app).patch(`/api/history/${analysisId}`)
+      .set('Authorization', `Bearer ${token}`).send({ match_flagged: true });
+
+    const row = db.prepare('SELECT confirmed_real_shot, match_flagged FROM analyses WHERE id = ?').get(analysisId);
+    expect(row).toEqual({ confirmed_real_shot: 1, match_flagged: 1 });
+  });
 });
 
 describe('DELETE /history/:id', () => {
