@@ -3014,3 +3014,65 @@ accepted detections to seed from — so it can't bootstrap exactly where it's
 needed. A gravity/parabola flight model + seeding from the *racket*
 trajectory at contact (not just prior ball detections) is the real lever,
 not more tuning of this CV-only version.
+
+## Session 2026-09-07 (later) — near-side ball detection: evaluated NO-GO; detector retrain queued
+
+Jack's reframe after the ROI-tracker NO-GO: detect the ball reliably on the
+**near side of the net** (large, close to camera), physics for the far side.
+Plan: `~/.claude/plans/c-users-jackp-claude-plans-okay-plan-it-serene-map.md`.
+
+### Stage 3 (the eval) ran first — and killed Stages 1 & 2
+
+`scripts/07_ball_racket_tracking/eval_near_court_ball_detection.py` (NEW —
+the first ball eval with a **near/far split** by the detected net line) on
+all 354 human-labelled phone frames:
+
+| regime | NEAR detect | NEAR IoU | FAR detect | neg fp |
+|---|---|---|---|---|
+| **A@320 — full frame, current live** | **0.85** | 0.56 | **0.87** | 0.077 |
+| B@224 — player-bbox crop | 0.68 | 0.54 | — | 0.081 |
+| C@224 — near-court crop (new) | 0.60 | 0.20 | 0.17 | 0.081 |
+
+- **`near_side_coverage = 0.52`** — a crop small enough to help the detector's
+  scale can't hold the ball as it fans cross-court after contact.
+- **`net_undetected = 280/354` (79%)** — the net-keypoint model rarely fires
+  on close phone framing, so "which side of the net" is usually undefined.
+- The earlier `ball_imgsz_calibration.json` "regime B wins (0.94 detect)"
+  was measured **only over balls already inside the crop** (it dropped the
+  GT-outside-crop rows). On the honest full set, cropping loses.
+- **The full-frame detector at imgsz 320 is already ~85% near / 87% far** on
+  human-visible balls. The "ball tracking is broken" framing from the
+  2026-09-06/07 ROI work was overstated — what's actually weak is the
+  *contact frame itself* (~53%, ball behind racket, and gap-detection already
+  covers that) and the *pro/broadcast database* (offline, not the product).
+
+`near_court_ball_tracker.py` + the eval harness are committed but **not wired
+to anything** (like `ball_roi_tracker.py`). Stage 1/2 wiring: not done.
+
+### Stage 4 — clean detector retrain (queued, not run)
+
+Real bugs fixed in `prepare_ball_yolo_dataset.py`:
+- wipes `yolo_dataset_v1/` every run (stale files from a prior larger run =
+  how **76 images ended up in both train and val**)
+- splits by **clip (analysis id)**, not by frame (adjacent frames are
+  near-dupes) — with end assertions that train/val images AND clip ids are
+  disjoint
+- defaults to `manual_ball_label_log_server.jsonl`, rejects a <100-row stub
+- accepts multiple label logs (merge + dedupe) for the wide-court set
+
+`train_ball_detector.py`: imgsz 320 → 480, `multi_scale=True`, `scale=0.6`
+(the model was trained on one ~28px object scale and is brittle to anything
+else — the single biggest v1 weakness).
+
+NEW `scripts/07_ball_racket_tracking/README_ball_retrain.md` — the full
+pull → build → train (~1.8hr CPU) → gate recipe.
+NEW `test_prepare_ball_yolo_dataset_pytest.py` (4). Stage-7 suite 91 green.
+
+**Not run:** the actual retrain — needs the server label log pulled down +
+the wide-court labels (`wide_court_ball_labels.jsonl`, 57 rows) hand-reviewed
+first, then ~1.8hr CPU + the three gate audits.
+
+### Deferred (unchanged)
+
+Rough far-side landing zone (gravity-arc from the net-crossing velocity) —
+its own follow-up once there's a trustworthy near-side track.
