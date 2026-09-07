@@ -96,4 +96,36 @@ describe('POST /billing/sync', () => {
     expect(res.body.tier).toBe('free');
     expect(tierOf(id)).toBe('free');
   });
+
+  // Regression test for a bug found in the 2026-09-07 sweep: this route's
+  // RevenueCat fetch is a real network round-trip, so it can resolve AFTER a
+  // concurrent DELETE /auth/me has already anonymized the same row and reset
+  // tier='free' as part of deleting the account. The old unconditional
+  // `UPDATE ... SET tier='premium'` would silently resurrect 'premium' onto
+  // an anonymized, already-deleted account forever, with no other code path
+  // ever touching that row's tier again. Deletion bumps token_version at the
+  // same moment it resets tier -- gating the write on token_version matching
+  // the token's own claim closes this without adding new state.
+  test('does not resurrect premium on an account deleted while the RevenueCat fetch was in flight', async () => {
+    const { id, token } = makeUser('free');
+    // requireAuth checks token_version BEFORE this fires, so it still passes
+    // -- the token was valid when the request started. The mock fetch's
+    // resolution is where the "concurrent" DELETE /auth/me commits, exactly
+    // like the real race: the account is anonymized and tier reset to
+    // 'free' while this request's network round-trip is still in flight.
+    global.fetch = jest.fn(async () => {
+      db.prepare('UPDATE users SET tier = ?, token_version = token_version + 1 WHERE id = ?').run('free', id);
+      return {
+        status: 200,
+        ok: true,
+        json: async () => ({ active_entitlements: { items: [{ entitlement_id: 'entlee4b5ca9dd' }] } }),
+      };
+    });
+
+    const res = await request(app).post('/api/billing/sync').set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.tier).toBe('free');
+    expect(tierOf(id)).toBe('free');
+  });
 });

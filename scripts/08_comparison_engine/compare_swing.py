@@ -174,10 +174,13 @@ def find_peak_wrist_frame(frames, fps):
         # peak, silently shifting the whole comparison window and
         # corrupting the DTW score with no error surfacing anywhere. Same
         # 0.5 threshold as detect_swings.py's compute_wrist_velocity(),
-        # the pro-database side's equivalent function.
-        if rw and prev_rw and rw['visibility'] > 0.5:
+        # the pro-database side's equivalent function. Both endpoints of the
+        # jump must be confident, not just the current frame -- a garbage
+        # low-visibility PREVIOUS position paired with a confident current
+        # one produces the exact same spurious large jump.
+        if rw and prev_rw and rw['visibility'] > 0.5 and prev_rw['visibility'] > 0.5:
             vel = max(vel, math.sqrt((rw['x']-prev_rw['x'])**2 + (rw['y']-prev_rw['y'])**2))
-        if lw and prev_lw and lw['visibility'] > 0.5:
+        if lw and prev_lw and lw['visibility'] > 0.5 and prev_lw['visibility'] > 0.5:
             vel = max(vel, math.sqrt((lw['x']-prev_lw['x'])**2 + (lw['y']-prev_lw['y'])**2))
         if vel > max_vel:
             max_vel = vel

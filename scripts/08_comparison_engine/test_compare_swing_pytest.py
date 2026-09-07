@@ -59,3 +59,24 @@ def test_missing_landmarks_frame_is_skipped_not_crashed():
     ]
     # Should not raise, and should still find the real movement at frame 2.
     assert find_peak_wrist_frame(frames, fps=30) == 2
+
+
+def test_low_visibility_PREVIOUS_frame_is_not_mistaken_for_contact():
+    # The gate used to only check the CURRENT frame's visibility, so a
+    # garbage low-confidence PREVIOUS position paired with a confident
+    # current one still produced a spurious large jump that got accepted.
+    frames = [
+        _frame(0, (0.50, 0.50), 1.0),
+        # Motion-blurred frame landing at a garbage position -- its own
+        # visibility is low, so no jump *into* this frame should ever be
+        # trusted, including the jump *out of* it on the next frame.
+        _frame(1, (0.10, 0.10), 0.1),
+        # High-confidence frame, but the apparent jump from frame 1's
+        # garbage position is spurious and must not be picked as the peak.
+        _frame(2, (0.55, 0.50), 1.0),
+        _frame(3, (0.56, 0.50), 1.0),
+        # The real (smaller, but genuine) velocity peak.
+        _frame(4, (0.62, 0.50), 1.0),
+    ]
+    peak_idx = find_peak_wrist_frame(frames, fps=30)
+    assert peak_idx == 4

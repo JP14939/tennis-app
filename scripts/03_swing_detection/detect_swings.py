@@ -57,9 +57,14 @@ def compute_wrist_velocity(frames):
         rw = get_landmark(frame, 'right_wrist')
 
         speed = 0.0
-        if lw and prev_lw and lw['visibility'] > 0.5:
+        # Both endpoints of the jump must be confident -- a low-visibility
+        # (motion-blurred) PREVIOUS position paired with a confident current
+        # one produces the same spurious large jump as the reverse case,
+        # since only the current frame was gated here before. See the
+        # matching fix/comment in compare_swing.py's find_peak_wrist_frame().
+        if lw and prev_lw and lw['visibility'] > 0.5 and prev_lw['visibility'] > 0.5:
             speed = max(speed, distance(lw, prev_lw))
-        if rw and prev_rw and rw['visibility'] > 0.5:
+        if rw and prev_rw and rw['visibility'] > 0.5 and prev_rw['visibility'] > 0.5:
             speed = max(speed, distance(rw, prev_rw))
 
         velocities.append(speed)

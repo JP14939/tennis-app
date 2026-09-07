@@ -320,12 +320,18 @@ router.post('/highlights/jobs/:id/reel', requireAuth, requirePremium, (req, res)
     return res.status(400).json({ error: 'No matching rallies to stitch' });
   }
 
-  const outputPath = path.join(CLIPS_DIR, String(req.user.id), String(job.id), `reel_${Date.now()}.mp4`);
   const rallyIdsResolved = clips.map((c) => c.id);
   const info = db.prepare(
     `INSERT INTO reel_jobs (highlight_job_id, user_id, rally_ids) VALUES (?, ?, ?)`
   ).run(job.id, req.user.id, JSON.stringify(rallyIdsResolved));
   const reelJobId = info.lastInsertRowid;
+  // Keyed by reelJobId (not just Date.now()) so two reel requests for the
+  // same highlight job landing in the same millisecond -- e.g. a UI
+  // double-tap before the button disables -- never write to the same file:
+  // both stitcher processes would race on that inode, and both reel_jobs
+  // rows would still be marked done pointing at one corrupted/overwritten
+  // output with no error surfaced to either caller.
+  const outputPath = path.join(CLIPS_DIR, String(req.user.id), String(job.id), `reel_${reelJobId}_${Date.now()}.mp4`);
 
   // Not awaited -- runs in the background, response goes back immediately.
   runReelJob(reelJobId, outputPath, clips.map((c) => c.clip_path));
