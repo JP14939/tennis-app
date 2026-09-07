@@ -70,10 +70,33 @@ def _resolve_clip_path(clip_id):
     return None
 
 
+def _human_contact_marks():
+    """{entry_id: (verdict, note)} restricted to real human contact marks --
+    used to anchor a seeded clip's flight range on a trustworthy contact
+    frame instead of the middle of the file."""
+    sys.path.insert(0, os.path.join(SCRIPTS_DIR, '06_database_build'))
+    import clip_review_log  # noqa: PLC0415
+    notes = clip_review_log.latest_verdict_notes()
+    marked, dropped = {}, set()
+    for eid, (v, note) in notes.items():
+        if v in ('excluded', 'mismatched', 'slow_motion', 'wrong_boundary'):
+            dropped.add(eid)
+        elif v == 'label_confirmed' or (v == 'contact_time_corrected' and note):
+            marked[eid] = (v, note)
+    return marked, dropped
+
+
 def seed(n_hard, n_easy):
     audit = json.load(open(VISIBILITY_AUDIT, encoding='utf-8'))
-    hard = [a for a in audit if a['ball_detections_in_window'] <= 2]
-    easy = [a for a in audit if a['ball_detections_in_window'] >= 12]
+    marked, dropped = _human_contact_marks()
+    pro_db = {e['id']: e for e in json.load(
+        open(os.path.join(DATA_DIR, '06_pro_database', 'pro_database.json'), encoding='utf-8'))['entries']}
+
+    # only clips that survived review AND carry a trustworthy contact mark
+    usable = [a for a in audit if a['id'] not in dropped and a['id'] in marked
+              and pro_db.get(a['id'], {}).get('clip_contact_time_sec') is not None]
+    hard = [a for a in usable if a['ball_detections_in_window'] <= 3]
+    easy = [a for a in usable if a['ball_detections_in_window'] >= 12]
 
     def _spread(pool, n):
         by_st = {}
@@ -99,17 +122,19 @@ def seed(n_hard, n_easy):
         n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = cap.get(cv2.CAP_PROP_FPS)
         cap.release()
-        mid = n // 2
+        contact_sec = pro_db[a['id']]['clip_contact_time_sec']
+        mid = int(round(contact_sec * fps))
         clips.append({
             'clip_id': a['id'],
             'video_rel': os.path.relpath(path, DATA_DIR),
             'shot_type': a['shot_type'],
-            'source_kind': 'broadcast' if a['shot_type'] == 'serve' else 'phone',
+            'source_kind': 'broadcast',
             'fps': round(fps, 3),
             'contact_frame': mid,
-            'flight_frame_range': [max(0, mid - 12), min(n - 1, mid + 45)],
+            'flight_frame_range': [max(0, mid - 15), min(n - 1, mid + 50)],
             'pass1_ball_detections_in_window': a['ball_detections_in_window'],
-            'notes': 'seeded from ball_visibility_audit.json; VERIFY contact_frame + flight range by hand',
+            'contact_mark': marked[a['id']][1] or marked[a['id']][0],
+            'notes': 'contact_frame from a human contact mark; widen flight_frame_range by hand if the ball is airborne longer',
         })
     os.makedirs(BALL_DIR, exist_ok=True)
     with open(CLIPS_PATH, 'w', encoding='utf-8') as f:
