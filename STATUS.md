@@ -123,17 +123,28 @@ Curated, not exhaustive — the full backlog lives in `TODO_MANUAL.md`.
    gap, NOT the contact pipeline. Full writeup: HANDOVER.md 2026-09-06 (two
    entries) + 2026-09-07.
 
-   *Two-pass ROI ball tracker (2026-09-07): built, evaluated, NO-GO.* New
-   `ball_roi_tracker.py` + `ball_tracker.track_ball_states` +
-   `eval_ball_roi_tracker.py` + `label_dense_ball_track.py` (10-clip dense
-   set labelled, $0.29). Re-runs the ball detector in a small
-   Kalman-predicted crop for frames pass-1 missed, Mahalanobis-gated.
-   Sparse fp gate fails (+4pp); honest dense continuity (after a `_densify`
-   inflation bug was fixed) helps 2/10 clips, no-ops 7/10, **regresses
-   1/10**. Plumbing wired into `ball_speed` + `build_ball_overlay_trajectory`
-   but **defaulted OFF** (`use_roi_tracker=False`). A future attempt needs a
-   parabola flight model + racket-trajectory seeding, not more tuning of
-   this CV-only version. Plans: `okay-plan-it-floating-whistle.md` +
+   *Two ball-tracking attempts, both NO-GO (2026-09-07).*
+   (a) **Two-pass ROI re-detector** (`ball_roi_tracker.py` +
+   `ball_tracker.track_ball_states` + `eval_ball_roi_tracker.py`): predicts
+   the ball's position and re-runs the detector in a small crop there.
+   Sparse fp gate fails; honest dense continuity (after a `_densify`
+   inflation bug fix) helps 2/10 clips, regresses 1/10. Wired but
+   `use_roi_tracker=False`.
+   (b) **Near-side crop** (`near_court_ball_tracker.py` +
+   `eval_near_court_ball_detection.py`): crop to player + net-ward cone,
+   detect there. Eval on 354 human labels: **full-frame @320 is already the
+   best config** (near 0.85 / far 0.87 detect); cropping loses
+   (coverage 0.52, net undetected 79% of close phone frames). Not wired.
+   **Takeaway: per-frame ball detection isn't the bottleneck it looked
+   like** — the full-frame detector is ~85% on visible balls; only the
+   contact frame (ball behind racket, gap-detection covers it) and the
+   offline pro DB are weak.
+   **Queued: a clean detector retrain** — `prepare_ball_yolo_dataset.py`
+   had a real train/val leak (76 dupe images) + frame-level split, both
+   fixed; `train_ball_detector.py` now imgsz 480 + multi_scale;
+   `README_ball_retrain.md` has the recipe. Needs the server label log +
+   wide-court labels reviewed, then ~1.8hr CPU. Plans:
+   `okay-plan-it-floating-whistle.md` +
    `c-users-jackp-claude-plans-okay-plan-it-serene-map.md`.
 11. **Local dev workflow had two real bugs, both fixed.** Web dev was
    pointed at an ngrok tunnel whose free-tier browser interstitial silently
