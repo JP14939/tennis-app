@@ -1049,3 +1049,50 @@ routines' every-3-days cadence (last batch before today was 2026-09-01)
 and isn't itself a sign anything is broken — flagging only so a future
 session doesn't mistake it for a missed run if the pattern looks odd in
 the git history.
+
+---
+
+## New from the 2026-09-07 docs round-up
+
+**Review and merge (or request changes on) PRs #32–#36 from today's
+scheduled routines** — training-data drift watch
+(`training-drift-watch/2026-09-07`, docs only, reports the routine is
+structurally blocked with no data to check, see below), logic review
+(`logic-review/2026-09-07`, 4 fixes including a contact-frame
+velocity-gate bug shared with the bug-sweep PR), bug sweep
+(`bug-sweep/2026-09-07`, 5 fixes including a highlight-reel filename race
+and a billing-tier resurrection race), security review
+(`security-review/2026-09-07`, closes a missing rate limit on friend/coach
+invite-code redemption — not currently exploitable, just closes the gap),
+and brainstorm (`future-ideas/2026-09-07`, docs only). None titled
+`🚨 CRITICAL:`. See `HANDOVER.md`'s "Scheduled-routine PR round-up
+(2026-09-07)" for the full per-PR summary.
+
+**Worth checking before merging PR #33 and PR #34 specifically**: both
+touch `scripts/08_comparison_engine/compare_swing.py` (and PR #34 also
+touches `compare_videos.py`) — the live comparison path — and neither
+could be run through the real `scripts/venv` pytest suite in the
+routine's sandbox (no `cv2`/`mediapipe` there), only verified by
+inspection or a standalone synthetic script. Same recommendation as every
+prior PR touching this file: a real
+`cd scripts && .\venv\Scripts\activate && pytest` pass before merging.
+
+**Genuinely new territory — PR #32's finding needs a real decision, not
+just a merge.** The weekly "Training-data drift watch" routine (added
+2026-08-26) has now run for the first time and confirmed it can't do its
+job at all: `data/` is gitignored and the routine only ever gets a fresh
+`git clone`, with no SSH access to the Hetzner host or your dev machine
+where the actual training-log `.jsonl` files accumulate from live
+traffic. This isn't a one-off miss, it's structural — every future Monday
+run hits the same wall until this is resolved. PR #32 writes the options
+up in more detail; the shape of the decision is:
+1. **Sync the 4 small `.jsonl` files out from behind `.gitignore`**
+   (cheapest — they're tiny text logs, not the 12GB of video/model data
+   the rest of `data/` holds) so the routine can read them from a normal
+   clone.
+2. **Grant this routine narrower SSH read access** to just those files on
+   the host — more infrastructure to maintain for one weekly routine.
+3. **Drop the routine** if training-data drift isn't worth tracking this
+   way.
+
+No action taken here — this is your call, not something to guess at.
