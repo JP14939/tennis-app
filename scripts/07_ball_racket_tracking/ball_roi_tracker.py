@@ -62,17 +62,20 @@ ROI_MAX_HALF = 160.0
 
 ROI_UPSCALE_TARGET = 160   # only-upscale (never downscale) a crop to this max side; None disables
 ROI_IMGSZ_DEFAULT = 160    # YOLO imgsz for the crop (pending stage-4 calibration)
-ROI_CONF = 0.15            # detector conf on a normal ROI crop
+ROI_CONF = 0.30            # detector conf on a normal ROI crop (raised from 0.15: a low
+                           # conf on a small upscaled crop hallucinates on ball-absent frames)
+ROI_MIN_BOX_CONF = 0.35    # a recovery below this detector confidence is logged, not added
 
 # Skip a candidate whose predicted position covariance trace exceeds this --
 # the ROI would be effectively full-frame-sized, so a crop buys nothing.
-MAX_PRED_COV = 6000.0
+MAX_PRED_COV = 4000.0
 
 # Accept an ROI recovery only if its Mahalanobis d^2 against (pred_pos,
-# pred_cov + R) is within this -- same chi-squared(2 DoF) scale the base
-# tracker's OUTLIER_GATE_SIGMAS uses, a touch looser since the crop already
-# constrains where a box can land.
-ACCEPT_GATE = (OUTLIER_GATE_SIGMAS + 1.0) ** 2
+# pred_cov + R) is within this. Kept at the base tracker's own gate
+# (OUTLIER_GATE_SIGMAS**2) rather than looser -- the ROI crop already
+# constrains where a box can land, so a slack gate only lets clutter in
+# (measured: a loose gate inflated fp_rate on ball-absent frames).
+ACCEPT_GATE = OUTLIER_GATE_SIGMAS ** 2
 _ACCEPT_R_VAR = 16.0       # measurement-noise var added to pred_cov for the accept gate
 
 # Widened window around contact: the ball is occluded/blurred by the racket, a
@@ -363,6 +366,14 @@ def refine_ball_track(video_path, detections, fps, *, contact_frame=None,
 
         if box is None:
             entry['result'] = 'no_detection'
+            redetect_log.append(entry)
+            if f in gated_frames:
+                dropped_gated.add(f)
+            continue
+
+        if not contact and (box_conf is None or box_conf < ROI_MIN_BOX_CONF):
+            entry['result'] = 'rejected_low_conf'
+            entry['box_conf'] = round(box_conf, 3) if box_conf is not None else None
             redetect_log.append(entry)
             if f in gated_frames:
                 dropped_gated.add(f)
