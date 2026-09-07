@@ -27,6 +27,13 @@ Usage:
   python reanchor_pro_serves.py --dry-run            # report old->new deltas, write nothing
   python reanchor_pro_serves.py [--limit N] [--only ID]
   python reanchor_pro_serves.py --min-move-frames 2  # only rewrite entries that move >= N frames
+  python reanchor_pro_serves.py --force              # also re-process already-reanchored entries
+
+An entry already carrying a '(serve apex reanchor)' verdict is skipped on a
+re-run (so the pass is idempotent) unless --force. For practice-footage
+entries the apex search is centred on the current contact time, so
+re-centring on a prior apex result can walk -- skipping them is what keeps
+re-runs stable.
 
 Gate before a real run (plan): --dry-run, then re-run
 scripts/07_ball_racket_tracking/eval_pro_clip_contact.py and confirm serve
@@ -52,6 +59,11 @@ OVERLAY_DB_PATH = os.path.join(DATA_DIR, '06_pro_database', 'overlay_trajectorie
 
 DROP_VERDICTS = {'excluded', 'mismatched', 'slow_motion', 'wrong_boundary'}
 REANCHOR_NOTE_SUFFIX = '(serve apex reanchor)'
+
+
+def _already_reanchored(verdict, note):
+    return (verdict == 'contact_time_corrected' and note
+            and note.strip().endswith(REANCHOR_NOTE_SUFFIX))
 
 
 def _human_marked(verdict, note):
@@ -87,7 +99,7 @@ def _pose_context(entry, orig_st, lookup):
     return fps, pose_index, found['start_frame'], found['orig_peak_frame']
 
 
-def reanchor(dry_run=False, limit=None, only=None, min_move_frames=0):
+def reanchor(dry_run=False, limit=None, only=None, min_move_frames=0, force=False):
     with open(PRO_DB_PATH) as f:
         db = json.load(f)
     try:
@@ -109,6 +121,7 @@ def reanchor(dry_run=False, limit=None, only=None, min_move_frames=0):
     print(f'{len(serves)} serve entries considered\n')
 
     moved, unchanged, skipped_human, skipped_nopose, apex_unmeasurable = [], [], [], [], []
+    skipped_done = []
     verdict_writes = []
 
     for entry in serves:
@@ -118,6 +131,9 @@ def reanchor(dry_run=False, limit=None, only=None, min_move_frames=0):
             continue
         if _human_marked(verdict, note):
             skipped_human.append(eid)
+            continue
+        if _already_reanchored(verdict, note) and not force:
+            skipped_done.append(eid)
             continue
 
         orig_st = clip_review_log.original_shot_type_for(eid) or 'serve'
@@ -161,6 +177,7 @@ def reanchor(dry_run=False, limit=None, only=None, min_move_frames=0):
     if len(moved) > 40:
         print(f'      ... and {len(moved) - 40} more')
     print(f'  within tolerance (left as-is)      : {len(unchanged)}')
+    print(f'  skipped, already apex-reanchored  : {len(skipped_done)}  (--force to redo)')
     print(f'  skipped, human-marked             : {len(skipped_human)}')
     print(f'  skipped, pose data not found      : {len(skipped_nopose)}')
     for x in skipped_nopose:
@@ -207,9 +224,11 @@ def main():
     ap.add_argument('--only', default=None, help='a single entry id')
     ap.add_argument('--min-move-frames', type=int, default=1,
                     help='only rewrite entries whose apex moves the contact by >= this many frames')
+    ap.add_argument('--force', action='store_true',
+                    help='also re-process entries already carrying a (serve apex reanchor) verdict')
     args = ap.parse_args()
     reanchor(dry_run=args.dry_run, limit=args.limit, only=args.only,
-             min_move_frames=args.min_move_frames)
+             min_move_frames=args.min_move_frames, force=args.force)
 
 
 if __name__ == '__main__':
