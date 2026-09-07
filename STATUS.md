@@ -123,15 +123,17 @@ Curated, not exhaustive — the full backlog lives in `TODO_MANUAL.md`.
    gap, NOT the contact pipeline. Full writeup: HANDOVER.md 2026-09-06 (two
    entries) + 2026-09-07.
 
-   *Two-pass ROI ball tracker (2026-09-07): built, NOT wired.* New
+   *Two-pass ROI ball tracker (2026-09-07): built, evaluated, NO-GO.* New
    `ball_roi_tracker.py` + `ball_tracker.track_ball_states` +
-   `eval_ball_roi_tracker.py` + `label_dense_ball_track.py`. Re-runs the
-   ball detector in a small Kalman-predicted crop for frames pass-1 missed,
-   Mahalanobis-gated. Stage-4 fp_rate hard gate does **not** cleanly pass on
-   the sparse set (+4pp, = 2 benign blurred-ball hits in the contact window,
-   already walled off from contact detection); hard-miss recovery only 1/16.
-   Dense continuity eval pending. No consumer wired — the plan's GO/NO-GO
-   stands. Plans: `okay-plan-it-floating-whistle.md` +
+   `eval_ball_roi_tracker.py` + `label_dense_ball_track.py` (10-clip dense
+   set labelled, $0.29). Re-runs the ball detector in a small
+   Kalman-predicted crop for frames pass-1 missed, Mahalanobis-gated.
+   Sparse fp gate fails (+4pp); honest dense continuity (after a `_densify`
+   inflation bug was fixed) helps 2/10 clips, no-ops 7/10, **regresses
+   1/10**. Plumbing wired into `ball_speed` + `build_ball_overlay_trajectory`
+   but **defaulted OFF** (`use_roi_tracker=False`). A future attempt needs a
+   parabola flight model + racket-trajectory seeding, not more tuning of
+   this CV-only version. Plans: `okay-plan-it-floating-whistle.md` +
    `c-users-jackp-claude-plans-okay-plan-it-serene-map.md`.
 11. **Local dev workflow had two real bugs, both fixed.** Web dev was
    pointed at an ngrok tunnel whose free-tier browser interstitial silently

@@ -7,9 +7,12 @@ Ad-hoc visual: render the ball tracker's output onto a whole clip as an mp4.
    green when it accepted a measurement that frame, amber when it's coasting
    on prediction alone
  - box = racket detection
+ - with --roi: thin rectangles for every pass-2 ROI crop that was tried, a
+   distinct colour for boxes it recovered, and the recovery's ball_source tag
 
 Usage:
   python render_ball_overlay.py <video_path> [--out out.mp4] [--start N] [--end N]
+      [--roi] [--contact-frame N]
 """
 import argparse
 import os
@@ -23,6 +26,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import racket_tracker as rt
 from ball_tracker import track_ball
+from ball_roi_tracker import refine_ball_track
 
 
 def main():
@@ -31,6 +35,10 @@ def main():
     ap.add_argument('--out', default=None)
     ap.add_argument('--start', type=int, default=None)
     ap.add_argument('--end', type=int, default=None)
+    ap.add_argument('--roi', action='store_true',
+                    help='run the pass-2 ROI re-detector and draw its crops + recoveries')
+    ap.add_argument('--contact-frame', type=int, default=None,
+                    help='contact frame (enables the widened ROI contact window)')
     args = ap.parse_args()
 
     frame_range = (args.start, args.end) if args.start is not None and args.end is not None else None
@@ -39,7 +47,20 @@ def main():
     start_frame = detections[0]['frame']
     end_frame = detections[-1]['frame']
 
-    track = dict(track_ball(detections, start_frame, end_frame, rt._center_in_original_space))
+    roi_log = []
+    roi_recovered = {}
+    if args.roi:
+        res = refine_ball_track(args.video, detections, fps, contact_frame=args.contact_frame)
+        roi_log = res.redetect_log
+        roi_recovered = {d['frame']: d for d in res.augmented_dets
+                         if str(d.get('ball_source', '')).startswith('roi')}
+        detections = res.augmented_dets
+        track = dict(res.filled_track)
+        print(f'ROI: {len(roi_log)} crops tried, '
+              f'{sum(1 for e in roi_log if e.get("result") == "accepted")} recovered')
+    else:
+        track = dict(track_ball(detections, start_frame, end_frame, rt._center_in_original_space))
+
     accepted_frames = set()
     # re-run just to know per-frame accept/coast: track_ball hides it, so
     # approximate -- a frame is "accepted" if it had a real detection.
@@ -50,6 +71,7 @@ def main():
     n_det = sum(1 for d in detections if d['ball_box'] is not None)
     print(f'{n_det}/{len(detections)} frames had a raw ball detection; '
           f'tracked path spans {len(track)} frames')
+    roi_log_by_frame = {e['frame']: e for e in roi_log if 'crop' in e}
 
     out_path = args.out or os.path.join(
         os.environ.get('TEMP', '.'), 'ball_overlay_' + os.path.splitext(os.path.basename(args.video))[0] + '.mp4')
@@ -69,15 +91,25 @@ def main():
         if not ret:
             break
         d = det_by_frame.get(idx)
+        rlog = roi_log_by_frame.get(idx)
+        if rlog and 'crop' in rlog:
+            rx0, ry0, rx1, ry1 = [int(v) for v in rlog['crop']]
+            edge_col = (0, 220, 0) if rlog.get('result') == 'accepted' else (120, 120, 120)
+            cv2.rectangle(frame, (rx0, ry0), (rx1, ry1), edge_col, 1)
+            cv2.putText(frame, rlog.get('result', ''), (rx0, ry0 - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, edge_col, 1)
         if d and d['racket_box']:
             x1, y1, x2, y2 = [int(v) for v in d['racket_box']]
             cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 180, 0), 2)
         if d and d['ball_box']:
-            bx1, by1, bx2, by2 = [int(v) for v in d['ball_box']]
-            cx, cy = (bx1 + bx2) // 2, (by1 + by2) // 2
-            cv2.circle(frame, (cx, cy), max(8, (bx2 - bx1) // 2 + 4), (0, 0, 255), 2)
-            cv2.putText(frame, f"{d['ball_conf']:.2f}", (cx + 10, cy - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+            cx, cy = rt._center_in_original_space(d['ball_box'], d)
+            cx, cy = int(cx), int(cy)
+            is_roi = str(d.get('ball_source', '')).startswith('roi')
+            col = (255, 0, 200) if is_roi else (0, 0, 255)
+            cv2.circle(frame, (cx, cy), 10, col, 2)
+            tag = d['ball_source'] if is_roi else f"{d['ball_conf']:.2f}"
+            cv2.putText(frame, str(tag), (cx + 10, cy - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1)
         if idx in track:
             tx, ty = track[idx]
             trail.append((int(tx), int(ty)))

@@ -145,7 +145,7 @@ def _ball_speed_px_per_frame_at(track, frame, half_window=VELOCITY_HALF_WINDOW,
 
 
 def estimate_net_crossing_ball_speed_kmh(video_path, contact_frame, fps, camera_angle_deg,
-                                         use_roi_tracker=True):
+                                         use_roi_tracker=False):
     """
     Best-effort ball speed (km/h) at the moment the ball crosses the net
     after `contact_frame`, or None whenever the estimate can't be trusted
@@ -154,13 +154,12 @@ def estimate_net_crossing_ball_speed_kmh(video_path, contact_frame, fps, camera_
     other non-fatal-on-failure stats.
 
     use_roi_tracker: run ball_roi_tracker.refine_ball_track (pass 2) over the
-    pass-1 detections before fitting the crossing -- re-detects the ball in a
-    small Kalman-predicted crop for frames pass 1 missed, which is most of
-    them on a wide-court flight (measured: dense-set track continuity ~0.13
-    -> ~0.5 on the mid-difficulty clips). Defaults ON here because this is
-    already the slow, frequently-None, non-fatal path and the gap the ROI
-    recovers is exactly a missing net crossing. Set False to fall back to the
-    plain pass-1 Kalman track.
+    pass-1 detections before fitting the crossing. Plumbing is kept but the
+    default is OFF -- the honest dense-set eval (2026-09-07, after an
+    inflated-continuity bug in eval_ball_roi_tracker._densify was fixed)
+    showed it helps only 2/10 clips (~+0.1 continuity), no-ops 7/10, and
+    regresses 1/10. Flip to True per-call to experiment / once the tracker
+    earns it.
     """
     if camera_angle_deg is None or camera_angle_deg < MIN_RELIABLE_ANGLE_DEG:
         return None

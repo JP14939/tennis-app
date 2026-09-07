@@ -122,20 +122,20 @@ def build_racket_overlay_trajectory(racket_frames, fps):
 
 
 def build_ball_overlay_trajectory(video_path, fps, frame_range=None, contact_frame=None,
-                                  use_roi_tracker=True):
+                                  use_roi_tracker=False):
     """[{t, point: {x, y} | None}] for the ball centre across frame_range, in
     [0,1] frame-normalised coords -- same convention/playhead as the racket
     and skeleton overlays, so the frontend draws all three off one timeline.
 
-    use_roi_tracker (default ON): ball_roi_tracker.refine_ball_track's
-    filled_track_dense -- the pass-1 constant-velocity Kalman track (bridges a
-    brief occlusion at contact, rejects stray ball-shaped detections) PLUS a
-    pass-2 re-detection of the ball in a small predicted crop for frames pass
-    1 missed, which on a wide-court flight is most of them (dense-set track
-    continuity ~0.13 -> ~0.5 on mid-difficulty clips). Overlay-only, so a
-    contact-window blurred-ball recovery here is harmless -- contact
-    detection never sees this path. Falls back to the plain pass-1 track on
-    any error. interpolate_series still smooths any residual short gap.
+    Uses the pass-1 constant-velocity Kalman track (bridges a brief occlusion
+    at contact, rejects stray ball-shaped detections) then interpolate_series
+    for any residual short gap.
+
+    use_roi_tracker: swap in ball_roi_tracker.refine_ball_track's
+    filled_track_dense (pass-1 track + a pass-2 re-detection in a small
+    predicted crop for missed frames). Plumbing kept, default OFF -- the
+    honest dense-set eval (2026-09-07) had it help only 2/10 clips and
+    regress 1/10. Falls back to the pass-1 track on any error.
     Returns None if there's no usable ball track.
     """
     from racket_tracker import track_racket_and_ball, _center_in_original_space

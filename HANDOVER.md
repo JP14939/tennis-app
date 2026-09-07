@@ -2971,32 +2971,46 @@ Tuning done: accept gate tightened to the base `OUTLIER_GATE**2`, ROI conf
 0.15→0.30 + a box-conf floor, candidates restricted to within 3f of an
 accepted pass-1 detection, and a pass-1 box is never dropped.
 
-**Verdict:** the literal gate fails; the failure is benign and contained,
-and the gains are marginal (1/16 hard recoveries). Dense-set continuity
-numbers (the real test) are being labelled now. **Do not wire A5/A6 until
-the dense eval says the recovery is worth it** — the plan's GO/NO-GO stands.
+**Verdict:** the literal gate fails; gains marginal (1/16 hard recoveries).
+Dense-set continuity (the real test) settled it — see the CORRECTION below.
+**Outcome: NO-GO. Plumbing wired but defaulted OFF.**
 
 **Dense-set continuity result (2026-09-07, `label_dense_ball_track.py` →
 10 clips, 219 rows, 130 auto-confirmed / 89 needs-manual-review, $0.29):**
 ROI-refined vs pass-1 track continuity (fraction of labelled-visible frames
-with a track point within 40px of the labelled ball centre):
+with a track point within 40px of the labelled ball centre).
 
-| clip | pass-1 | ROI |
-|---|---|---|
-| forehand_0023 | 0.13 | **0.53** |
-| forehand_0017 | 0.21 | 0.36 |
-| forehand_0034 | 0.20 | 0.33 |
-| backhand_0021 | 0.14 | 0.29 |
-| backhand_0008 | 0.56 | 0.56 (no change needed) |
-| serve_0081 | 0.82 | 0.82 (no change needed) |
-| backhand_0007 / backhand_0022 / serve_0001 / serve_0110 | 0.0 | **0.0** (no help on the hardest) |
+**CORRECTION:** the first pass of these numbers was inflated by a bug in
+`eval_ball_roi_tracker._densify` (it held the track's endpoints flat across
+frames outside the tracked span, so stale points scored as hits). Fixed —
+`_densify` now only interpolates *between* real points. Honest numbers:
 
-Reads as a **marginal GO**: ROI roughly doubles continuity on 4/10
-mid-difficulty clips (forehands especially), does nothing on the 4 hardest
-(0→0), and the dense set itself is rough (41% needs-manual-review, and
-`serve_0110` looks like auto-confirmed decoy labels — 21/21 "visible" but
-0 continuity for pass-1 too). Full 354-row sparse re-run + the 20-config
-imgsz sweep were **not** run — hours of CPU for a signal that's already
-clear. Recommendation on the table: wire `ball_speed` only (opt-in, the
-frequently-None path the continuity gain directly helps), leave overlays
-(A6) and contact detection alone.
+| clip | pass-1 | ROI (honest) | (was, inflated) |
+|---|---|---|---|
+| forehand_0023 | 0.13 | 0.27 | 0.53 |
+| forehand_0017 | 0.21 | 0.29 | 0.36 |
+| forehand_0034 | 0.20 | **0.13 (regressed)** | 0.33 |
+| backhand_0021 | 0.14 | 0.14 (no change) | 0.29 |
+| backhand_0008 / serve_0081 | 0.56 / 0.82 | unchanged | — |
+| backhand_0007 / backhand_0022 / serve_0001 / serve_0110 | 0.0 | 0.0 | — |
+
+**Verdict: NO-GO.** ROI meaningfully helps **2/10** clips (~+0.1
+continuity), no-ops 7/10, **regresses 1/10**, and a `render_ball_overlay
+--roi` pass on forehand_0023 recovered 0 balls. Combined with the sparse fp
+gate failing, the two-pass ROI re-detector as built does not earn a place
+in the live path.
+
+**A5/A6 wiring: plumbing kept, defaults flipped to OFF.**
+`ball_speed.estimate_net_crossing_ball_speed_kmh(use_roi_tracker=False)`
+and `compare_swing.build_ball_overlay_trajectory(use_roi_tracker=False)` —
+callable per-invocation for future experiments, never on by default.
+`render_ball_overlay.py --roi` stays as the QA tool. Full 354-row sparse
+re-run + 20-config imgsz sweep still not run (staged for an overnight
+background run) — unlikely to flip the verdict.
+
+Where a future attempt would have to start: the tracker only fires near an
+already-accepted detection (MAX_CANDIDATE_GAP=3) and the hard clips have ~0
+accepted detections to seed from — so it can't bootstrap exactly where it's
+needed. A gravity/parabola flight model + seeding from the *racket*
+trajectory at contact (not just prior ball detections) is the real lever,
+not more tuning of this CV-only version.
