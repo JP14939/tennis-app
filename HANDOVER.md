@@ -2975,3 +2975,28 @@ accepted pass-1 detection, and a pass-1 box is never dropped.
 and the gains are marginal (1/16 hard recoveries). Dense-set continuity
 numbers (the real test) are being labelled now. **Do not wire A5/A6 until
 the dense eval says the recovery is worth it** — the plan's GO/NO-GO stands.
+
+**Dense-set continuity result (2026-09-07, `label_dense_ball_track.py` →
+10 clips, 219 rows, 130 auto-confirmed / 89 needs-manual-review, $0.29):**
+ROI-refined vs pass-1 track continuity (fraction of labelled-visible frames
+with a track point within 40px of the labelled ball centre):
+
+| clip | pass-1 | ROI |
+|---|---|---|
+| forehand_0023 | 0.13 | **0.53** |
+| forehand_0017 | 0.21 | 0.36 |
+| forehand_0034 | 0.20 | 0.33 |
+| backhand_0021 | 0.14 | 0.29 |
+| backhand_0008 | 0.56 | 0.56 (no change needed) |
+| serve_0081 | 0.82 | 0.82 (no change needed) |
+| backhand_0007 / backhand_0022 / serve_0001 / serve_0110 | 0.0 | **0.0** (no help on the hardest) |
+
+Reads as a **marginal GO**: ROI roughly doubles continuity on 4/10
+mid-difficulty clips (forehands especially), does nothing on the 4 hardest
+(0→0), and the dense set itself is rough (41% needs-manual-review, and
+`serve_0110` looks like auto-confirmed decoy labels — 21/21 "visible" but
+0 continuity for pass-1 too). Full 354-row sparse re-run + the 20-config
+imgsz sweep were **not** run — hours of CPU for a signal that's already
+clear. Recommendation on the table: wire `ball_speed` only (opt-in, the
+frequently-None path the continuity gain directly helps), leave overlays
+(A6) and contact detection alone.
