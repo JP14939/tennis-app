@@ -387,6 +387,10 @@ Cross-referenced against the 7-item premium feature list Jack provided this sess
 - **Update (2026-08-10, corrected — this was stale):** "no automatic shot-type classifier exists anywhere" is no longer accurate — `scripts/14_shot_classifier/` classifies user-uploaded swings live (pro database entries are still hand-assigned per source compilation, that part is unchanged).
 - **High-angle pro database entries (>65°) have never been manually audited** for behind-baseline false positives, per the original angle-detection limitation.
 - **Update (2026-08-10, corrected — this was stale):** the racket keypoint model *is* used live now (body_rotation phase scoring, and the new shot-contact verifier — see the "racket keypoint ML" section above and the new Planned Features item below). The net-end keypoint model (`data/10_net_detection/`) remains genuinely unintegrated — that part of the original claim still holds.
+- **Racket-based coaching tips barely exist yet (feature gap, logged 2026-09-06).** Real tennis coaching leans heavily on the racket — *racket head too low at contact*, *racket face open/closed*, *dropped racket head in the trophy position*, *racket path across the ball* — but the live 216-tip system has exactly **one** racket signal: `*_racket_distance` per shot type ("racket too close to the body"), which uses only the `racket_handle` point via the `body_rotation` phase. Everything else the tips reference is body pose. Notably the serve's "contact point too low" tip (`sv_low_contact`) measures **`right_wrist` height, not the racket**. Racket face angle is computed nowhere.
+  - **What closing this needs:** a materially more accurate racket-**keypoint** model. Today's (`data/09_racket_keypoints/yolo_pose_run`, Pose mAP50 0.485) was measured 2026-09-06 (`eval_racket_detection.py`): per-point PCK@0.2 — throat 0.84, tip 0.50, edges 0.56, handle 0.43 — and ~2× worse on serves. "Racket head too low" needs a reliable `tip` (currently 50/50); "racket face" needs reliable `left_edge`/`right_edge` or tip+throat (0.56). Not accurate enough to phrase a confident tip from without being wrong often.
+  - **Honest limit — racket face angle from a single phone camera is only partly observable.** Edge-on, an open and a closed face differ mainly in depth the camera sees poorly; a 2D keypoint model can approximate face angle only when the racket is reasonably face-on to the camera. Racket **height / drop** is fully tractable in 2D; face angle should be treated as best-effort / confidence-gated, or deferred until multi-frame or depth cues are used.
+  - **Sequencing:** contact-frame timing must be fixed first (see 2026-09-06 session entry) — a "racket too low *at contact*" tip is only as good as knowing which frame contact is. Then a racket-keypoint fine-tune (bigger labelled set, serve-weighted) is the enabler for a real racket-tip family. This is the one place a racket-model investment IS justified by the measurements — for tips/overlay quality, not contact timing.
 
 ---
 
@@ -2667,3 +2671,307 @@ confirm button.
   "Watching" on first load; suggest and confirm a club name end-to-end.
 - Nothing pushed or deployed — same local-only state as the rest of this
   week's work.
+
+## Session 2026-09-06 — "measure first": racket detection eval + why serves miss contact
+
+Follow-up to the 2026-09-04 visual tracker audit (STATUS item 10), which
+flagged serves as the weak point and *guessed* the ball/racket YOLO tracker
+was the cause. Goal this session was to **measure** before committing to a
+racket-detector fine-tune. All work uncommitted; read-only w.r.t. models and
+the pro DB.
+
+### New: `eval_racket_detection.py` — direct racket-detector eval
+
+Runs the live bbox detector (`racket_tracker.get_model()`, COCO class 38)
+and the fine-tuned 5-point keypoint pipeline
+(`track_racket_in_clip._detect_racket_keypoints`) against the 122 usable
+hand-labelled crops in `data/09_racket_keypoints/labels.json` (joined to
+`crop_metadata.json` for the source frame), stratified by shot type. Output:
+`data/07_audits/racket_detection_eval.json`.
+
+- **bbox detector (clean numbers — COCO never trained on these):** median IoU
+  vs the true racket extent ~0.55–0.58 all shot types, mean conf ~0.6,
+  box-contains-racket 95–100% (serve 90%, val-serve 86%). **Not badly broken.**
+  Detection *rate* is selection-biased here (crops were cut from confident
+  detections) so it's not reported — Part B covers that unbiased.
+- **keypoint pipeline:** always returns something. Normalised error (÷ racket
+  diagonal) median 0.15 for FH/BH, **0.22 for serve (0.30 on the clean val
+  split, PCK@0.2 just 0.31)**. Per-point: `throat` great (0.11 / PCK 0.84),
+  **`handle` worst (0.23 / 0.43)**, **`tip` weak (0.20 / 0.50)** — and tip
+  feeds the swing-path overlay + the shot-contact verifier.
+
+### Extended: `eval_pro_clip_contact.py` — now covers 60 serves + a diagnosis
+
+Was 197 clips (126 FH / 71 BH, **no serves**, generated 2026-09-02). Added
+the 60 human-marked serves and re-ran all 260 clean (every row now
+post-`imgsz`-ball-fix). New CSV column `window_dets_total`; new report
+sections: "ANCHOR vs TEACHER", "RACKET vs BALL DETECTION IN CONTACT WINDOW",
+"CONTACT ERROR SPLIT BY WHAT WAS DETECTED".
+
+**Result — serves sit at median |err| 44f / p90 110f vs groundstrokes ~9f,
+and it is NOT a racket-detection problem:**
+
+| | anchor \|err\| median | anchor within ±0.3s of truth | final \|err\| | racket=0 in window |
+|---|---|---|---|---|
+| forehand | 13f | 64% | 8.0f | 3/129 |
+| backhand | 12f | 62% | 9.6f | 2/71 |
+| **serve** | **38.5f** | **38%** | **44f** | **0/60** |
+
+1. **The wrist-velocity anchor (`find_peak_wrist_frame`) is the bottleneck.**
+   `find_contact_frame` only searches ±0.3s (~18f) around it; on **37/60
+   serves the true contact isn't in that window**, so detection quality is
+   irrelevant. Serve final error ≈ serve anchor error → refinement adds ~0
+   on serves. On a serve the max-of-both-wrists velocity peak lands on the
+   toss-arm release, the follow-through snap, or the pre/post-swing footage
+   in compilation clips (`serve_0147`: true contact f173, anchor f9).
+2. **Racket bbox detection is fine** — detected in 60/60 serve windows,
+   in-window rate 58% (= forehand's 58%). `racket Y / ball N` clips: median
+   19f; `racket N`: only 5 clips total across all 260.
+3. **Audio-onset can't run on this footage** — `data/04_clips/` has NO audio
+   stream (verified). So this eval is the audioless worst case; real phone
+   serve uploads have audio and would hit the audio-onset path (~89% ±3f on
+   groundstrokes, **never evaluated on serves** — audio eval CSV is also
+   FH/BH-only). Practice ingest clips (`practice_01_swing_*`) are also
+   audioless.
+4. On the *practice* serve subset specifically, racket bbox thins to 4–5
+   frames in the window at the blurred overhead-contact moment
+   (`practice_100109`, `practice_100054`) — a real but secondary effect.
+
+### Revised recommendation (was: "fine-tune the racket detector")
+
+Ranked by expected impact on serve contact accuracy:
+1. **Fix the serve anchor** — widen the serve search window, or use a
+   serve-specific anchor (the shot-classifier serve gate already computes a
+   sustained-overhead / wrist-above-head window; or anchor on racket-tip
+   apex from the keypoint model). 62% of serves are currently unrecoverable
+   before detection even runs.
+2. **Evaluate + rely on audio-onset for live serve uploads** — build a serve
+   audio eval once there's labelled serve footage *with* audio.
+3. **Ball detection on serves** — the uncommitted `imgsz` fix already helps.
+4. **Racket keypoint precision** (tip/handle/edges) — a targeted fine-tune
+   with a bigger, serve-weighted labelled set. Matters for the swing-path
+   overlay + shot-contact verifier AND is the enabler for a real
+   racket-based coaching-tip family (racket head too low, racket face,
+   racket drop) — which barely exists today. See "Racket-based coaching
+   tips" under **Other Known Gaps** for the full gap analysis and the
+   single-camera face-angle caveat. NOT needed for the contact-frame
+   pipeline (which uses the bbox, not keypoints).
+
+A full racket-**detector** (bbox) fine-tune is **not** supported by the
+measurements — the bbox works. A racket-**keypoint** fine-tune is justified,
+but for tip/overlay quality, and only after contact timing is fixed.
+
+## Session 2026-09-06 (later) — serve contact anchor: overhead-apex (Phase 1a)
+
+Acting on the item above. Plan:
+`C:\Users\jackp\.claude\plans\okay-plan-it-floating-whistle.md`. **Phase 1a
+only** (live path + eval, no stored-data change); Phase 1b (offline pro-DB
+serve re-anchor) is a separate follow-up, gated on 1a's numbers holding.
+
+### What changed
+
+- **`scripts/00_utils/serve_anchor.py`** (NEW) — `serve_contact_anchor_frame()`
+  finds the frame where a wrist reaches maximum height above the head
+  (`(nose.y - wrist.y) / torso_scale`, fallback wrist-above-shoulder), from
+  pose data alone. Self-contained (no `sys.path` chain) reimplementation of
+  `classify_shot_geom.py`'s overhead math. Handedness-independent (max over
+  both wrists). Returns a **frame number**, not a list index (unlike
+  `find_peak_wrist_frame`).
+- **`compare_swing.py`** — new `auto_contact_anchor_frame(frames, fps,
+  shot_type)`: serve → apex, else → wrist-velocity peak, with a graceful
+  fallback to the wrist peak when the overhead signal isn't measurable.
+  Wired into all three auto-detect anchor sites (`build_user_trajectory`,
+  audio-onset, visual-student) and the audio band widened to 0.8s for
+  serves. `build_user_trajectory` gained a `shot_type` param. A user's
+  manual contact mark is still honoured verbatim.
+- **`racket_tracker.py`** — `find_contact_frame` / `contact_frame_meta` /
+  `_window_dets` take optional `pre_sec` / `post_sec` / `shot_type`
+  (backward compatible — every existing positional call is byte-identical).
+  Serves use a **narrow symmetric ±0.12s** refinement window.
+- Serve `shot_type` threaded through `contact_evidence.compute_contact_evidence`,
+  `eval_pro_clip_contact.predict_one`, `verify_shot_contact.verify_swings`
+  (default-None no-op), `build_contact_student_dataset._student_evidence`.
+- New tests: `00_utils/test_serve_anchor_pytest.py`,
+  `07_ball_racket_tracking/test_find_contact_frame_window_pytest.py` (closes
+  the pre-existing zero-coverage gap on `find_contact_frame`'s window logic),
+  plus `test_compare_swing_pytest.py` extensions. Full affected suites green.
+
+### Tuning (measured, not guessed — `eval_pro_clip_contact.py`, 60 human-marked serves)
+
+- **Apex vs teacher: median −1f** — the overhead apex *is* contact for the
+  bulk of serves. `APEX_TO_CONTACT_LEAD_SEC` set to **0** (was going to be
+  0.05).
+- A **wide forward-biased** serve window (−0.25/+0.6s) was tried first and
+  measured **worse** (serve final err median 18f but **bias +15f** — it
+  dragged the many already-good apex anchors onto a ball-near-racket frame
+  in the early follow-through). Replaced with the narrow symmetric ±0.12s.
+- Restricting the apex search to the longest **sustained-overhead run** was
+  tried to tame the bimodal tail — measured **worse** (|err| median 19→34f):
+  on distant broadcast poses the wrist-y plateau near the top is wide, so
+  the run's argmax lands too early. Plain global argmax kept.
+
+### Result (clean full 260-clip re-run, `eval_pro_clip_contact.py`)
+
+| serve contact err | before | after |
+|---|---|---|
+| median \|err\| | 44.06f | **17.70f** |
+| p90 | 110.55f | **79.94f** |
+| bias(median) | −0.10f | **+0.02f** |
+| ≤3f | 20% | **35%** |
+
+Forehand (8.00f median, p90 45.61f) and backhand (9.57f, p90 70.80f) eval
+rows are **byte-identical to the pre-change baseline** — the key regression
+check. Overall median 11.58f → 9.69f; overall ≤3f 24% → 28%.
+
+**Not solved:** ~half the serves still have a bad apex (bimodal: toss-arm
+apex too early, or a stray overhead frame too late) — serve mean stays ~31f,
+p90 ~80f. Meaningfully better, not fixed. On real phone serve uploads the
+audio-onset path (now serve-widened) is the real first line anyway; this is
+the audioless fallback. Next levers if revisited: a handedness-aware apex
+(prefer the hitting wrist), or the racket-tip apex from the keypoint model.
+
+### Live path note
+
+`compare()` never calls `find_contact_frame` directly — the geometric
+refinement is only reached via the trust-gated visual-student block (still
+gated off). So the **live** serve win today is the apex anchor feeding
+`build_user_trajectory` (the DTW trajectory centre) + the widened audio
+band; the `racket_tracker` window change benefits the eval and the visual
+student once it earns trust.
+
+## Session 2026-09-06 (later) — overlay interpolation: racket/pose gap-fill + a ball-path overlay
+
+Jack, after using Sync Compare: (a) racket/ball detection drops out for a
+frame or two and the traced path just breaks there — wants short gaps
+interpolated; (b) "pose interpolation doesn't work" in the side-by-side view.
+
+Findings: pose interpolation *does* run, but only client-side in
+`SkeletonOverlay.js` (One Euro filter + Catmull-Rom bridging). Nothing
+server-side ever filled a missing landmark. The racket overlay had **no**
+gap-filling anywhere. The ball has a Kalman tracker (`ball_tracker.py`) but
+its output was only ever used for ball-speed/contact and never shown.
+
+Shipped:
+- **`scripts/00_utils/interpolate_track.py`** (new) — shared
+  `interpolate_series` / `interpolate_named_points`: fills a *bounded* gap
+  whose bracketing real samples are ≤ `DEFAULT_MAX_GAP_SECONDS` (0.25s) apart.
+  A single-sample hole gets a local quadratic (better through a curving
+  wrist/racket arc); anything longer gets a straight chord (a quadratic bows
+  and overshoots across a wider hole). Never extrapolates past the first/last
+  real value. Cap is in *seconds* not sample-count so the every-frame ball
+  overlay and the every-3rd-frame racket/pose overlays bridge the same real
+  occlusion equally. Reused by racket, pose, ball.
+- **`compare_swing.py`** — `build_racket_overlay_trajectory` and
+  `build_overlay_trajectory` now gap-fill their payloads; the pro skeleton
+  from `overlay_trajectories.json` is filled at request time too (file stays
+  raw, no DB rebuild). **DTW trajectories deliberately untouched** — filling
+  those shifts every score and needs a 631-entry rebuild.
+- **New visible ball-path overlay** — `build_ball_overlay_trajectory` in
+  `compare_swing.py` → `result.ball_overlay_trajectory` +
+  `matches[0].pro_ball_overlay_trajectory`; new
+  `frontend/components/BallPathOverlay.js`; "Show ball path" chip in Sync
+  Compare; `stripHeavyOverlays` updated (`history.js`).
+- **`ball_tracker.track_ball` / `_interpolated_ball_track`** default
+  `max_gap_frames` 3 → 4 (slightly longer contact occlusion still bridged
+  for ball-speed / departure).
+- **`SkeletonOverlay.js`** — the One Euro filter now re-seeds a joint's
+  filter after a long null gap instead of low-passing across it (was a
+  visible pop when a fast joint reappeared post-contact-blur).
+- Tests: `test_interpolate_track_pytest.py` (new, 6),
+  `test_ball_tracker_pytest.py` (+1). Full 07/08/16/00_utils suites green
+  (113); backend `history.test.js` green (13).
+
+Not done / follow-ups: the deferred gravity/parabola ball-flight model
+(`ball_tracker.py` docstring) is still deferred — not needed here. Frontend
+not yet clicked through on a real device.
+
+## Session 2026-09-07 — serve-anchor Phase 1b (shipped) + two-pass ROI ball tracker (built, gate not cleared)
+
+Two independent pieces from the plan
+`~/.claude/plans/c-users-jackp-claude-plans-okay-plan-it-serene-map.md`
+(itself an execution wrapper around the ball-ROI-tracker plan
+`~/.claude/plans/okay-plan-it-floating-whistle.md` + Phase 1b).
+
+### Serve-anchor Phase 1b — DONE (pro DB re-anchored)
+
+`scripts/06_database_build/reanchor_pro_serves.py` (NEW). Re-anchors the
+non-human-marked SERVE entries in `pro_database.json` from the stored
+wrist-velocity peak to the overhead apex — the same signal Phase 1a
+(2026-09-06) put on the live path. Pure pose-slice math via
+`rebuild_helpers.reextract_for_entry` (no video decode / MediaPipe),
+modelled on `rebuild_pro_database_from_verdicts.py`.
+
+- **Ran for real.** 82 serve entries: **19 re-anchored** (mostly
+  practice-footage, contact moved 1–33f *later* — the apex sits after the
+  toss-velocity peak), 60 skipped as human-marked (never overridden), 2
+  within tolerance, 1 too-sparse pose window.
+- Backups written:
+  `pro_database_backup_pre_serve_reanchor_20260907_124604.json` +
+  `overlay_trajectories_backup_pre_serve_reanchor_20260907_124604.json`.
+  19 `contact_time_corrected` verdicts logged with a distinct
+  `(serve apex reanchor)` note. `verify:db` 94/94 still green (it doesn't
+  check the pro DB, run only for incidental breakage).
+- **Note on the plan's stated eval gate:** `eval_pro_clip_contact.py`
+  measures the *live predictor* vs human marks and never reads
+  `pro_database.json`, and it only runs on human-marked clips — which
+  Phase 1b never touches. So it can't regress from this change; it was
+  captured as a baseline (serve anchor|err| median 19f) but is not a
+  meaningful gate here. The real safety argument: only non-human-marked
+  entries touched, moving from a Phase-1a-measured ~44f-median-error anchor
+  to a ~17.7f one, with backups.
+- **Idempotency:** a naive re-run walked 4 practice entries 9–21f (the
+  apex search re-centres on the current contact time). Fixed — an entry
+  carrying a `(serve apex reanchor)` verdict is now skipped on re-run
+  unless `--force`. Re-run is a clean no-op.
+- Tests: `scripts/06_database_build/test_reanchor_pro_serves_pytest.py`
+  (NEW, 7) + `test_rebuild_helpers` / `test_serve_anchor` regressions green.
+
+### Two-pass ROI ball tracker — BUILT, not wired (stage-4 gate not cleared)
+
+Plan `okay-plan-it-floating-whistle.md`. All code stages landed, tested,
+committed; **no consumer is wired** because the stage-4 fp_rate hard gate
+does not cleanly pass.
+
+- **`ball_tracker.track_ball_states`** (NEW) — per-frame Kalman state
+  (pos/vel/cov/mahalanobis_d2/accepted). `track_ball` is now a thin wrapper
+  over it, every existing caller byte-identical. `predict_only_frames` /
+  `extrapolate_frames` knobs for pass 2. +3 tests.
+- **`ball_roi_tracker.refine_ball_track`** (NEW) — the pass-2 orchestrator:
+  bootstrap gate → forward + backward CV fit → predicted-ROI crop →
+  `detect_ball` on the crop → **Mahalanobis accept gate** → widened contact
+  window → `contact_safe_dets` withholds ROI recoveries in the contact
+  guard so `_find_gap_contact` still sees the ball vanish at impact.
+  8 fake-YOLO tests (cold start, recovery, gated swap, hallucination
+  rejection, budget cap, imgsz passthrough, contact withholding, backward
+  pass). Not imported by any consumer.
+- **`eval_ball_roi_tracker.py`** (NEW) — WITH-ROI vs pass-1 on the 354
+  sparse hand-drawn boxes + (when present) a dense consecutive-frame set;
+  `fp_rate` hard gate, `--calibrate-roi-imgsz`. Output
+  `data/07_audits/ball_roi_tracker_eval.json`.
+- **`label_dense_ball_track.py`** (NEW) — `--seed` drafts
+  `dense_eval_clips.json` (reviewed clips with a real human contact mark
+  only); main pass labels consecutive frames via motion-ROI → propose →
+  Haiku-confirm, resumable + cost-logged.
+
+**Stage-4 gate result (120-row sparse sample, after two tuning passes):**
+
+| metric | pass-1 | ROI |
+|---|---|---|
+| detect_rate | 0.781 | 0.795 (no regression) |
+| mean_iou | 0.632 | 0.599 |
+| **fp_rate** | 0.021 | 0.064 — **over the +2pp gate** |
+| hard-subset recovery (pass-1 misses) | 0/16 | 1/16 |
+
+The FP detail: the +4pp is **exactly 2 extra false positives / 47
+negatives**, both `roi_contact` recoveries *inside the contact window* on
+frames a human labelled "ball not visible" that are ~1f after contact /
+mid blurred flight — physically-plausible blurred-ball hits, and already
+excluded from `contact_safe_dets` so they never reach contact detection.
+Tuning done: accept gate tightened to the base `OUTLIER_GATE**2`, ROI conf
+0.15→0.30 + a box-conf floor, candidates restricted to within 3f of an
+accepted pass-1 detection, and a pass-1 box is never dropped.
+
+**Verdict:** the literal gate fails; the failure is benign and contained,
+and the gains are marginal (1/16 hard recoveries). Dense-set continuity
+numbers (the real test) are being labelled now. **Do not wire A5/A6 until
+the dense eval says the recovery is worth it** — the plan's GO/NO-GO stands.

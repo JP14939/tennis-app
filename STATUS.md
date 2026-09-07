@@ -6,7 +6,7 @@ where things stand in under 2 minutes. For the full detailed history, see
 `HANDOVER.md` (dated build log) and `TODO_MANUAL.md` (full backlog, also
 chronological) — this file is a filter on top of those, not a replacement.
 
-**Last updated:** 2026-09-05 — Find Games revamp (mesh clubs, watch system, postcodes, club naming), auth-convention guard, highlights.js job-runner deepened
+**Last updated:** 2026-09-06 (later) — overlay interpolation: new shared `scripts/00_utils/interpolate_track.py` gap-fills the racket + pose overlay payloads server-side (short bounded gaps, local quadratic; DTW trajectories untouched); new visible ball-path overlay in Sync Compare; `SkeletonOverlay.js` One Euro filter re-seeds across long gaps. Prior: racket-detection measured (item 10); 2026-09-05 Find Games revamp, auth-convention guard
 
 ---
 
@@ -101,15 +101,38 @@ Curated, not exhaustive — the full backlog lives in `TODO_MANUAL.md`.
    isn't finding real signal in these features. Not live-consequential
    either way (separate runtime trust gate needs 50+ real production
    examples, currently 0). Needs a redesign, not more data, if revisited.
-10. **A visual audit of the ball/racket tracker confirms serves are the weak
-   point, and points at the tracker, not pose.** `render_contact_review_
-   frames.py` (new) draws the tracker's detected boxes on frames around its
-   guess vs. Jack's hand mark. Serves have a much fatter error tail than
-   groundstrokes (several misses over 85 frames vs. groundstrokes' worst of
-   -23f) despite MediaPipe pose visibility looking fine on serves in a small
-   sample. Physically plausible (ball near the sky, faster/larger racket
-   arc, more motion blur) — not acted on further, a real fine-tuning
-   decision for later. Images: `data/07_ball_racket_tracking/contact_review/`.
+10. **Serve contact detection was an ANCHOR problem (not racket detection) —
+   measured, then fixed (Phase 1a, 2026-09-06).** Diagnosis: racket bbox
+   detected in 60/60 serve windows; the wrist-velocity anchor was a median
+   ~38f off (toss/follow-through beats contact in wrist speed) and outside
+   the refinement window on most serves. **Fix:** new
+   `scripts/00_utils/serve_anchor.py` — for serves, anchor on the overhead
+   wrist apex (`(nose.y-wrist.y)/torso`) instead of wrist velocity, wired
+   into `compare_swing.auto_contact_anchor_frame` + a serve-widened
+   audio-onset band; `racket_tracker.find_contact_frame` got a narrow
+   symmetric serve window. **Result (eval_pro_clip_contact.py, 60 serves):
+   contact err median 44f → 17.7f, p90 110f → 80f, ≤3f 20% → 35%; forehand
+   /backhand rows byte-identical (regression check).** ~half of serves still
+   have a bad apex (bimodal tail) — improved, not solved. Live audioless
+   fallback only; on real phone serve uploads audio-onset is the first line.
+   **Phase 1b done (2026-09-07):** `scripts/06_database_build/reanchor_pro_serves.py`
+   re-anchored 19 non-human-marked serve entries in `pro_database.json` to
+   the apex (60 human-marked ones left alone), with backups; idempotent on
+   re-run. Racket *keypoint* precision on serves (~2× worse) is still open —
+   for the overlay + shot-contact verifier + the racket-tip coaching-tip
+   gap, NOT the contact pipeline. Full writeup: HANDOVER.md 2026-09-06 (two
+   entries) + 2026-09-07.
+
+   *Two-pass ROI ball tracker (2026-09-07): built, NOT wired.* New
+   `ball_roi_tracker.py` + `ball_tracker.track_ball_states` +
+   `eval_ball_roi_tracker.py` + `label_dense_ball_track.py`. Re-runs the
+   ball detector in a small Kalman-predicted crop for frames pass-1 missed,
+   Mahalanobis-gated. Stage-4 fp_rate hard gate does **not** cleanly pass on
+   the sparse set (+4pp, = 2 benign blurred-ball hits in the contact window,
+   already walled off from contact detection); hard-miss recovery only 1/16.
+   Dense continuity eval pending. No consumer wired — the plan's GO/NO-GO
+   stands. Plans: `okay-plan-it-floating-whistle.md` +
+   `c-users-jackp-claude-plans-okay-plan-it-serene-map.md`.
 11. **Local dev workflow had two real bugs, both fixed.** Web dev was
    pointed at an ngrok tunnel whose free-tier browser interstitial silently
    broke every API call (looked like a login/history bug, was zero backend
