@@ -124,20 +124,15 @@ def _frame_span(detections):
 
 
 def _densify(track, start_frame, end_frame):
-    """Linear-fill every integer frame in [start, end] from a sparse
-    [(frame,(x,y))] track. Endpoints held constant outside the track's span."""
+    """Linear-fill every integer frame BETWEEN the first and last point of a
+    sparse [(frame,(x,y))] track. Frames outside the track's own span are not
+    emitted -- an overlay should not draw a stationary ball where the tracker
+    never had one."""
     if not track:
         return []
     pts = sorted(track)
     out = []
-    for f in range(start_frame, end_frame + 1):
-        if f <= pts[0][0]:
-            out.append((f, pts[0][1]))
-            continue
-        if f >= pts[-1][0]:
-            out.append((f, pts[-1][1]))
-            continue
-        # find bracketing points
+    for f in range(max(start_frame, pts[0][0]), min(end_frame, pts[-1][0]) + 1):
         for i in range(len(pts) - 1):
             (fa, pa), (fb, pb) = pts[i], pts[i + 1]
             if fa <= f <= fb:

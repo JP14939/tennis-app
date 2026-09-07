@@ -37,6 +37,7 @@ sys.path.insert(0, os.path.join(SCRIPTS_DIR, '05_angle_detection'))
 
 from infer_angle import extract_frame, detect_net_endpoints_keypoints  # noqa: E402
 from racket_tracker import track_racket_and_ball, _interpolated_ball_track  # noqa: E402
+from ball_roi_tracker import refine_ball_track  # noqa: E402
 
 # ITF net-post-to-net-post span: doubles court width (10.97m) + 0.914m
 # overhang each side -- the real-world distance the trained net-keypoint
@@ -143,13 +144,23 @@ def _ball_speed_px_per_frame_at(track, frame, half_window=VELOCITY_HALF_WINDOW,
     return float(np.hypot(vx, vy))
 
 
-def estimate_net_crossing_ball_speed_kmh(video_path, contact_frame, fps, camera_angle_deg):
+def estimate_net_crossing_ball_speed_kmh(video_path, contact_frame, fps, camera_angle_deg,
+                                         use_roi_tracker=True):
     """
     Best-effort ball speed (km/h) at the moment the ball crosses the net
     after `contact_frame`, or None whenever the estimate can't be trusted
     (see module docstring) -- never raises for an "unavailable" case, only
     for a genuinely broken video_path/model load, same as this pipeline's
     other non-fatal-on-failure stats.
+
+    use_roi_tracker: run ball_roi_tracker.refine_ball_track (pass 2) over the
+    pass-1 detections before fitting the crossing -- re-detects the ball in a
+    small Kalman-predicted crop for frames pass 1 missed, which is most of
+    them on a wide-court flight (measured: dense-set track continuity ~0.13
+    -> ~0.5 on the mid-difficulty clips). Defaults ON here because this is
+    already the slow, frequently-None, non-fatal path and the gap the ROI
+    recovers is exactly a missing net crossing. Set False to fall back to the
+    plain pass-1 Kalman track.
     """
     if camera_angle_deg is None or camera_angle_deg < MIN_RELIABLE_ANGLE_DEG:
         return None
@@ -161,7 +172,15 @@ def estimate_net_crossing_ball_speed_kmh(video_path, contact_frame, fps, camera_
 
     end_frame = contact_frame + int(MAX_SEARCH_SECONDS * fps)
     detections, _ = track_racket_and_ball(video_path, frame_range=(contact_frame, end_frame))
-    track = _interpolated_ball_track(detections, contact_frame, end_frame)
+    track = None
+    if use_roi_tracker:
+        try:
+            track = refine_ball_track(video_path, detections, fps,
+                                      contact_frame=contact_frame).filled_track
+        except Exception as e:  # noqa: BLE001 -- fall back to pass-1, never fatal
+            print(f'  [ball_speed] ROI tracker failed, using pass-1 track: {e}', file=sys.stderr)
+    if not track:  # ROI off, declined (cold clip), or errored
+        track = _interpolated_ball_track(detections, contact_frame, end_frame)
     if not track:
         return None
 

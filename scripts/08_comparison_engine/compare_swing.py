@@ -32,8 +32,15 @@ from track_racket_in_clip import track_racket_body, avg_racket_body_distance, tr
 from ball_speed import estimate_net_crossing_ball_speed_kmh
 from select_coaching_tips import get_coaching_tips
 from paths import DATA_DIR
+from interpolate_track import interpolate_named_points, interpolate_series
+from serve_anchor import serve_contact_anchor_frame, pose_by_frame_from_frames_list
 import phase_breakdown
 import clip_review_log
+
+# Serves need a wider audio-onset search band than groundstrokes: the anchor
+# (overhead apex) is noisier and contact lands a few frames after it.
+SERVE_AUDIO_WINDOW_SEC = 0.8
+GROUNDSTROKE_AUDIO_WINDOW_SEC = 0.5
 
 DB_PATH         = os.path.join(DATA_DIR, '06_pro_database', 'pro_database.json')
 OVERLAY_DB_PATH = os.path.join(DATA_DIR, '06_pro_database', 'overlay_trajectories.json')
@@ -100,10 +107,75 @@ def build_racket_overlay_trajectory(racket_frames, fps):
     both overlays sync to one shared playhead with no extra translation.
     """
     result = []
+    point_names = None
     for f in racket_frames:
         points = {name: ({'x': p[0], 'y': p[1]} if p else None) for name, p in f['points'].items()}
+        if point_names is None:
+            point_names = list(points.keys())
         result.append({'t': round(f['frame'] / fps, 3), 'points': points})
+    # Bridge brief keypoint dropouts (YOLO losing the racket for a frame or
+    # two) so the frontend trail stays continuous -- overlay only, the
+    # phase-scoring / contact-verification paths never see this.
+    if point_names:
+        interpolate_named_points(result, point_names, key='points')
     return result
+
+
+def build_ball_overlay_trajectory(video_path, fps, frame_range=None, contact_frame=None,
+                                  use_roi_tracker=True):
+    """[{t, point: {x, y} | None}] for the ball centre across frame_range, in
+    [0,1] frame-normalised coords -- same convention/playhead as the racket
+    and skeleton overlays, so the frontend draws all three off one timeline.
+
+    use_roi_tracker (default ON): ball_roi_tracker.refine_ball_track's
+    filled_track_dense -- the pass-1 constant-velocity Kalman track (bridges a
+    brief occlusion at contact, rejects stray ball-shaped detections) PLUS a
+    pass-2 re-detection of the ball in a small predicted crop for frames pass
+    1 missed, which on a wide-court flight is most of them (dense-set track
+    continuity ~0.13 -> ~0.5 on mid-difficulty clips). Overlay-only, so a
+    contact-window blurred-ball recovery here is harmless -- contact
+    detection never sees this path. Falls back to the plain pass-1 track on
+    any error. interpolate_series still smooths any residual short gap.
+    Returns None if there's no usable ball track.
+    """
+    from racket_tracker import track_racket_and_ball, _center_in_original_space
+    from ball_tracker import track_ball
+
+    cap = cv2.VideoCapture(video_path)
+    w = cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1.0
+    h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 1.0
+    cap.release()
+
+    detections, _ = track_racket_and_ball(video_path, frame_range=frame_range)
+    if not detections:
+        return None
+    start_f, end_f = detections[0]['frame'], detections[-1]['frame']
+    track = None
+    if use_roi_tracker:
+        try:
+            from ball_roi_tracker import refine_ball_track
+            track = dict(refine_ball_track(video_path, detections, fps,
+                                           contact_frame=contact_frame).filled_track_dense)
+        except Exception as e:  # noqa: BLE001 -- overlay is non-fatal, fall back
+            print(f'  Ball ROI tracker failed, using pass-1 track (non-fatal): {e}', file=sys.stderr)
+            track = None
+    if not track:
+        track = dict(track_ball(detections, start_f, end_f, _center_in_original_space))
+    if not track:
+        return None
+
+    frames = list(range(start_f, end_f + 1))
+    ts = [round(f / fps, 3) for f in frames]
+    xs = [track[f][0] / w if f in track else None for f in frames]
+    ys = [track[f][1] / h if f in track else None for f in frames]
+    fx = interpolate_series(ts, xs)
+    fy = interpolate_series(ts, ys)
+    result = [
+        {'t': ts[i],
+         'point': {'x': fx[i], 'y': fy[i]} if fx[i] is not None and fy[i] is not None else None}
+        for i in range(len(frames))
+    ]
+    return result or None
 
 
 def build_overlay_trajectory(frames):
@@ -125,6 +197,11 @@ def build_overlay_trajectory(frames):
             lm = f['landmarks'].get(k)
             landmarks[k] = {'x': lm['x'], 'y': lm['y']} if lm and lm['visibility'] >= 0.3 else None
         result.append({'t': f['timestamp'], 'landmarks': landmarks})
+    # Fill short runs where MediaPipe lost a joint (motion blur around
+    # contact is the common case) -- keeps the drawn skeleton continuous.
+    # Overlay payload only; the DTW trajectory is built separately and is
+    # deliberately left un-interpolated.
+    interpolate_named_points(result, KEY_LANDMARKS, key='landmarks')
     return result
 
 
@@ -211,7 +288,24 @@ def find_peak_wrist_frame(frames, fps):
     return peak_idx
 
 
-def build_user_trajectory(frames, fps, contact_time_sec=None):
+def auto_contact_anchor_frame(frames, fps, shot_type):
+    """Rough contact anchor for the AUTO-DETECT path (no user mark).
+
+    Serve -> the overhead-apex frame (serve_anchor.serve_contact_anchor_frame),
+    which sits within a few frames of contact; groundstroke -> the
+    wrist-velocity peak. Falls back to the wrist-velocity peak when the serve
+    overhead signal isn't measurable (bad pose / not actually a serve).
+
+    Returns a frame NUMBER (not a list index) so it's interchangeable with
+    `frames[find_peak_wrist_frame(...)]['frame']` at every call site."""
+    if shot_type == 'serve':
+        anchor = serve_contact_anchor_frame(pose_by_frame_from_frames_list(frames), fps)
+        if anchor is not None:
+            return anchor
+    return frames[find_peak_wrist_frame(frames, fps)]['frame']
+
+
+def build_user_trajectory(frames, fps, contact_time_sec=None, shot_type=None):
     """
     Sample every available pose frame (native ~15-30fps, since
     extract_user_poses keeps every 3rd frame) from PRE_SEC before to POST_SEC
@@ -223,6 +317,9 @@ def build_user_trajectory(frames, fps, contact_time_sec=None):
     re-detecting contact via wrist velocity — the user's manual frame-by-frame
     marking is ground truth and should never be second-guessed by a heuristic.
 
+    shot_type: routes the auto-detect anchor — 'serve' uses the overhead-apex
+    anchor, everything else the wrist-velocity peak (see auto_contact_anchor_frame).
+
     Returns (trajectory, contact_frame_num).
     """
     frame_index = {f['frame']: f['landmarks'] for f in frames if f['landmarks']}
@@ -231,7 +328,7 @@ def build_user_trajectory(frames, fps, contact_time_sec=None):
         target_frame = round(contact_time_sec * fps)
         contact_frame_num = min((f['frame'] for f in frames), key=lambda x: abs(x - target_frame))
     else:
-        contact_frame_num = frames[find_peak_wrist_frame(frames, fps)]['frame']
+        contact_frame_num = auto_contact_anchor_frame(frames, fps, shot_type)
 
     lo = contact_frame_num - int(PRE_SEC * fps)
     hi = contact_frame_num + int(POST_SEC * fps)
@@ -302,10 +399,15 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
     if contact_time_sec is None:
         try:
             from audio_contact import detect_contact  # noqa: PLC0415
-            wrist_peak_sec = frames[find_peak_wrist_frame(frames, fps)]['frame'] / fps
+            # Serve: centre the audio band on the overhead-apex anchor (the
+            # wrist-velocity peak is a toss/follow-through frame ~38f off) and
+            # widen it, since the apex-to-contact gap is a few frames.
+            rough_anchor_sec = auto_contact_anchor_frame(frames, fps, shot_type) / fps
+            audio_window_sec = (SERVE_AUDIO_WINDOW_SEC if shot_type == 'serve'
+                                else GROUNDSTROKE_AUDIO_WINDOW_SEC)
             ac = detect_contact(
-                video_path, anchor_time_sec=wrist_peak_sec, search_window_sec=0.5,
-                video_hints={'wrist_peak_sec': wrist_peak_sec, 'pose_pred_sec': wrist_peak_sec},
+                video_path, anchor_time_sec=rough_anchor_sec, search_window_sec=audio_window_sec,
+                video_hints={'wrist_peak_sec': rough_anchor_sec, 'pose_pred_sec': rough_anchor_sec},
             )
             if ac and ac['confident']:
                 contact_time_sec = ac['contact_time_sec']
@@ -330,9 +432,11 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
             from train_contact_frame_model import predict_contact_offset  # noqa: PLC0415
             import contact_frame_ml_training_log as cf_ml  # noqa: PLC0415
             if cf_ml.stats().get('trusted'):
-                anchor_idx = find_peak_wrist_frame(frames, fps)
-                anchor_frame = frames[anchor_idx]['frame']
-                ev = compute_contact_evidence(video_path, frames, fps, anchor_frame, anchor_idx)
+                anchor_frame = auto_contact_anchor_frame(frames, fps, shot_type)
+                anchor_idx = min(range(len(frames)),
+                                 key=lambda i: abs(frames[i]['frame'] - anchor_frame))
+                ev = compute_contact_evidence(video_path, frames, fps, anchor_frame, anchor_idx,
+                                              shot_type=shot_type)
                 if ev and ev['student_method'] != 'wrist_velocity_fallback':
                     offset, available = predict_contact_offset({
                         'student_method': ev['student_method'],
@@ -360,7 +464,13 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         except Exception as e:  # noqa: BLE001
             print(f'  [visual-contact] skipped: {e}', file=sys.stderr)
 
-    user_trajectory, peak_frame = build_user_trajectory(frames, fps, contact_time_sec)
+    # Serve auto-detect (no user mark): the win comes from the overhead-apex
+    # anchor feeding build_user_trajectory (and the audio band above). compare()
+    # never calls racket_tracker.find_contact_frame directly -- that refinement
+    # is only reached via the trust-gated visual-student block above -- so the
+    # serve window widening in racket_tracker mainly benefits eval_pro_clip_
+    # contact.py and the visual student once it earns trust.
+    user_trajectory, peak_frame = build_user_trajectory(frames, fps, contact_time_sec, shot_type=shot_type)
     if not user_trajectory:
         # Same guard compare_videos.py already has for the equivalent case --
         # without it, DTW against every pro candidate returns inf, similarity
@@ -556,6 +666,7 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
     # on the user's video, which is too expensive to run against every
     # candidate.
     user_racket_overlay_trajectory = None
+    user_ball_overlay_trajectory = None
     if top:
         print('  Computing phase breakdown (top match only)...', file=sys.stderr)
         top_entry = top[0][2]
@@ -587,6 +698,13 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         except Exception as e:
             print(f'  Racket path tracking failed (non-fatal): {e}', file=sys.stderr)
 
+        # Ball swing-path overlay -- same contact window as the racket path.
+        try:
+            user_ball_overlay_trajectory = build_ball_overlay_trajectory(
+                video_path, fps, frame_range=(lo, hi), contact_frame=peak_frame)
+        except Exception as e:
+            print(f'  Ball path tracking failed (non-fatal): {e}', file=sys.stderr)
+
         # Skeleton overlay data -- only for the top match, mirroring the
         # phase-breakdown-only-for-top-match pattern above. Pro side is a
         # precomputed lookup (see 13_overlay_trajectories/); user side is
@@ -596,6 +714,11 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
                 overlay_db = json.load(f)
             pro_overlay = overlay_db.get(top_entry['id'])
             if pro_overlay is not None:
+                # overlay_trajectories.json is kept raw on disk (see
+                # enrich_pro_camera_roll.py) -- gap-fill it here at request
+                # time so the pro skeleton bridges the same way the user's now
+                # does, without a DB rebuild.
+                interpolate_named_points(pro_overlay, KEY_LANDMARKS, key='landmarks')
                 output[0]['pro_overlay_trajectory'] = pro_overlay
         except FileNotFoundError:
             print('  No overlay_trajectories.json found (run 13_overlay_trajectories/build_pro_overlay_trajectories.py) -- skipping pro skeleton overlay', file=sys.stderr)
@@ -621,6 +744,12 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
                 pro_fps = pro_cap.get(cv2.CAP_PROP_FPS) or fps
                 pro_cap.release()
                 output[0]['pro_racket_overlay_trajectory'] = build_racket_overlay_trajectory(pro_racket_frames, pro_fps)
+                pro_contact_sec = top_entry.get('clip_contact_time_sec')
+                pro_contact_frame = int(round(pro_contact_sec * pro_fps)) if pro_contact_sec else None
+                pro_ball = build_ball_overlay_trajectory(
+                    pro_clip_path, pro_fps, contact_frame=pro_contact_frame)
+                if pro_ball is not None:
+                    output[0]['pro_ball_overlay_trajectory'] = pro_ball
         except Exception as e:
             print(f'  Pro racket path tracking failed (non-fatal): {e}', file=sys.stderr)
 
@@ -637,6 +766,7 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         'user_view_direction': user_view_direction,
         'user_overlay_trajectory': build_overlay_trajectory(frames),
         'racket_overlay_trajectory': user_racket_overlay_trajectory,
+        'ball_overlay_trajectory': user_ball_overlay_trajectory,
         'matches':      output,
     }
 

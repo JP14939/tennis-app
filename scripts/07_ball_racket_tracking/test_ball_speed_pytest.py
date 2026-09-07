@@ -83,6 +83,36 @@ def test_end_to_end_speed_within_plausible_range(monkeypatch):
     assert abs(kmh - 69.12) < 1.0
 
 
+def test_roi_tracker_recovers_a_crossing_the_plain_track_misses(monkeypatch):
+    # Pass-1 detections have a mid-flight gap right where the ball crosses the
+    # net, so the plain Kalman track (default max_gap) breaks before the
+    # crossing and _find_net_crossing returns None. The ROI-refined track
+    # (stubbed here) bridges it -> a real speed comes back.
+    scale = 12.8 / 100.0
+    net_y_px, left_x_px, right_x_px = 40.0, 0.0, 100.0
+    full = [(f, (50.0, 100.0 - 5.0 * f)) for f in range(21)]
+    broken = [p for p in full if p[0] <= 6]  # track lost on the approach, never reaches the net
+
+    monkeypatch.setattr(ball_speed, '_net_scale_and_bounds',
+                        lambda video_path, frame: (scale, net_y_px, left_x_px, right_x_px))
+    monkeypatch.setattr(ball_speed, 'track_racket_and_ball',
+                        lambda video_path, frame_range: ([{'frame': f} for f, _ in full], 30.0))
+
+    class _Refined:
+        filled_track = full
+
+    monkeypatch.setattr(ball_speed, 'refine_ball_track', lambda *a, **k: _Refined())
+    monkeypatch.setattr(ball_speed, '_interpolated_ball_track',
+                        lambda detections, start, end: broken)
+
+    with_roi = estimate_net_crossing_ball_speed_kmh(
+        'irrelevant.mp4', 0, 30.0, camera_angle_deg=45.0, use_roi_tracker=True)
+    without_roi = estimate_net_crossing_ball_speed_kmh(
+        'irrelevant.mp4', 0, 30.0, camera_angle_deg=45.0, use_roi_tracker=False)
+    assert with_roi is not None
+    assert without_roi is None
+
+
 def test_implausible_speed_is_discarded(monkeypatch):
     # Same track as above but with a deliberately absurd scale -> a speed
     # far outside [MIN_PLAUSIBLE_KMH, MAX_PLAUSIBLE_KMH] should come back None.
