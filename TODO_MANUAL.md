@@ -49,6 +49,62 @@ items 10 & 12. All code is merged to master (PR #38). What's left for you:
 Nothing to do for the two-pass ROI tracker or the near-court crop — both
 evaluated NO-GO, code committed but unwired.
 
+### Later same day (2026-09-07, later still) — clustering + classifier retrain run
+
+Full detail: `HANDOVER.md` "Session 2026-09-07 (later still)". Both local-only,
+nothing committed/pushed.
+
+4. **`clusterCourts.js` has now been run locally (3,848 clubs from 33,222
+   courts) — but the hosted DB still has zero clubs.** To get Find Games
+   clubs live you need to either run `node backend/scripts/clusterCourts.js`
+   on the server or transfer the `clubs` / `club_courts` rows — CD doesn't
+   touch them. Bundle it with the pro-DB / practice-ingest data transfer
+   (item 1 above, and the 2026-09-03/04 items below). Local `app.db` backed
+   up as `backend/data/app.db.bak-20260907` — safe to delete once you're
+   happy with the club list.
+5. **Shot-classifier feature files re-extracted + `.pkl` retrained
+   (`--no-log`) — no action needed, informational.** Pro Clip Review verdict
+   rows are up to 632 (was 524); production ensemble on the pipeline domain
+   rose 83.6% → 86.6%. The phone `.pkl` is unchanged and will stay flat
+   until you source **amateur backhand footage** (still the one real lever —
+   10 training examples). Old model backed up as
+   `data/14_shot_classifier/shot_classifier_model.pkl.bak-20260907`.
+
+### Later same day (2026-09-07, later still²) — core-loop verification + 2-week launch review
+
+Jack wants to publish in ~2 weeks (target ~2026-09-21) and asked to verify the
+core analysis loop works. No code changed — review only. Full trace + ranked
+weak points: `HANDOVER.md` "Session 2026-09-07 (later still²)". Flat launch
+checklist: `JACK_TODO.md` "2-week launch push".
+
+6. **Core loop is verified working locally** — ran `compare_swing.py`
+   end-to-end on a real saved upload, got a valid top-3 match + score + tips +
+   phase breakdown, no crash. The engine is sound. The remaining launch work
+   is plumbing (below), not the ML sprint.
+7. **The ML-reliability sprint tail is downstream of rally-detection /
+   highlights — a secondary feature.** Sprint 3, Phase C, the
+   `analyze_rallies_parallel.py` contact wiring, and the classifier
+   accuracy-gap revisit do **not** block launch. Recommend deferring the
+   whole tail; do Sprint 3's $0 sanity run only if you want the number.
+8. **Similarity scores land low and uncalibrated** — a legit forehand scored
+   ≈50/100. `similarity_score`'s `scale=0.4` was never calibrated against a
+   labelled match-quality set. This is the most likely thing to make the
+   product feel broken to a first user. **Decision for you:** ask a Claude
+   session to run a calibration pass on the amateur eval set and propose a
+   `scale` (or a score-curve remap) before real users see numbers — or
+   consciously ship as-is.
+9. **Confirm the audio-onset contact model is actually deployed on the
+   server.** If it isn't, every auto-detect upload (no manual contact mark)
+   silently falls back to the ~9-frame wrist-peak heuristic, which shifts the
+   whole DTW window. Check via a real no-mark upload: backend logs should show
+   `Contact auto-detected via AUDIO onset`. Bundle the `.pkl` with the
+   pro-DB / clustering data transfer (item 4 above).
+10. **The 5-case live upload matrix + score-calibration decision are the real
+    "is the core loop launch-ready?" gate** — see `JACK_TODO.md` "Pre-launch
+    core-loop verification". Everything else there (Apple enrollment, EAS
+    build, RevenueCat native SDK, Resend domain, privacy policy + assets,
+    backups, repo-private) is standard store-submission plumbing.
+
 ---
 
 ## New from the 2026-09-05 session (Find Games revamp: mesh clubs, watches, postcodes, club naming)
@@ -66,14 +122,10 @@ it's all built and tested, just needs your eyes on a real device.
    of a club, suggest a name in the new "unverified name" banner, then
    confirm it from a second account; unwatch a court/club/area from the My
    Watches screen and confirm the row disappears.
-2. **Decide whether to re-run `node scripts/clusterCourts.js`** now that
-   the clustering algorithm changed from a 250m running-centroid to a true
-   100m node-mesh graph. Not run yet this session (only the algorithm and
-   its tests were built/verified) — a real re-run against the ~33k-court
-   local DB will re-shuffle some club boundaries (a straight line of
-   closely-spaced courts that used to split into multiple 250m clusters may
-   now merge into one, and vice versa for anything that was only within
-   250m via centroid drift, not real 100m adjacency). Existing
+2. ~~Decide whether to re-run `node scripts/clusterCourts.js`.~~ — **done
+   2026-09-07**: run against the local DB (it had never actually been run —
+   0 clubs), producing 3,848 clubs. See the 2026-09-07 section at the top,
+   item 4. Original note kept below for context. Existing
    `club_watches` should carry over correctly (the new
    `deleteOrphanedClubs()` cleanup + `reconcile()`'s existing court-overlap
    matching both got test coverage for this), but worth eyeballing the

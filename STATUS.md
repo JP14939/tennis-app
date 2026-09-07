@@ -6,7 +6,7 @@ where things stand in under 2 minutes. For the full detailed history, see
 `HANDOVER.md` (dated build log) and `TODO_MANUAL.md` (full backlog, also
 chronological) — this file is a filter on top of those, not a replacement.
 
-**Last updated:** 2026-09-07 (later) — **`batch/2026-09-06-find-games-rally-shots` integrated into `master` and deployed** (PR #38, 171 files / ~22k lines: ~2 weeks of feature work that had never reached master — Find Games mesh clubs, ball speed, audio-onset contact, shot-classifier + contact-verification ML, practice ingest, serve anchor, overlays + interpolation, match-quality flag). CD run 34143861953 ✓, health check passed, live `/health` OK. Full suite green on the merge (backend 620, verify:db 98, pytest 289). Prior same day: match-quality flag, overlay interpolation, racket-detection measured (item 10).
+**Last updated:** 2026-09-07 (later still²) — **core-loop verified + 2-week launch-readiness review (Jack wants to publish in ~2 weeks).** Ran `compare_swing.py` end-to-end on a real saved upload: pose → contact anchor → camera angle → candidate filter → DTW → top match `forehand_0080` 49.8/100 + tips + phase score. **The engine works.** Weak points, ranked: (1) similarity scores land low/compressed (a legit forehand ≈50/100 — `scale=0.4`, uncalibrated — most likely thing to make the product feel broken to a first user); (2) auto contact detection ≈9f off unless the audio model is deployed + the clip has audio (not confirmed on server); (3) server still on the pre-2026-09-02 pro DB (can't copy until practice review done); (4) camera-angle confidence usually low → silently compares against the whole shot-type pool; (5) `sample_every=3` timing cap; (6) no behavioral route test; (7) z-depth disabled; (8) serve is the weak shot everywhere. Full trace + blocker list: `HANDOVER.md` "Session 2026-09-07 (later still²)". The ML-reliability sprint tail is downstream of rally-detection/highlights (a secondary feature) — recommend deferring past launch. New pre-launch checklist in `JACK_TODO.md`. Prior same day: **local maintenance run: court clustering + shot-classifier retrain.** `clusterCourts.js` run against the local dev DB for the first time (100m node-mesh): 33,222 courts → 3,848 clubs / 14,696 courts-in-a-club, 2,180 clubs postcoded (rest non-UK OSM), `verify:db` 98/98, `clusterCourts.test.js` 10/10. `app.db` backed up first (`app.db.bak-20260907`); `club_watches` was empty so no watch migration/orphaning. Shot classifier: all 3 feature extractors re-run — Pro Clip Review verdict rows 524→632 (FH 323 / BH 229 / serve 80). `shot_classifier_model.pkl` retrained `--no-log` (CV acc 0.629, backhand F1 0.40 — unchanged; phone ML model is bottlenecked on *amateur* backhand footage, none added). `evaluate_shot_classifiers.py --set both`: production **ensemble** now **86.6%** on the 634 pro labels (FH 89 / BH 86 / serve 80), up from 83.6% on 2026-09-04 — the bigger reviewed pool helped the pipeline path; phone ensemble flat at 68.1%. All local-only, nothing committed/pushed/deployed. Prior same day: `batch/2026-09-06-find-games-rally-shots` integrated into `master` and deployed (PR #38, 171 files / ~22k lines: ~2 weeks of feature work that had never reached master — Find Games mesh clubs, ball speed, audio-onset contact, shot-classifier + contact-verification ML, practice ingest, serve anchor, overlays + interpolation, match-quality flag). CD run 34143861953 ✓, health check passed, live `/health` OK. Full suite green on the merge (backend 620, verify:db 98, pytest 289). Prior same day: match-quality flag, overlay interpolation, racket-detection measured (item 10).
 
 ---
 
@@ -36,12 +36,20 @@ Curated, not exhaustive — the full backlog lives in `TODO_MANUAL.md`.
    courts were already watched, so the map's watched-state always started
    empty on load. Live on the server since the 2026-09-07 merge — needs a
    real-device click-through, see `TODO_MANUAL.md`'s 2026-09-05 section.
+   **`clusterCourts.js` now actually run against the local DB (2026-09-07):
+   3,848 clubs from 33,222 courts.** The hosted DB still has no clubs — a
+   `data/` transfer is still the open step there (`club_courts`/`clubs`
+   rows aren't touched by CD).
 2. **Postcodes + crowd-sourced club naming, same session.** Free postcode
    lookups (postcodes.io, no API key/cost — chosen explicitly over paid
    Google Geocoding) on courts/clubs/areas; a real backfill already ran
-   against local data (16,711/33,222 courts resolved). Club naming now
+   against local data (16,711/33,222 courts resolved; club postcodes filled
+   during the 2026-09-07 cluster run — 2,180/3,848). Club naming now
    works like court verification already did: a user proposes a name, 2
-   others confirm it, done — no paid automated lookup needed.
+   others confirm it, done — no paid automated lookup needed. Many derived
+   club names are the generic "Courts near Tennis Court" fallback (all
+   constituent courts carry the default OSM tag) — crowd-sourced naming is
+   the intended fix.
 3. **The backend auth-convention gap is closed.** `TODO_MANUAL.md`'s
    backend-architecture backlog used to flag "no enforced convention for
    `requireAuth`/`optionalAuth` per route" as a known risk (root cause of a
@@ -79,7 +87,13 @@ Curated, not exhaustive — the full backlog lives in `TODO_MANUAL.md`.
    flowing into training** (43 forehand / 34 backhand / 42 serve) — the
    backhand count alone more than triples the old 10-example ceiling that's
    been the phone-classifier bottleneck. Re-run the extractor periodically
-   to pick up more as Jack's review count climbs.
+   to pick up more as Jack's review count climbs. **Re-run 2026-09-07:
+   `training_features_from_pro.json` now 632 rows (FH 323 / BH 229 / serve
+   80). Feeding the trajectory-kNN / ensemble path lifted the pipeline
+   ensemble 83.6% → 86.6%. The phone `.pkl` (`--no-log`, amateur-only) is
+   still flat — `--use-pro` collapses amateur backhand F1 (0.40→0.15), so
+   pro rows stay out of that model; the real lever remains new *amateur*
+   backhand footage.**
 7. **Unreviewed practice entries were live match candidates — fixed.** Any
    of the 333 auto-labelled practice entries could have been served to a
    real user as their "closest pro match" before being reviewed. New
@@ -168,7 +182,18 @@ Curated, not exhaustive — the full backlog lives in `TODO_MANUAL.md`.
    review count is higher.
 13. **A real beta launch hasn't happened.** The product is feature-complete
    well past the original MVP scope but has never been tested by real
-   external users — biggest open strategic question.
+   external users — biggest open strategic question. **Jack now wants to
+   publish in ~2 weeks (target ~2026-09-21).** Core loop verified working
+   locally 2026-09-07 (see the "Last updated" line + `HANDOVER.md` "Session
+   2026-09-07 (later still²)"). Launch is gated on plumbing, not the ML
+   sprint tail: Apple Developer enrollment (long pole), EAS build, RevenueCat
+   native SDK, privacy policy + store assets, Resend sender domain, copying
+   the current `data/` + models + `clusterCourts.js` to the server, one real
+   end-to-end live upload, off-box DB backups, device click-throughs, repo
+   back to private. Full checklist: `JACK_TODO.md` "2-week launch push".
+   **Product-quality risk to weigh first:** similarity scores land low
+   (≈50/100 for a legit swing) and are uncalibrated — decide whether to
+   move `similarity_score`'s `scale` before real users see numbers.
 14. **The whole backlog IS merged + deployed now (2026-09-07).** `master`
     is at the PR #38 merge; CD deployed it (health check passed); local
     `master` = `origin/master`, working tree clean. **Still deliberately

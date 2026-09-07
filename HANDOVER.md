@@ -3309,3 +3309,196 @@ after the batch branch merged to master (PR #38, another session).
   `eval_near_court_ball_detection.py` near-side up). Keep the new `best.pt`
   only if it clears them — else `cp -r` the backup back. `data/` isn't
   deployed by CD, so a good `best.pt` is a manual server transfer.
+
+## Session 2026-09-07 (later still) — local maintenance: court clustering + shot-classifier retrain
+
+Two independent local jobs Jack asked for, both **local-only** — every output
+file is gitignored, nothing committed / pushed / deployed. Plan:
+`~/.claude/plans/logical-coalescing-stream.md`.
+
+### 1. `clusterCourts.js` run against the local dev DB — first time ever
+
+`clubs` / `club_courts` / `club_watches` were all **0 rows** before this — the
+2026-09-05 rewrite (250m running-centroid → true 100m union-find node-mesh)
+had only ever been unit-tested. So this was effectively a first run, not a
+re-cluster: none of the doc'd "re-shuffle / orphan watches / stomped names"
+risks applied.
+
+- Backed up `backend/data/app.db` → `app.db.bak-20260907` first.
+- `node scripts/clusterCourts.js`: **33,222 courts → 3,848 clubs**, 14,696
+  courts assigned to a club. Largest club 43 courts (a real multi-court
+  centre — not the historical 57-court single-linkage chaining bug).
+- Postcodes: 2,180 / 3,848 clubs resolved inline via `lookupPostcode()`
+  (postcodes.io); `backfillPostcodes.js` afterwards added only 1 more — the
+  ~44% unresolved are clubs whose courts are non-UK OSM entries postcodes.io
+  can't match (same ratio as the 16,711/33,222 court backfill).
+- **Many derived names are the generic `"Courts near Tennis Court"`
+  fallback** — every constituent court carries the default OSM `Tennis
+  Court` tag, so `deriveName()` has nothing better. This is expected and the
+  crowd-sourced club-naming flow (2026-09-05) is the intended fix; not a bug.
+- Verified: `npx jest scripts/clusterCourts.test.js` 10/10, `npm run
+  verify:db` 98/98 invariants.
+- **Still open:** the hosted DB has no clubs. `clusterCourts.js` would need
+  to run on the server (or the rows transferred) — `clubs`/`club_courts`
+  aren't touched by CD. Same "data can outrun code" caveat as the pro DB.
+
+### 2. Shot-classifier retrain
+
+- Backed up `shot_classifier_model.pkl` + `_meta.json` → `*.bak-20260907`.
+- Re-ran all three feature extractors (`extract_training_features.py`,
+  `_from_log.py`, `_from_pro_verdicts.py`). Results:
+  - amateur baseline: 116 rows (unchanged — 57 serve / 49 FH / 10 BH)
+  - log-derived: 111 rows (34 FH / 76 serve / 1 BH — still serve-contaminated)
+  - **pro-review verdicts: 524 → 632 rows** (323 FH / 229 BH / 80 serve) —
+    Jack's Pro Clip Review practice-queue progress since 2026-09-04.
+- **`train_shot_classifier_model.py --no-log`** (the doc'd recommendation —
+  log rows are serve-contaminated, pro rows hurt the phone model): CV acc
+  **0.629**, backhand F1 **0.40** — *identical* to the 2026-09-04 model. No
+  movement because no new *amateur* backhand footage was added, and that (10
+  examples) is the documented bottleneck for the phone ML path. Model saved
+  (refreshed `trained_at`, same weights).
+- Dry-ran the alternatives for the record: `--use-pro --pro-weight 0.25` →
+  held-out amateur backhand F1 collapses 0.40 → **0.15** (confirms the
+  2026-08-27 / 09-02 negative-transfer finding still holds, body-norm
+  features and all); plain (`+log`) → backhand F1 0.33. `--no-log` stays
+  the right call. Pro rows are **not** in the shipped `.pkl`.
+- **`evaluate_shot_classifiers.py --set both`** (no Claude calls). The
+  production FH/BH path is the geom + trajectory-kNN **ensemble**, not the
+  `.pkl`, and the bigger pro-review pool is exactly what it consumes:
+
+  | domain | ensemble | FH | BH | serve | vs 2026-09-04 |
+  |---|---|---|---|---|---|
+  | pipeline (pro, n=634) | **86.6%** | 89 | 86 | 80 | 83.6% → **+3.0** |
+  | phone (amateur, n=116) | 68.1% | 76 | 80 | 60 | flat |
+
+  `ml_phone` alone: amateur 71.6% (BH recall 100% / prec 45%), pro 46.2%
+  (negative transfer, as expected — it's a phone model). `traj_knn` pro:
+  81.2% (serve still its weak spot at 11% recall — a serve mislabelled as a
+  groundstroke is caught by the geom serve gate in the ensemble, which is
+  why ensemble serve is 80%).
+
+**Net:** clustering is a clean new capability locally; the classifier
+re-run's real payoff is the +3pt pipeline-ensemble gain from more reviewed
+data. The phone model is unchanged and will stay that way until amateur
+backhand footage exists — unchanged conclusion, now re-confirmed with the
+larger pool.
+
+## Session 2026-09-07 (later still²) — core-loop verification + 2-week launch-readiness review
+
+Jack wants to publish in ~2 weeks and asked to (a) verify the core analysis
+loop actually works, (b) get the pipeline + weak points written down, (c) know
+what's left for launch. No code changed this session — verification + review
+only.
+
+### Core loop verified end-to-end (local)
+
+Ran `compare_swing.py` directly on a real saved upload
+(`data/runtime/user_clips/upload_1787092004247_22435/original.mp4`, forehand,
+no `--contact-time`). Result: pose extracted, contact auto-detected via
+wrist-velocity peak (clip had no audio track → audio-onset path skipped
+silently, as designed), camera angle 66.9°/conf 0.35, view "back", angle
+filter 135/328 → view filter 45 candidates, DTW ran, top match
+`forehand_0080` **49.8/100**, coaching tips + phase score 65.5 produced.
+Valid JSON, no crash. **The engine works.**
+
+Local pro DB state: **648 entries** (FH 333 / BH 233 / serve 82), 637
+label-reviewed, all with trajectories. `onset_classifier.pkl` and
+`scripts/pose_landmarker.task` both present locally.
+
+### The pipeline (full trace)
+
+Frontend `ContactMarkingScreen.js` → pick/record video, choose shot type,
+optional view hint, optional manual contact mark → `POST /api/analyse`
+(multipart).
+
+Backend `analyse.js`: `requireAuth` → rate-limit (30/10min/user) → multer to
+disk (200 MB) → validate `shotType` + `contactTime` (`isTimestampSec`) →
+free-tier `reserveDailyUsageSlot` (cap 2/day, refunded on error) → look up
+`handed` server-side → `runPythonJson(pro_matcher.py …)` 2-min timeout → on
+success `finalizeAnalysisResult` persists + crops into `user_clips/<id>/`,
+responds, then fire-and-forget `log_user_contact_frame_cli.py` (training data,
+off the response path).
+
+`pro_matcher.py` → `compare_swing.py::compare()`:
+1. Pose extraction — OpenCV decode + MediaPipe PoseLandmarker, **every 3rd
+   frame** (`sample_every=3`, matched to the pro DB), 33 landmarks + visibility.
+2. Contact anchor (auto path only): serve → overhead-apex
+   (`serve_anchor.py`); groundstroke → wrist-velocity peak. Then audio-onset
+   (±0.5s / ±0.8s serve, confident-only) → then trust-gated visual student
+   (currently inert) → else the geometric anchor stands. Manual mark is never
+   second-guessed.
+3. Build user trajectory — `PRE_SEC`..`POST_SEC` window around contact,
+   normalise to shoulder-width units; hard error if `< MIN_TRAJECTORY_POINTS`.
+4. Camera angle + in-plane roll at contact (`infer_angle.py`: net-cord →
+   court-sideline fallback).
+5. Roll-correct (rotate) **then** mirror if left-handed (order matters).
+6. View-direction detect (front/back), hint only as fallback.
+7. Ball speed at net crossing (`ball_speed.py`) — silently null on low/unknown
+   angle.
+8. Candidate pool: `eligible_match_candidates` (shot type + excludes
+   unreviewed `practice_mvp`) → angle filter ±20° (fallback to full if <5) →
+   view-direction filter (fallback if <5).
+9. DTW (`trajectory_compare.py`) over 9 upper-body landmarks →
+   `similarity = 100·exp(−dist/0.4)`.
+10. Top 3 → coaching tips per match (`select_coaching_tips.py`,
+    `use_verifier=False`). Top match only: phase breakdown + skeleton /
+    racket-path / ball-path overlays.
+
+### Weak points (ranked by launch risk)
+
+1. **Similarity scores land low and compressed** — a legit forehand topped
+   out at ~50/100. `scale=0.4` means real amateurs routinely see 40–55,
+   which reads as "you're bad". No calibration against a labelled
+   "this-is-actually-a-70%-match" set. **Most likely single thing to make
+   the product feel broken to a first user.**
+2. **Auto contact detection is coarse** — wrist-peak median ~9f off. Audio
+   onset fixes it to ~1f **but only with an audio track + the model deployed
+   server-side** (STATUS item 14: not confirmed on the server). Library-picked
+   / re-encoded clips often have no usable audio → most auto uploads fall back
+   to the ~9f heuristic, shifting the DTW window.
+3. **Server is on an older pro DB** — local 648 vs server's pre-2026-09-02
+   rebuild. `data/` is gitignored, CD never touches it. Can't copy yet
+   (practice review ~60%; raw copy bypasses `eligible_match_candidates`).
+4. **Camera-angle confidence usually low** (0.35 here). When inconclusive or
+   the ±20° filter yields <5, it silently compares against the *entire*
+   shot-type pool regardless of framing — meaningless DTW, no signal to the
+   user.
+5. **`sample_every=3`** caps contact timing to ~1/3 frame-interval on each
+   side. Known, needs a ~60–90 min pro DB re-extract.
+6. **No behavioral route test** — `analyse.*.test.js` cover
+   validation/rate-limit/usage-slot only; nothing asserts a real video → sane
+   result. Live upload is the only true check.
+7. **z-depth disabled** (`Z_WEIGHT=0.0`) — DTW is effectively 2D.
+8. **Serve is the weak shot everywhere** — 82 pro entries, apex anchor bad on
+   ~half of serves, classifier serve recall 44–81%.
+9. **Coaching tips are templated, no Claude verifier live** — can contradict
+   across the 3 returned matches (observed: #1 "backswing too short" vs #3
+   "backswing loop very large" for the same swing).
+
+### What's actually left for a 2-week launch
+
+The ML-reliability sprint tail (Sprint 3, Phase C, `analyze_rallies_parallel`
+contact wiring, classifier accuracy-gap revisit) is all **downstream of rally
+detection / highlights — a secondary feature, not the core sell**. Recommend
+explicitly deferring the whole tail past launch.
+
+Real launch blockers, none started:
+- Apple Developer Program enrollment ($99/yr) — approval latency, the long pole
+- EAS build (`eas build`) — Expo Go can't do real IAP or Google Sign-In
+- RevenueCat native SDK in the EAS build
+- Privacy policy URL, app icons/screenshots, permission usage strings
+- Resend sender domain (password-reset emails currently redirect to Jack's
+  inbox) — confirm `rallymax.app`, verify DNS, set env, restart, test
+- Finish Pro Clip Review practice queue → then copy `pro_database.json` +
+  `overlay_trajectories.json` + `player_names.json` + model `.pkl`/`.pt` to
+  the server; also `clusterCourts.js` on the server for Find Games clubs
+- One real end-to-end swing upload through the live app (5-case matrix in
+  `JACK_TODO.md` "Pre-launch core-loop verification")
+- Off-box DB backups (`backupDatabase.js` written, 3 manual steps)
+- Real-device click-throughs (Find Games revamp, "Record now", Drills/Lessons/
+  Swing Review)
+- Flip GitHub repo back to private
+- Decide annual pricing tier; decide coaching-tip verifier on/off
+
+Open question flagged to Jack: run a similarity-score calibration pass on the
+amateur eval set and decide if `scale` moves before real users see numbers.

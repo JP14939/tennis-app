@@ -9,6 +9,82 @@ log, still the source of truth on *why*) plus everything that came up in the
 
 ---
 
+## 2-week launch push (added 2026-09-07 — target ~2026-09-21)
+
+Jack wants to publish in ~2 weeks. Core analysis loop was verified working
+end-to-end locally 2026-09-07 (`HANDOVER.md` "Session 2026-09-07 (later
+still²)"). Launch is gated on plumbing, **not** the ML-reliability sprint tail
+(Sprint 3 / Phase C / rally-detection work) — that's all downstream of the
+highlights feature and should be deferred past launch.
+
+**Long pole — start day 1:**
+- [ ] Apple Developer Program enrollment ($99/yr) — approval can take days.
+- [ ] Set up an EAS build (`eas build`) — Expo Go can't do real IAP or Google
+      Sign-In.
+- [ ] Wire RevenueCat's native SDK into the EAS build (backend
+      webhook/entitlement logic doesn't change).
+- [ ] Privacy policy URL, app icons, screenshots, permission usage strings
+      (camera / mic / photo library).
+
+**Backend / data — before real users:**
+- [ ] Finish the Pro Clip Review practice queue, **then** copy to the server:
+      `data/06_pro_database/pro_database.json`, `overlay_trajectories.json`,
+      `player_names.json`, and the model files (`onset_classifier.pkl`,
+      fine-tuned ball `best.pt`). `data/` is gitignored; CD never touches it,
+      so live matching is still on the pre-2026-09-02 pro DB until this is
+      done. The local `pro_database.json` also carries the 2026-09-07
+      serve-anchor Phase 1b re-anchor (19 serve entries → overhead apex;
+      backups `*_pre_serve_reanchor_20260907_124604.json`) — it ships in the
+      same copy.
+- [ ] **Ball-detector retrain — run the gates, then keep-or-revert.** A clean
+      retrain (imgsz 480 + multi_scale; fixes a real train/val leak of 76
+      duplicate images) is running / done locally. Ask a Claude session to
+      "run the ball retrain gates" — it produces a before/after table from
+      `README_ball_retrain.md`'s 3 audits. If the new `best.pt` clears them,
+      it goes in the server copy above; if not, one command restores
+      `yolo_ball_run_v1_BACKUP_20260907_165355`. Your keep/ship call.
+- [ ] Run `node backend/scripts/clusterCourts.js` on the server (or transfer
+      the `clubs` / `club_courts` rows) — the hosted DB has zero clubs, so
+      Find Games shows no clubs live.
+- [ ] Resend sender domain: create account, `RESEND_API_KEY` →
+      `backend/.env`, confirm `rallymax.app` is yours + verify DNS, set
+      `RESEND_FROM_EMAIL` / `PUBLIC_BASE_URL`, restart, test the real reset
+      email. (Currently password-reset emails redirect to Jack's inbox as a
+      stopgap.)
+- [ ] Off-box DB backups — `backend/scripts/backupDatabase.js` is written;
+      just the 3 manual steps in "Deploy & infrastructure" below (Backblaze
+      B2 bucket, `rclone config` on the VPS, one cron line).
+- [ ] Flip the GitHub repo back to private
+      (`gh repo edit JP14939/tennis-app --visibility private`).
+
+**Pre-launch core-loop verification (real device / live backend):**
+- [ ] One upload **with the contact frame marked** — score/match/tips render
+      in `ResultsScreen`.
+- [ ] One upload **without** marking — backend logs show `Contact
+      auto-detected via AUDIO onset` (proves the audio model is deployed +
+      firing; otherwise it silently falls back to the ~9-frame wrist-peak
+      heuristic).
+- [ ] One left-handed upload (mirror path).
+- [ ] One serve upload (worst-case shot — only 82 pro serve entries, weak
+      anchor).
+- [ ] "Record now" live camera calibration on a real phone (continuous
+      feedback loop, higher risk than a curl test).
+- [ ] Find Games revamp click-through + Drills/Lessons/Swing Review as a real
+      user.
+
+**Judgment calls:**
+- [ ] **Similarity-score calibration.** A legit forehand scored ≈50/100 in
+      the local run; `similarity_score`'s `scale=0.4` is uncalibrated and
+      scores land low + compressed for real amateurs. Run a calibration pass
+      on the amateur eval set and decide whether `scale` moves before real
+      users see numbers. **Most likely single thing to make the product feel
+      broken to a first user.** (Ask a Claude session to pull the numbers.)
+- [ ] Decide: add an annual pricing tier (only monthly is live)?
+- [ ] Decide: coaching-tip Claude verifier back on (with a cost budget) or
+      stay offline?
+
+---
+
 ## Deploy & infrastructure
 
 - [x] ~~Redeploy the hosted server.~~ — done 2026-08-23. Server pulled
@@ -80,16 +156,10 @@ log, still the source of truth on *why*) plus everything that came up in the
       (`camera_angle > 65°`, 14 forehand + 6 backhand) — decide keep vs.
       fix vs. remove for each. Offer still stands: I can generate contact
       sheets for a first-pass read if that helps.
-- [x] ~~Work through the 230 ball-label frames~~ — done, 354 labels logged
-      total. **New follow-up** — [ ] **review 5 flagged clips for
-      static-decoy contamination**: a real gap in the labeling tool meant a
-      static (not in-play) ball sometimes got boxed and logged identically
-      to a real label. An audit script
-      (`scripts/07_ball_racket_tracking/audit_ball_label_motion.py`) flagged
-      `analysis534`, `analysis501`, `analysis532`, `analysis519`,
-      `analysis522` as showing zero motion across their whole labeled
-      sequence — for each, confirm keep (real slow/soft shot) or exclude
-      (was a decoy) before Phase 3 fine-tuning starts.
+- [x] ~~Work through the 230 ball-label frames~~ — done, 354 labels logged.
+- [x] ~~Review 5 flagged clips for static-decoy contamination~~ — done
+      2026-08-25, all 5 (`analysis534/501/532/519/522`) confirmed decoys,
+      auto-excluded by `find_fully_static_files()` in the dataset build.
 - [ ] **Decide on `IMG_5755.MOV` Claude verification spend** (~$2.70,
       290 raw candidates found in the free dry-run) — give the go-ahead or
       skip it.
@@ -107,15 +177,19 @@ log, still the source of truth on *why*) plus everything that came up in the
       accuracy gate both times (worse than the plain heuristic). Not
       shipped, not live-consequential either way. Needs a different
       approach if you want to revisit it, not more data.
-- [ ] **Look at the ball/racket tracker audit images** and decide if
-      fine-tuning the ball detector is worth doing —
-      `data/07_ball_racket_tracking/contact_review/<clip_id>/*.jpg`, 25
-      sample clips. Confirms serves have a much worse contact-detection
-      error tail than groundstrokes; points at the tracker, not pose.
+- [x] ~~Decide if fine-tuning the ball detector is worth doing~~ — answered
+      2026-09-07. Two clever tracker ideas (two-pass predicted-ROI
+      re-detection; near-court crop) were both built and evaluated **NO-GO**
+      — the full-frame detector already gets ~85% near / ~87% far on visible
+      balls; only the contact frame (ball behind racket, gap-detection
+      covers it) and the offline pro DB are weak. A **clean retrain** IS
+      worth it and is the live task — see the "Ball-detector retrain" item
+      in the launch push above.
 - [ ] **Don't copy `pro_database.json` to the server yet** — wait until the
       practice-review pass is further along, or unreviewed/lower-quality
       practice entries would go live on the hosted server (the local match-
       pool filter added 2026-09-04 doesn't protect a straight file copy).
+      When you do, it carries the Phase 1b serve re-anchor too.
 
 ## Real-device / real-browser testing
 
@@ -185,9 +259,13 @@ top-down and instead harden each level before trusting the one built on it.
       - Open (Phase 2): serve recall still 44% (needs motion-direction
         features); the phone-upload domain is only ~56% (trajectory-kNN doesn't
         transfer — needs the ~809 unlabelled amateur swings + a real ML retrain).
-      - The **v2 ML retrain** (`extract_training_features_from_log.py` →
-        `train_shot_classifier_model.py --no-log`) is still worth doing — the
-        on-disk model is inert v1 — but is no longer on the critical path.
+      - ~~The **v2 ML retrain**~~ — done. The on-disk model is v2-bodynorm
+        (since 2026-09-04), re-run `--no-log` again 2026-09-07 with the
+        larger pro-review pool: unchanged (CV 0.629, backhand F1 0.40).
+        The phone ML model is bottlenecked on amateur backhand footage
+        (10 examples), not on retrain frequency. The pipeline **ensemble**
+        (geom + trajectory-kNN, the real production path) is at 86.6% on
+        the 634 pro labels as of 2026-09-07.
 - [ ] **Sprint 3 — re-run `detect_rallies` on IMG_5755, Claude-free.**
       `RALLYMAX_SKIP_CONTACT_VERIFIER=1 RALLYMAX_SKIP_CLASSIFIER_VERIFIER=1
       python 11_highlight_clipping/detect_rallies.py <IMG_5755> <out>
@@ -201,7 +279,10 @@ top-down and instead harden each level before trusting the one built on it.
 - [ ] Revisit the separate, still-open **shot classifier accuracy gap**: docs
       claim 63.8% cross-validation accuracy but live agreement logs showed
       ~51% — may be the same root cause as Sprint 1, may be separate; check
-      once Sprint 1's sample review is done.
+      once Sprint 1's sample review is done. (Partly addressed by the
+      geom+trajectory ensemble now being the production FH/BH path — 86.6%
+      on the pipeline domain as of 2026-09-07 — but the phone-upload
+      domain and the old `.pkl`'s CV-vs-live gap are still open.)
 
 ## Decisions needed (no clear default — your call)
 
@@ -224,14 +305,12 @@ top-down and instead harden each level before trusting the one built on it.
 - [ ] **CI/CD for the hosted backend**: every deploy is still manual SSH +
       `git pull` + rebuild. Your call on GitHub Actions vs. something
       simpler, and whether the VPS should accept inbound deploy hooks.
-- [ ] **Ball-speed feature**: scoped but not started. Recommended v1
-      approach uses the net-keypoint model for a local scale calibration,
-      measuring speed *at the net crossing* rather than off the racket at
-      contact (a real, disclosed limitation — a full court-plane homography
-      for contact-accurate speed anywhere in frame is a bigger, separate
-      project). Also recommended holding this behind Phase 3 ball-detector
-      fine-tuning landing first. Say the word whenever you want to
-      greenlight actual implementation.
+- [x] ~~**Ball-speed feature**: scoped but not started.~~ — **built + merged**
+      (in PR #38). `ball_speed.estimate_net_crossing_ball_speed_kmh` — net
+      crossing via the net-keypoint local scale, gated on camera angle ≥ 30°,
+      returns `None` silently when it can't be trusted. Surfaces as
+      `result.ball_speed_kmh`. The far-side landing-zone extension is a
+      deferred follow-up (needs a gravity model + court reference).
 
 ## Apple App Store prep (when you're ready)
 
