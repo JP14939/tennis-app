@@ -101,6 +101,12 @@ class RefinedBallResult:
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+def _snap32(n):
+    """ultralytics silently rounds imgsz up to a multiple of the model stride
+    (32) and warns -- snap here so the value we log is the value used."""
+    return max(32, int(round(n / 32)) * 32)
+
+
 def _frame_span(detections):
     frames = [d['frame'] for d in detections]
     return (min(frames), max(frames)) if frames else (0, -1)
@@ -240,7 +246,7 @@ def refine_ball_track(video_path, detections, fps, *, contact_frame=None,
     """Pass 2. `detections` is pass-1 output (racket_tracker.track_racket_and_ball).
     Returns a RefinedBallResult. Never raises for a "nothing to do" case -- a
     cold clip returns pass-1 behaviour unchanged (bootstrapped=False)."""
-    roi_imgsz = roi_imgsz or ROI_IMGSZ_DEFAULT
+    roi_imgsz = _snap32(roi_imgsz or ROI_IMGSZ_DEFAULT)
     start_frame, end_frame = _frame_span(detections)
 
     def _unchanged():
@@ -349,7 +355,7 @@ def refine_ball_track(video_path, detections, fps, *, contact_frame=None,
         if box is None and contact:
             # one imgsz step up before giving up in the hard window
             box, box_conf = detect_ball(up_crop, conf_threshold=conf,
-                                        imgsz=int(roi_imgsz * 1.5))
+                                        imgsz=_snap32(roi_imgsz * 1.5))
 
         entry = {'frame': f, 'crop': [x0, y0, x1, y1], 'half': round(half, 1),
                  'contact_window': contact, 'conf': conf, 'pred_pos': [round(px, 1), round(py, 1)],
