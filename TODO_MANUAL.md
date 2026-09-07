@@ -15,6 +15,42 @@ gets resolved.
 
 ---
 
+## New from the 2026-09-07 offline sessions (serve anchor Phase 1b, ball-tracking, retrain)
+
+Full detail: `HANDOVER.md` "Session 2026-09-07" (three entries) + `STATUS.md`
+items 10 & 12. All code is merged to master (PR #38). What's left for you:
+
+1. **Serve-anchor Phase 1b — transfer the re-anchored pro DB to the server.**
+   `scripts/06_database_build/reanchor_pro_serves.py` re-anchored 19
+   non-human-marked serve entries in the local `pro_database.json` /
+   `overlay_trajectories.json` to the overhead apex (backups:
+   `*_pre_serve_reanchor_20260907_124604.json`). `data/` isn't deployed by
+   CD — these need a manual `scp`, ideally bundled with the practice-ingest
+   DB transfer once your Pro Clip Review pass is far enough along. Until
+   then the live app serves the old server-side pro DB (serves anchored on
+   the wrist-velocity peak).
+
+2. **Ball-detector retrain — check the gates, then decide.** A clean retrain
+   is running locally (`train_ball_detector.py`, imgsz 480 + multi_scale;
+   fixes a real train/val leak — 76 duplicate images). When it finishes,
+   the 3 gates in `scripts/07_ball_racket_tracking/README_ball_retrain.md`
+   decide whether the new `best.pt` is kept. If kept, it's a manual server
+   transfer (same as above). If the gates fail, `cp -r` the
+   `_BACKUP_20260907_165355` dir back. **A Claude session can run the gates
+   and report — the keep/ship call is yours.**
+
+3. **(Low priority) Wide-court ball labels need a hand pass.** ~8 of the 22
+   `wide_court_ball_labels*.jsonl` positives are wrong or sloppy (box on
+   background / the player's hip / offset) — see
+   `data/10b_ball_detection/wide_court_review_notes.md`. Re-draw them in the
+   Dev Page Ball Label tool if you want far-ball training data in a future
+   retrain. Not urgent: the current detector already gets ~87% on far balls.
+
+Nothing to do for the two-pass ROI tracker or the near-court crop — both
+evaluated NO-GO, code committed but unwired.
+
+---
+
 ## New from the 2026-09-05 session (Find Games revamp: mesh clubs, watches, postcodes, club naming)
 
 Full detail: `HANDOVER.md` "Session 2026-09-05". Nothing here is blocked —

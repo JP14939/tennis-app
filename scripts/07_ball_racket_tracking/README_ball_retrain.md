@@ -31,7 +31,8 @@ python prepare_ball_yolo_dataset.py \
 #    -> data/10b_ball_detection/yolo_dataset_v1/{images,labels}/{train,val} + data.yaml
 #    asserts train/val image AND clip-id disjointness before it finishes.
 
-# 4. Back up the current run, then train (~1.8 hr on CPU).
+# 4. Back up the current run, then train. imgsz 480 + multi_scale is
+#    ~4-6x the old imgsz-320 cost -- budget 6-10 hr on CPU, run overnight.
 cp -r ../data/10b_ball_detection/yolo_ball_run_v1\
       ../data/10b_ball_detection/yolo_ball_run_v1_BACKUP_$(date +%Y%m%d_%H%M%S)
 python train_ball_detector.py                  # imgsz 480, multi_scale, scale 0.6

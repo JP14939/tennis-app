@@ -3280,3 +3280,32 @@ commits forward (scheduled-routine PR merges, still firing daily).
   session (or Jack) to pop + finish.
 - One unmerged remote branch: `origin/claude/pensive-maxwell-jlj10v`
   (a routine's 2026-09-07 PR-round-up doc).
+
+## Session 2026-09-07 (later still) — ball-detector retrain lined up + running
+
+Picking up the Stage-4 retrain from the near-side-ball plan
+(`~/.claude/plans/c-users-jackp-claude-plans-okay-plan-it-serene-map.md`),
+after the batch branch merged to master (PR #38, another session).
+
+- **Wide-court positive labels reviewed** (cropped + eyeballed all 22):
+  ~4 wrong (box on background / player hip / offset), ~5 sloppy. **Held
+  back** — not merged. Written up in
+  `data/10b_ball_detection/wide_court_review_notes.md`. The 43 wide-court
+  negatives are safe to add later. Low priority regardless — Stage 3 showed
+  the full-frame detector already gets ~87% on far balls.
+- **Dataset rebuilt** from `manual_ball_label_log_server.jsonl` (354) with
+  the fixed `prepare_ball_yolo_dataset.py`: **0 train/val image overlap,
+  0 clip overlap** (was 76 dupe images). 262 train / 76 val, 96 vs 23 clips.
+  16 static-decoy labels auto-excluded.
+- `yolo_ball_run_v1/` backed up → `_BACKUP_20260907_165355`.
+- **`train_ball_detector.py` running** — imgsz 480, `multi_scale=True`,
+  `scale=0.6`. At imgsz 480 this is ~6-10hr CPU (not the old ~1.8hr; README
+  corrected). Epoch ~91/150 as of this writing; honest clean-val mAP50
+  hovering ~0.5-0.6 (the old 0.558 was on the leaky val set, so not
+  directly comparable).
+- **After it lands:** run the 3 gates in `README_ball_retrain.md`
+  (`audit_finetuned_ball_confidence.py` >= 93.3% at-contact,
+  `calibrate_ball_inference_scale.py` backhand up / FP flat,
+  `eval_near_court_ball_detection.py` near-side up). Keep the new `best.pt`
+  only if it clears them — else `cp -r` the backup back. `data/` isn't
+  deployed by CD, so a good `best.pt` is a manual server transfer.

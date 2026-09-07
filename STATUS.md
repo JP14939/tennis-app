@@ -138,11 +138,18 @@ Curated, not exhaustive — the full backlog lives in `TODO_MANUAL.md`.
    like** — the full-frame detector is ~85% on visible balls; only the
    contact frame (ball behind racket, gap-detection covers it) and the
    offline pro DB are weak.
-   **Queued: a clean detector retrain** — `prepare_ball_yolo_dataset.py`
-   had a real train/val leak (76 dupe images) + frame-level split, both
-   fixed; `train_ball_detector.py` now imgsz 480 + multi_scale;
-   `README_ball_retrain.md` has the recipe. Needs the server label log +
-   wide-court labels reviewed, then ~1.8hr CPU. Plans:
+   **Clean detector retrain — RUNNING (2026-09-07).**
+   `prepare_ball_yolo_dataset.py` had a real train/val leak (76 dupe images)
+   + frame-level split — both fixed; dataset rebuilt from the 354 server
+   labels with **0 image / 0 clip overlap** (262 train / 76 val).
+   `train_ball_detector.py` now imgsz 480 + multi_scale + scale 0.6.
+   `yolo_ball_run_v1/` backed up; training in progress (~6-10hr at imgsz
+   480, not the old ~1.8hr). Wide-court labels reviewed
+   (`data/10b_ball_detection/wide_court_review_notes.md`) — **~4 of 22
+   positives wrong, held back**; the 43 wide-court negatives are safe to add
+   later. After the train lands, run the 3 gates in `README_ball_retrain.md`;
+   keep the new `best.pt` only if it clears them (then manual server
+   transfer), else restore the backup. Plans:
    `okay-plan-it-floating-whistle.md` +
    `c-users-jackp-claude-plans-okay-plan-it-serene-map.md`.
 11. **Local dev workflow had two real bugs, both fixed.** Web dev was
@@ -176,10 +183,16 @@ Curated, not exhaustive — the full backlog lives in `TODO_MANUAL.md`.
     model → generic COCO. **A real swing upload through the live app is the
     open verification step** — the merge is code-only, live matching is
     likely still on the older server-side pro DB.
-    *Set aside during the merge:* `stash@{0}` on the batch branch holds a
+    *Set aside during the merge:* `stash@{0}` on the batch branch held a
     parallel session's racket-detection imgsz-calibration + serve-anchor
-    eval + wide-court ball labeling WIP — not lost, needs that session (or
-    Jack) to pop + finish it. `stash@{1}` (`jack-wip`) untouched.
+    eval + wide-court ball labeling WIP. The wide-court labels have since
+    been reviewed (see item 12); the rest still needs that session or Jack.
+    `stash@{1}` (`jack-wip`) untouched.
+
+    *Also not on the server:* the re-anchored `pro_database.json` /
+    `overlay_trajectories.json` from serve-anchor Phase 1b (2026-09-07, item
+    10) — same manual-transfer situation as the practice-ingest DB, with
+    backups (`*_pre_serve_reanchor_20260907_124604.json`).
 15. **Two backend-architecture decisions still need Jack's call**, not
     urgent: SQLite foreign-key enforcement (off), Postgres migration timing.
     (The third item this used to list — a route-level auth-convention check
