@@ -1049,3 +1049,57 @@ routines' every-3-days cadence (last batch before today was 2026-09-01)
 and isn't itself a sign anything is broken — flagging only so a future
 session doesn't mistake it for a missed run if the pattern looks odd in
 the git history.
+
+---
+
+## Training-data drift watch cannot run: no access to the accumulated logs (2026-09-07)
+
+This is the 6th scheduled routine's first actual attempt (added
+2026-08-26 evening per `HANDOVER.md`, scheduled weekly Mondays starting
+2026-08-31 — no PR ever appeared for 2026-08-31, which this run now
+explains). Its job is to read `data/14_shot_classifier/shot_classifier_training_log.jsonl`,
+`data/14_shot_classifier/shot_classifier_ml_training_log.jsonl`,
+`data/16_shot_verification/shot_contact_training_log.jsonl`, and
+`data/16_shot_verification/shot_contact_ml_training_log.jsonl` for
+class-balance skew, candidate→confirmed ratio drops, and buckets falling
+out of the trust range described in `shot_contact_training_log.py`/
+`shot_classifier_training_log.py`'s own `__main__` self-reports.
+
+**It can't — the cloud sandbox this routine runs in has no copy of any
+of those files.** `/data/` is entirely gitignored (12GB+, "not suited for
+git without LFS" per `.gitignore`'s own comment) and this routine, like
+the other 5, only ever gets a fresh `git clone` of the repo with no
+SSH/infra credentials to the machine(s) that actually hold the real
+data — the same limitation already called out for the security routine's
+"no SSH/infra credentials available to the cloud sandbox" back when the
+5 original routines were designed. Those training logs are written by
+live production traffic (`analyse.js`'s detached background hook, the
+app's "Flag as not a real shot"/shot-type-correction actions, and the
+overnight batch pipeline), so they only ever exist on whichever machine
+actually serves that traffic — the Hetzner host per `DEPLOY.md`, and/or
+Jack's own dev machine (`C:\Users\jackp\tennis_app\`) if run locally
+there. Neither is reachable from here. Confirmed directly this run: a
+fresh checkout has no `data/` directory at all, and no
+`*training_log*.jsonl` file exists anywhere in the repo (fixtures
+included) for the two `__main__` self-report scripts
+(`scripts/14_shot_classifier/shot_classifier_training_log.py`,
+`scripts/16_shot_verification/shot_contact_training_log.py`) to read.
+
+**This isn't a one-off — every future Monday run will hit the exact same
+wall** until one of these is done (your call, not something a routine
+can decide for itself):
+- Sync the 4 `.jsonl` files (small — line-delimited JSON records, not
+  the 12GB of video/pose data the rest of `/data/` holds) from the
+  Hetzner host into somewhere this routine's `git clone` can reach —
+  e.g. a dedicated low-traffic branch/path carved out of `.gitignore`'s
+  blanket `/data/` exclusion, synced by a cron job on the host itself.
+- Or give this specific routine's environment SSH/read access to the
+  Hetzner host's `data/14_shot_classifier/` and `data/16_shot_verification/`
+  paths (a narrower ask than full infra credentials, if that's the
+  concern from the original design decision).
+- Or drop the routine and check drift manually/locally instead, since
+  as designed it can structurally never produce a finding.
+
+No code changes made this run (nothing to fix — the scripts and their
+trust-gating logic read fine on inspection; there's simply no data
+reachable to run them against), so no PR opened.
