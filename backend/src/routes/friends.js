@@ -8,8 +8,20 @@ const {
 } = require('../domain/invariants');
 const { validate } = require('../validation/validateBody');
 const { safeJsonParse } = require('../utils/safeJsonParse');
+const { rateLimit } = require('../middleware/rateLimit');
 
 const router = express.Router();
+
+// POST /friends/link had no cap at all -- an authenticated caller could try
+// an unbounded number of random 8-character codes (see generateInviteCode's
+// alphabet) against redeemInviteCode()'s `SELECT ... WHERE code = ?` lookup.
+// The keyspace (33^8) makes brute-forcing a SPECIFIC still-valid code
+// impractical even unthrottled, but "impractical" isn't "impossible", and
+// every other guess-a-secret endpoint in this app (auth.js's login/
+// forgot-password limiters) already gets one for exactly this reason. Keyed
+// by user id, same as analyse.js's analyseLimiter -- this is an authenticated
+// route, so there's always a req.user.id to key on.
+const linkLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, keyPrefix: 'friends-link', keyGenerator: (req) => req.user.id });
 
 // Friendship is symmetric -- always store/query the pair sorted ascending
 // so there's exactly one row per pair regardless of who initiated it.
@@ -67,7 +79,7 @@ router.post('/friends/code', requireAuth, (req, res) => {
   res.status(201).json({ code });
 });
 
-router.post('/friends/link', requireAuth, (req, res) => {
+router.post('/friends/link', requireAuth, linkLimiter, (req, res) => {
   const { code } = req.body || {};
   if (!code) {
     return res.status(400).json({ error: 'code is required' });
