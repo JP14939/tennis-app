@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '05_angle_detection'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '09_coaching_ai'))
 
-from infer_angle import infer_camera_angle, angle_label
+from infer_angle import infer_camera_angle, angle_label, detect_view_direction, extract_frame
 from compare_swing import extract_user_poses, build_user_trajectory, similarity_score, KEY_LANDMARKS, build_overlay_trajectory
 from trajectory_compare import dtw_distance
 from select_coaching_tips import get_coaching_tips
@@ -84,6 +84,31 @@ def compare_videos(reference_path, your_path, shot_type, contact_a=None, contact
         raise RuntimeError('No frames could be decoded from your video')
     traj_b, peak_b = build_user_trajectory(frames_b, fps_b, contact_b)
     angle_b, angle_b_conf, debug_b = infer_camera_angle(your_path, peak_b)
+
+    # View direction (front = camera at the net, back = camera behind the
+    # baseline) -- same signal compare_swing.py checks before ever running
+    # DTW, since a front view and a back view can share a near-identical
+    # inferred camera_angle (both produce a similarly narrow net width) while
+    # their pose landmarks are essentially mirrored (see infer_angle.py's
+    # detect_view_direction() docstring). compare_swing.py handles this by
+    # filtering the pro-database candidate pool to a matching view direction;
+    # this 1v1 path has no candidate pool to filter, so a detected mismatch
+    # is a hard rejection instead, same shape as the angle gate below.
+    try:
+        view_a = detect_view_direction(extract_frame(reference_path, peak_a))
+    except Exception as e:
+        print(f'  View direction detection failed on reference video (non-fatal): {e}', file=sys.stderr)
+        view_a = 'unknown'
+    try:
+        view_b = detect_view_direction(extract_frame(your_path, peak_b))
+    except Exception as e:
+        print(f'  View direction detection failed on your video (non-fatal): {e}', file=sys.stderr)
+        view_b = 'unknown'
+    if view_a in ('front', 'back') and view_b in ('front', 'back') and view_a != view_b:
+        raise RuntimeError(
+            'One video looks filmed from the net and the other from the baseline '
+            '(or vice versa) -- film both from the same end of the court and try again.'
+        )
 
     if not traj_a or not traj_b:
         raise RuntimeError('Could not extract a usable pose trajectory from one of the videos — try a clearer angle or trim closer to the contact point.')
