@@ -18,9 +18,17 @@ if __name__ == '__main__':
     model.train(
         data=os.path.abspath(DATA_YAML),
         epochs=150,
-        imgsz=320,
+        # 480 (was 320): the training boxes are all ~28px on 1920x1080; at 480
+        # the model sees them at ~28-56px effective scale, which is closer to
+        # what the near-court crop (near_court_ball_tracker.py) presents live.
+        imgsz=480,
         batch=8,
         patience=40,
+        # multi_scale + a wider scale jitter so the model stops being brittle
+        # to one exact object size -- the single biggest complaint about v1
+        # (trained 320px / 28px boxes, never shown a wide/far ball).
+        multi_scale=True,
+        scale=0.6,
         project=os.path.abspath(PROJECT_DIR),
         name='yolo_ball_run_v1',
         exist_ok=True,

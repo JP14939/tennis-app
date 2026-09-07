@@ -11,11 +11,18 @@ with `ball_visible: false` becomes a genuine negative (empty label file),
 same convention `prepare_net_pose_dataset_v5.py` uses for net negatives.
 
 Usage:
-  python prepare_ball_yolo_dataset.py [path/to/manual_ball_label_log.jsonl]
+  python prepare_ball_yolo_dataset.py <log.jsonl> [<log2.jsonl> ...]
 
-  Defaults to data/10b_ball_detection/manual_ball_label_log.jsonl -- pass an
-  explicit path when using a copy pulled from the hosted server (local dev's
-  own copy is a handful of test entries, not the real 354).
+  Defaults to data/10b_ball_detection/manual_ball_label_log_server.jsonl (the
+  real 354 hand-drawn labels pulled from the hosted server -- local dev's
+  `manual_ball_label_log.jsonl` is an 18-row stub and is rejected). Pass extra
+  logs (e.g. wide_court_ball_labels.jsonl) and they're concatenated + deduped
+  by `file`.
+
+The output dir is wiped and rebuilt every run. The train/val split is by
+CLIP (analysis id), not by frame -- adjacent frames of one swing are
+near-duplicates, and a frame-level split leaks them across the boundary
+(the pre-2026-09-07 version did exactly that -- 76 images in both splits).
 """
 import collections
 import json
@@ -29,7 +36,8 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '00_utils'))
 from paths import DATA_DIR  # noqa: E402
 
-DEFAULT_LOG_PATH = os.path.join(DATA_DIR, '10b_ball_detection', 'manual_ball_label_log.jsonl')
+DEFAULT_LOG_PATH = os.path.join(DATA_DIR, '10b_ball_detection', 'manual_ball_label_log_server.jsonl')
+MIN_ROWS = 100  # guard against an accidental run on the 18-row local stub
 FRAMES_DIR = os.path.join(DATA_DIR, '10b_ball_detection', 'candidate_frames')
 DATASET_DIR = os.path.join(DATA_DIR, '10b_ball_detection', 'yolo_dataset_v1')
 
@@ -91,42 +99,78 @@ def write_example(record, out_img, out_lbl):
     return True
 
 
+def _clip_id(file_name):
+    """Group key for the train/val split. `analysisNNN_...` frames of one
+    swing share a key (they're near-duplicates -- must not straddle the
+    split); anything else (wide_court_*, IMG_5755_* negatives) is its own
+    group."""
+    m = FILE_PATTERN.match(file_name)
+    return m.group(1) if m else file_name
+
+
 def main():
-    log_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_LOG_PATH
-    with open(log_path, encoding='utf-8') as f:
-        records = [json.loads(line) for line in f if line.strip()]
+    log_paths = sys.argv[1:] or [DEFAULT_LOG_PATH]
+
+    records, seen = [], set()
+    for lp in log_paths:
+        with open(lp, encoding='utf-8') as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                r = json.loads(line)
+                if r['file'] in seen:
+                    continue
+                seen.add(r['file'])
+                records.append(r)
+    if len(records) < MIN_ROWS:
+        sys.exit(f'Only {len(records)} label rows from {log_paths} -- refusing to build a '
+                 f'dataset (looks like the local stub, not the real server log).')
 
     excluded = find_fully_static_files(records)
     usable = [r for r in records if r['file'] not in excluded]
 
-    positives = [r for r in usable if r.get('ball_visible') and r.get('box_norm')]
-    negatives = [r for r in usable if not (r.get('ball_visible') and r.get('box_norm'))]
-    random.shuffle(positives)
-    random.shuffle(negatives)
+    # split by CLIP, not by frame
+    by_clip = collections.defaultdict(list)
+    for r in usable:
+        by_clip[_clip_id(r['file'])].append(r)
+    clip_ids = sorted(by_clip)
+    random.shuffle(clip_ids)
+    n_val_clips = max(1, int(len(clip_ids) * VAL_FRAC))
+    val_clip_ids = set(clip_ids[:n_val_clips])
 
-    n_val_pos = max(6, int(len(positives) * VAL_FRAC))
-    n_val_neg = max(2, int(len(negatives) * VAL_FRAC))
-    pos_splits = {'val': positives[:n_val_pos], 'train': positives[n_val_pos:]}
-    neg_splits = {'val': negatives[:n_val_neg], 'train': negatives[n_val_neg:]}
+    split_recs = {'train': [], 'val': []}
+    for cid, recs in by_clip.items():
+        split_recs['val' if cid in val_clip_ids else 'train'].extend(recs)
 
+    # rebuild the dataset dir from scratch every run -- a stale file from a
+    # prior run with a different input set is how 76 images ended up in both
+    # train and val (pre-2026-09-07).
+    shutil.rmtree(DATASET_DIR, ignore_errors=True)
     for split in ['train', 'val']:
-        os.makedirs(os.path.join(DATASET_DIR, 'images', split), exist_ok=True)
-        os.makedirs(os.path.join(DATASET_DIR, 'labels', split), exist_ok=True)
+        os.makedirs(os.path.join(DATASET_DIR, 'images', split))
+        os.makedirs(os.path.join(DATASET_DIR, 'labels', split))
 
     counts = {}
+    written_files = {'train': set(), 'val': set()}
     for split in ['train', 'val']:
         n_pos = n_neg = 0
-        for r in pos_splits[split]:
+        for r in split_recs[split]:
             out_img = os.path.join(DATASET_DIR, 'images', split, r['file'])
             out_lbl = os.path.join(DATASET_DIR, 'labels', split, os.path.splitext(r['file'])[0] + '.txt')
-            if write_example(r, out_img, out_lbl):
+            if not write_example(r, out_img, out_lbl):
+                continue
+            written_files[split].add(r['file'])
+            if r.get('ball_visible') and r.get('box_norm'):
                 n_pos += 1
-        for r in neg_splits[split]:
-            out_img = os.path.join(DATASET_DIR, 'images', split, r['file'])
-            out_lbl = os.path.join(DATASET_DIR, 'labels', split, os.path.splitext(r['file'])[0] + '.txt')
-            if write_example(r, out_img, out_lbl):
+            else:
                 n_neg += 1
         counts[split] = {'positive': n_pos, 'negative': n_neg}
+
+    # hard guarantees
+    assert not (written_files['train'] & written_files['val']), 'train/val image overlap'
+    train_clips = {_clip_id(f) for f in written_files['train']}
+    val_clips = {_clip_id(f) for f in written_files['val']}
+    assert not (train_clips & val_clips), 'train/val clip-id overlap'
 
     yaml_content = f"""path: {DATASET_DIR}
 train: images/train
