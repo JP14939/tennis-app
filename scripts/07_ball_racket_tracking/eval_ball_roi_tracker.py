@@ -116,6 +116,7 @@ def eval_sparse(limit=None, roi_imgsz=None):
     # "hard subset": rows whose pass-1 misses the ball entirely
     hard = {'pass1': _new_cell(), 'roi': _new_cell()}
     gated_swaps = 0
+    fp_detail = []   # ball_visible:false rows where the ROI added a box pass-1 didn't have
 
     # group rows by (clip, analysis) so we detect each window once
     by_clip = {}
@@ -155,6 +156,12 @@ def eval_sparse(limit=None, roi_imgsz=None):
                 iou = _iou(box, gt) if (box and gt) else 0.0
                 _record(cells[key], shot_type, is_positive, box is not None, iou, 0.0)
 
+            if not is_positive and roi_box is not None and p1_box is None:
+                rl = [e for e in res.redetect_log if e.get('frame') == frame]
+                fp_detail.append({'file': row['file'], 'bucket': row['bucket'],
+                                  'shot_type': shot_type, 'frame': frame,
+                                  'redetect': rl})
+
             if is_positive and p1_box is None:
                 for key, box in (('pass1', p1_box), ('roi', roi_box)):
                     iou = _iou(box, gt) if (box and gt) else 0.0
@@ -173,6 +180,7 @@ def eval_sparse(limit=None, roi_imgsz=None):
         'aggregate': {k: _finalize(v) for k, v in cells.items()},
         'hard_subset_pass1_misses': {k: _finalize(v) for k, v in hard.items()},
         'roi_recovered_on_pass1_miss': gated_swaps,
+        'fp_detail': fp_detail,
     }
 
 
