@@ -117,6 +117,7 @@ router.post('/compare-videos', requireAuth, requirePremium, compareLimiter, uplo
       const messages = {
         spawn_failed: 'Failed to start comparison process',
         invalid_json: 'Comparison produced invalid output',
+        timeout: 'Comparison timed out — try shorter clips',
         nonzero_exit: (() => {
           try { return JSON.parse(err.stdout).error; } catch { return 'Comparison failed'; }
         })(),
