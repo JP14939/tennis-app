@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this app is
 
-RallyMax: an AI-powered tennis swing analysis app (Expo — iOS/Android/web). Core loop: a user uploads a short video of their swing, marks the contact frame, the backend runs MediaPipe pose extraction on it, and compares the full swing trajectory against a database of 631 professional swing clips using Dynamic Time Warping (DTW) — returning the closest pro match, a 0–100 similarity score, and coaching tips.
+RallyMax: an AI-powered tennis swing analysis app (Expo — iOS/Android/web). Core loop: a user uploads a short video of their swing, marks the contact frame (or it's auto-detected from the ball-strike audio when the clip has sound), the backend runs MediaPipe pose extraction on it, and compares the full swing trajectory against a database of professional swing clips using Dynamic Time Warping (DTW) — returning the closest pro match, a 0–100 similarity score, and coaching tips. The pro database (`data/06_pro_database/pro_database.json`) was rebuilt 2026-09-02 to ~413 hand-reviewed entries; a later practice-footage ingest added more, but unreviewed ones are held out of live matching by `compare_swing.eligible_match_candidates()`.
 
 **Before doing anything else, read `HANDOVER.md`** (the "Quick status" line near the top and "⚠️ Read This First") and `TODO_MANUAL.md` (things only a human can do — struck-through items are resolved). Both are actively maintained, append-only project logs with the real current state, known gaps, and in-flight work. This file documents structure and commands; it does not duplicate that narrative and will not be kept in sync with it session-to-session.
 
@@ -57,7 +57,7 @@ Expo frontend  ──multipart/JSON──▶  Express backend (port 5000)
                                      │ reads
                                      ▼
                     data/06_pro_database/pro_database.json
-                    (631 pre-computed pro swing trajectories)
+                    (pre-computed pro swing trajectories)
 ```
 
 The backend **never runs ML code in-process** — it always shells out to a Python script via `child_process.spawn`, reads stdout as JSON, and forwards it to the client. Two live entry points in `scripts/08_comparison_engine/`:
@@ -66,7 +66,7 @@ The backend **never runs ML code in-process** — it always shells out to a Pyth
 
 ## The numbered `scripts/` pipeline
 
-`scripts/` is organized into numbered stages, each in its own `scripts/NN_<name>/` folder. Stages `01_data_collection` through `06_database_build` are the **offline pipeline that already built the 631-entry pro database** — you should not need to re-run them unless adding new source footage. `07_ball_racket_tracking` and `10_net_detection` are auxiliary trained keypoint models used by later stages. `08_comparison_engine` is the live inference code described above. `09_coaching_ai` is the (currently unused) teacher-student coaching-tip selector. `11`–`17` cover highlight clipping, video crop/overlay utilities, shot classification, batch analysis, shot verification, and amateur-footage evaluation. See `HANDOVER.md`'s "The Data Pipeline" section for a per-stage breakdown of what each script does and why — it's detailed enough that re-deriving it from the code alone is slower than reading it there first.
+`scripts/` is organized into numbered stages, each in its own `scripts/NN_<name>/` folder. `00_utils/` holds shared cross-stage helpers (`paths.py`, `serve_anchor.py` — serve overhead-apex contact anchor, `interpolate_track.py` — short-gap fill for overlay trajectories, `video_io.py`, …). Stages `01_data_collection` through `06_database_build` are the **offline pipeline that built the pro database** — you should not need to re-run them unless adding new source footage. `07_ball_racket_tracking` and `10_net_detection` are auxiliary trained keypoint models used by later stages. `08_comparison_engine` is the live inference code described above. `09_coaching_ai` is the (currently unused) teacher-student coaching-tip selector. `11`–`17` cover highlight clipping, video crop/overlay utilities, shot classification, batch analysis, shot verification, and amateur-footage evaluation. See `HANDOVER.md`'s "The Data Pipeline" section for a per-stage breakdown of what each script does and why — it's detailed enough that re-deriving it from the code alone is slower than reading it there first.
 
 ## Find Games (courts, clubs, watches)
 
@@ -78,4 +78,4 @@ SQLite via `better-sqlite3`, at `backend/data/app.db` — **not** the Postgres i
 
 ## Deployment
 
-Since 2026-08-25 the hosted backend **does** auto-deploy: a `git push` to `master` that touches `backend/**`, `scripts/**`, `Dockerfile`, `docker-compose.yml`, or `Caddyfile` triggers `.github/workflows/deploy.yml`, which SSHes in, runs `git pull && docker compose up --build -d app`, and polls `/health`. Doc-only commits don't trigger it; it can also be run manually from the Actions tab. What's still manual: transferring new files under `data/` to the server (gitignored, never touched by CD) and editing `backend/.env` on the server directly. See `DEPLOY.md`'s "Continuous deployment" section for the full mechanics.
+Since 2026-08-25 the hosted backend **does** auto-deploy: a `git push` to `master` that touches `backend/**`, `scripts/**`, `Dockerfile`, `docker-compose.yml`, or `Caddyfile` triggers `.github/workflows/deploy.yml`, which SSHes in, runs `git pull && docker compose up --build -d app`, and polls `/health`. Doc-only commits don't trigger it; it can also be run manually from the Actions tab. What's still manual: transferring new files under `data/` to the server (gitignored, never touched by CD) and editing `backend/.env` on the server directly. So a code deploy can outrun its data: new ML paths that need a model file / rebuilt DB not yet on the server **degrade rather than crash** (missing audio-onset model → pose-peak / manual contact mark; missing fine-tuned ball model → generic COCO). After a big feature merge, a real swing upload through the live app is the only true end-to-end check. See `DEPLOY.md`'s "Continuous deployment" section for the full mechanics.

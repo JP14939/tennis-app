@@ -6,7 +6,7 @@ where things stand in under 2 minutes. For the full detailed history, see
 `HANDOVER.md` (dated build log) and `TODO_MANUAL.md` (full backlog, also
 chronological) — this file is a filter on top of those, not a replacement.
 
-**Last updated:** 2026-09-07 — "this doesn't look like my swing" flag on ResultsScreen → `data/06_pro_database/match_quality_flags.jsonl` (`match_quality_flags.py` summarises it): the cheapest way to start measuring whether the DTW match is any good, which has **no end-to-end eval** (new finding — every eval covers a component, nothing covers the closest-pro match / 0–100 score / tips). Prior: overlay interpolation (`interpolate_track.py`, ball-path overlay); racket-detection measured (item 10); 2026-09-05 Find Games revamp
+**Last updated:** 2026-09-07 (later) — **`batch/2026-09-06-find-games-rally-shots` integrated into `master` and deployed** (PR #38, 171 files / ~22k lines: ~2 weeks of feature work that had never reached master — Find Games mesh clubs, ball speed, audio-onset contact, shot-classifier + contact-verification ML, practice ingest, serve anchor, overlays + interpolation, match-quality flag). CD run 34143861953 ✓, health check passed, live `/health` OK. Full suite green on the merge (backend 620, verify:db 98, pytest 289). Prior same day: match-quality flag, overlay interpolation, racket-detection measured (item 10).
 
 ---
 
@@ -23,8 +23,8 @@ the live product yet.
 
 Curated, not exhaustive — the full backlog lives in `TODO_MANUAL.md`.
 
-1. **Find Games got a real revamp (2026-09-05), not yet clicked through on a
-   real device.** Club clustering rewritten from a 250m running-centroid
+1. **Find Games revamp (2026-09-05) — now deployed, still not clicked
+   through on a real device.** Club clustering rewritten from a 250m running-centroid
    heuristic to a true 100m node-mesh graph (courts are nodes, an edge
    connects two courts ≤100m apart, a club is one connected component —
    confirmed directly with Jack, including that a long line of
@@ -34,9 +34,8 @@ Curated, not exhaustive — the full backlog lives in `TODO_MANUAL.md`.
    no way to see or remove a watch except re-opening the exact court/club).
    Also fixed a real bug: `GET /courts` never told the frontend which
    courts were already watched, so the map's watched-state always started
-   empty on load. Backend fully tested (34/34 suites, 593/593 tests,
-   `verify:db` 94/94) — needs a real-device click-through next, see
-   `TODO_MANUAL.md`'s 2026-09-05 section.
+   empty on load. Live on the server since the 2026-09-07 merge — needs a
+   real-device click-through, see `TODO_MANUAL.md`'s 2026-09-05 section.
 2. **Postcodes + crowd-sourced club naming, same session.** Free postcode
    lookups (postcodes.io, no API key/cost — chosen explicitly over paid
    Google Geocoding) on courts/clubs/areas; a real backfill already ran
@@ -163,12 +162,24 @@ Curated, not exhaustive — the full backlog lives in `TODO_MANUAL.md`.
 13. **A real beta launch hasn't happened.** The product is feature-complete
    well past the original MVP scope but has never been tested by real
    external users — biggest open strategic question.
-14. **Nothing from this session (or the 24+ prior local commits) is pushed
-    or deployed.** `pro_database.json` / `overlay_trajectories.json` are
-    gitignored and still need a manual copy to the server whenever this
-    round of review work is ready to go live — don't do this with the
-    practice-review pass only ~60% done, or unreviewed/lower-quality
-    practice entries would ship.
+14. **The whole backlog IS merged + deployed now (2026-09-07).** `master`
+    is at the PR #38 merge; CD deployed it (health check passed); local
+    `master` = `origin/master`, working tree clean. **Still deliberately
+    NOT copied to the server:** the rebuilt `pro_database.json` /
+    `overlay_trajectories.json` / `clip_review_log.jsonl` — `data/` is
+    gitignored, CD never touches it, and copying them now would ship
+    unreviewed practice entries (review pass only ~60% done). **Also
+    probably not on the server yet:** the model `.pkl`/`.pt` files the new
+    ML paths use (`onset_classifier.pkl`, `contact_frame_model.pkl`,
+    fine-tuned ball `best.pt`). Their absence *degrades, doesn't crash* —
+    verified fallbacks: no audio model → pose-peak / manual mark; no ball
+    model → generic COCO. **A real swing upload through the live app is the
+    open verification step** — the merge is code-only, live matching is
+    likely still on the older server-side pro DB.
+    *Set aside during the merge:* `stash@{0}` on the batch branch holds a
+    parallel session's racket-detection imgsz-calibration + serve-anchor
+    eval + wide-court ball labeling WIP — not lost, needs that session (or
+    Jack) to pop + finish it. `stash@{1}` (`jack-wip`) untouched.
 15. **Two backend-architecture decisions still need Jack's call**, not
     urgent: SQLite foreign-key enforcement (off), Postgres migration timing.
     (The third item this used to list — a route-level auth-convention check
@@ -184,9 +195,15 @@ Curated, not exhaustive — the full backlog lives in `TODO_MANUAL.md`.
 
 - Core analysis loop: MediaPipe pose extraction + DTW vs. the pro clip
   database, camera-angle inference, 216-tip coaching database
-- Audio-onset contact detection in `compare_swing.py`'s auto-detect path
+- Audio-onset contact detection in `compare_swing.py`'s auto-detect path;
+  serve-specific overhead-apex contact anchor (`serve_anchor.py`)
 - Ball detector (fine-tuned YOLO) + contact-verification rules/ML, each with
   their own trust gate
+- Sync Compare overlays: skeleton + racket + ball paths, with server-side
+  short-gap interpolation (`interpolate_track.py`); a "this doesn't look
+  like my swing" match-quality flag → `match_quality_flags.jsonl`
+- Find Games: mesh-clustered clubs, court/club/area watches + My Watches
+  screen, postcodes, crowd-sourced club naming
 - RevenueCat payments, wired end-to-end (entitlement `premium`)
 - Backend hosted (Hetzner + Docker) with automated CD (push to `master` →
   auto-redeploy; **no test gate runs before deploy**)
@@ -197,12 +214,11 @@ Curated, not exhaustive — the full backlog lives in `TODO_MANUAL.md`.
 
 ## What's built but not shipped / not live
 
-- Find Games revamp (2026-09-05) — mesh-based clubs, area watches, My
-  Watches screen, postcodes, crowd-sourced club naming. Fully built and
-  backend-tested, local only, needs a real-device click-through before it's
-  worth pushing.
 - Phase C contact-frame correction model — fails its own ship gate, see
   item 9 above
+- Ball ROI re-detector + near-court crop — both evaluated NO-GO (item 10),
+  code kept with wiring OFF; a clean ball-detector retrain is queued
+  (`README_ball_retrain.md`)
 - Coaching-tip Claude verifier half of `09_coaching_ai` — blocked on
   rotating a leaked API key, unrelated to this session
 - Net-endpost keypoint model (`10_net_detection`) — trained, unused

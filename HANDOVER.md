@@ -3213,4 +3213,70 @@ interpolation). Some of the overlay-interpolation work got committed inside
 other sessions' commits; `scripts/00_utils/interpolate_track.py` is imported
 by the now-committed `compare_swing.py` but is **itself still untracked** —
 a fresh checkout of HEAD would `ModuleNotFoundError`. Needs a
-`git add` in whatever batch-commit lands next.
+`git add` in whatever batch-commit lands next. *(Resolved in the same-day
+integration below.)*
+
+## Session 2026-09-07 (later still) — the batch branch finally reaches master + deploys
+
+`batch/2026-09-06-find-games-rally-shots` turned out to be **a whole
+release** that had never been integrated: 42 commits / 171 files / ~22k
+lines vs. `origin/master`, forked back around 2026-09-02. Two weeks of
+work — left-handed support, ball speed at net, audio-onset contact
+detection, shot-classifier + contact-verification ML, practice-footage
+ingest, serve contact anchor (1a/1b), Find Games mesh clustering + rally
+/shot browsing + auth-convention guard, skeleton/racket/ball overlays +
+interpolation, the ROI ball-tracker + near-court-crop experiments (both
+NO-GO), and the match-quality flag. Meanwhile `origin/master` had moved 23
+commits forward (scheduled-routine PR merges, still firing daily).
+
+**Steps taken (this session):**
+1. **Set the parallel session's WIP aside** — a live racket-detection
+   /imgsz-calibration + serve-anchor-eval + wide-court-ball-labeling
+   workstream (the offline "Ball tracking" session) had ~14 uncommitted
+   files on the branch. Stashed as `stash@{0}` on the batch branch with a
+   descriptive message. `stash@{1}` (`jack-wip`) left untouched.
+2. **Committed the orphaned files** committed code already imported but
+   were never `git add`ed: `scripts/00_utils/serve_anchor.py`,
+   `scripts/07_ball_racket_tracking/calibrate_ball_inference_scale.py`
+   (+ `interpolate_track.py` from the overlay session). A clean checkout of
+   the old branch tip `ModuleNotFoundError`'d / failed pytest collection on
+   these.
+3. **Committed the remaining analysis-UX work** (overlays + match flag +
+   docs) as one commit.
+4. **`pr-merge/2026-09-07`** off fresh `origin/master`, merged the batch
+   branch. **7 conflicts:**
+   - `highlights.js` — `origin/master` had patched the hand-rolled
+     job-runner spawn logic (SIGKILL escalation) that the batch branch
+     *replaced wholesale* with the shared `runPythonJson` module. Took the
+     rewrite; `runPythonJson.js:44-49` already has the identical SIGKILL
+     escalation, so nothing was lost. `origin/master`'s other highlights.js
+     fixes (reel filename, outcome_tag, rate-limit) are outside the runners
+     and auto-merged.
+   - `auth.js`, `integrityChecks.test.js`, `test_compare_swing_pytest.py` —
+     both sides added independent checks/tests, kept both.
+   - `HANDOVER.md`, `TODO_MANUAL.md`, `future-ideas.md` — append-only logs,
+     unioned; this branch's 2026-09-07 future-ideas section → "(later)".
+5. **Verified on the merge:** backend 620 tests / 35 suites, `verify:db`
+   98 invariants, `scripts` pytest 289 — all green. Frontend files parse.
+6. **PR #38 → merged → CD deployed** (run 34143861953, ✓ 20s, "Health
+   check passed"). Live `/health` returns OK. `master` is at `37b6422`.
+7. **Cleanup:** local `master` reset to `origin/master` (it was 24 ahead /
+   23 behind — stale rebased-away commits); deleted 13 merged-and-stale
+   local branches (`pr/17`–`pr/27`, `merge-batch-20260826`,
+   `pr-merge/2026-09-04`) + `pr-merge/2026-09-07` (local + remote).
+   `batch/2026-09-06-find-games-rally-shots` kept (local + origin) as a
+   marker for the offline session — fully in master, delete anytime.
+
+**Open after this:**
+- **`data/` is not deployed by CD.** The new ML paths reference model files
+  (`onset_classifier.pkl`, `contact_frame_model.pkl`, fine-tuned ball
+  `best.pt`) that are probably not on the server yet. Verified they
+  *degrade, not crash* (no audio model → pose-peak/manual mark; no ball
+  model → generic COCO). The rebuilt `pro_database.json` /
+  `overlay_trajectories.json` / `clip_review_log.jsonl` are **deliberately
+  still not copied** (practice review ~60% done). **A real swing upload
+  through the live app is the open end-to-end check.**
+- `stash@{0}` on the batch branch — the parallel session's WIP, needs that
+  session (or Jack) to pop + finish.
+- One unmerged remote branch: `origin/claude/pensive-maxwell-jlj10v`
+  (a routine's 2026-09-07 PR-round-up doc).
