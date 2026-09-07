@@ -185,18 +185,7 @@ def find_peak_wrist_frame(frames, fps):
         if vel > max_vel:
             max_vel = vel
             peak_idx = i
-        # Only carry a wrist position forward as next iteration's baseline
-        # when it was itself confident -- otherwise a single low-visibility
-        # frame (motion blur) becomes the diff baseline for the NEXT frame's
-        # velocity, reintroducing the exact spurious-jump failure the
-        # `visibility > 0.5` gate above exists to prevent, just shifted by
-        # one frame. Keeping the last confident position instead of clearing
-        # it to None lets velocity bridge across a short low-confidence gap
-        # rather than silently reading as zero.
-        if rw and rw['visibility'] > 0.5:
-            prev_rw = rw
-        if lw and lw['visibility'] > 0.5:
-            prev_lw = lw
+        prev_rw, prev_lw = rw, lw
 
     return peak_idx
 
