@@ -70,7 +70,20 @@ function smoothTrajectory(trajectory) {
     for (const name of Object.keys(frame.landmarks || {})) jointNames.add(name);
   }
 
+  // Median spacing between consecutive samples -- the One Euro filter's dt
+  // baseline. A joint that reappears after a long null gap has a dt many
+  // times this; low-passing that first post-gap sample against a stale
+  // pre-gap value produces a visible pop (worst exactly around contact,
+  // where blur drops fast joints for several samples). Re-seed the joint's
+  // filter instead when the gap is that long.
+  const spacings = [];
+  for (let i = 1; i < trajectory.length; i++) spacings.push(trajectory[i].t - trajectory[i - 1].t);
+  spacings.sort((a, b) => a - b);
+  const medianSpacing = spacings.length ? spacings[Math.floor(spacings.length / 2)] : 1 / 30;
+  const RESET_GAP = medianSpacing * 3;
+
   const filters = {};
+  const lastValidT = {};
   for (const name of jointNames) {
     filters[name] = { x: makeOneEuroFilter(), y: makeOneEuroFilter() };
   }
@@ -79,9 +92,15 @@ function smoothTrajectory(trajectory) {
     const landmarks = {};
     for (const name of jointNames) {
       const lm = frame.landmarks?.[name];
-      landmarks[name] = lm
-        ? { x: filters[name].x(lm.x, frame.t), y: filters[name].y(lm.y, frame.t) }
-        : null;
+      if (!lm) {
+        landmarks[name] = null;
+        continue;
+      }
+      if (lastValidT[name] !== undefined && frame.t - lastValidT[name] > RESET_GAP) {
+        filters[name] = { x: makeOneEuroFilter(), y: makeOneEuroFilter() };
+      }
+      landmarks[name] = { x: filters[name].x(lm.x, frame.t), y: filters[name].y(lm.y, frame.t) };
+      lastValidT[name] = frame.t;
     }
     return { t: frame.t, landmarks };
   });

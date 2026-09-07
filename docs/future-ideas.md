@@ -11,6 +11,125 @@ scope or timing before starting.
 
 ---
 
+### 2026-09-07
+
+Context for this pass: not a routine brainstorm — notes from a working
+session (overlay interpolation, branch `batch/2026-09-06-find-games-rally-shots`)
+plus a conversation with Jack about two questions the reliability docs don't
+currently answer: **is the DTW comparison actually any good?** and **can this
+pipeline run on the user's phone?** Read `CLAUDE.md`, `STATUS.md`,
+`HANDOVER.md`'s 2026-09-06 entries, and the Notion "ML Reliability Plan".
+Deliberately does not re-propose the standing `sample_every` 3→1 item
+(2026-08-23), the gravity-aware ball-flight model (2026-08-26), or the
+coaching-tip-verifier synthetic-training path — all already scoped or declined.
+
+Shipped this session (context, not an idea): `scripts/00_utils/interpolate_track.py`
+— server-side short-gap interpolation (time-capped at ~0.25s, a local quadratic
+for a single-sample hole, a straight chord for anything longer) now fills the
+racket + pose overlay payloads in `compare_swing.py`; a new visible ball-path
+overlay in Sync Compare; `SkeletonOverlay.js`'s One Euro filter re-seeds across
+long gaps. The DTW *scoring* trajectories were deliberately left untouched.
+
+#### The big gap: nothing measures whether the live output is good
+
+- **Build a held-out end-to-end eval for the comparison itself.** Every eval
+  in the repo (`17_amateur_eval`, `eval_pro_clip_contact.py`, the
+  classifier/verifier trust logs) measures a *component*. Nothing measures
+  the thing the user actually sees: is the closest-pro match the right pro,
+  and does the 0–100 score track real technique quality? `similarity_score()`
+  is `100·exp(−dist/0.4)` — the `0.4` is an uncalibrated magic constant.
+  Concrete first slice: ~30–50 amateur clips, each given a coach-style
+  technique grade (or a "which pro is the right comp" label) by Claude-vision
+  or a human, run through the pipeline, check rank-correlation of score vs.
+  grade and match plausibility. **M** to build the set + harness; **L** if it
+  becomes an ongoing labelled corpus. Single highest-value missing piece
+  before a beta.
+- **Score-calibration study using data that already exists.** Hundreds of
+  real analyses have been run (Jack's own + batch match ingests). Pull the
+  score distribution and blind-rank a stratified sample (~15 clips across the
+  30/50/70/90 bands) by eye — does a 90 actually look better than a 60?
+  Cheap, no new labelling, tells you whether the constant needs moving. **S**.
+- **Add a "this match doesn't look right" flag to `ResultsScreen`**
+  (restated from 2026-08-25, now higher priority) — logs to
+  `clip_review_log.jsonl` as `source: 'user_flag'`. Once a beta exists, real
+  users flagging bad matches is a larger and cheaper match-quality signal
+  than any offline set. **S–M**.
+- **Coaching-tip precision check.** The 2–3 tips returned per analysis have
+  never been scored on real footage (the Claude verifier is disabled).
+  Claude-grade a sample of {clip, returned tips} for "are these the right
+  things to fix?" against the visible swing. **S–M**.
+- **Robustness / yield rate.** Of real uploads, what fraction produce a
+  usable result vs. fail (short trajectory, pose-detection rate too low,
+  angle inference fails)? The `MIN_TRAJECTORY_POINTS` guard and a
+  pose-detection-rate number already exist in the pipeline — a batch over
+  the existing clip corpus would give a real "it just works N% of the time"
+  figure. **S**.
+
+#### On-device / deployment architecture
+
+- **Scope an on-device build of the single-swing analysis loop.** Every
+  model in the swing path is already edge-scale: MediaPipe Pose is Google's
+  mobile model; the 4 YOLO detectors are all nano-class (~4–5 MB `.pt`,
+  export to CoreML / TFLite); the classifiers are 4 KB sklearn; DTW is
+  trivial numpy over the (bundle-able) pro DB. Total ~30–40 MB of models.
+  The blocker is **not** model size — it's that the whole `scripts/`
+  orchestration is Python + OpenCV + the ultralytics runtime, none of which
+  runs on a phone. On-device = a native/JS reimplementation + a two-format
+  model export pipeline (CoreML + TFLite) + on-device accuracy
+  re-validation + an Expo dev-client (can't stay managed Expo Go). Payoff:
+  zero server cost per analysis, instant, offline, private — and it matches
+  what SevenSix already does. **L**, genuinely a project, needs Jack's call
+  on timing.
+- **Keep highlight / rally detection server-side, permanently.** It runs
+  multiple model passes over a full-match video (minutes, thousands of
+  frames) *plus* an LLM verification step. Even if it fit on-device you
+  wouldn't want it there (battery / thermal on a 10-minute decode). Natural
+  end-state is hybrid: on-device for the quick swing loop, server for
+  batch / highlight / LLM work.
+- **Caveat for "keep increasing the models":** on-device stays feasible only
+  while new models remain small CV detectors + classical ML. A genuinely
+  large model (video transformer, on-device LLM, a heavy pose refiner)
+  breaks it — worth being explicit about that constraint before committing
+  to a bigger architecture.
+
+#### ML pipeline improvements (numbered `scripts/` stages)
+
+- **Feed the new interpolated racket / ball track into the shot-contact
+  verifier's `occlusion_gap` bucket** — a sharper restatement of the
+  2026-08-23 "interpolate racket position across occlusion gaps" item. That
+  bucket is the largest (N≈126) and weakest (~56% agreement) trust bucket;
+  `interpolate_track.py` plus the Kalman `track_ball` / `track_ball_states`
+  now exist as shared, tested building blocks the verifier could consume
+  instead of treating "occluded" as its own undifferentiated evidence type.
+  **M**, now mostly wiring rather than new geometry.
+- **Surface the biomechanics numbers `phase_breakdown.py` already computes**
+  (restated from 2026-09-01, elevated) — hip / shoulder rotation range and
+  racket-to-hip distance are derived and then collapsed into one 0–25
+  `body_rotation` score. Exposing "your hip rotation: X° vs. pro Y°" gives
+  the user something concrete to check, and is a partial answer to "is the
+  score meaningful" — a labelled delta is self-validating in a way an opaque
+  0–100 isn't. **S–M**.
+
+#### Technical debt worth paying down
+
+- **Commit the two uncommitted workstreams on
+  `batch/2026-09-06-find-games-rally-shots`.** As of this pass the branch
+  carries ~750 lines of uncommitted, test-green work across two independent
+  efforts — (1) ball `imgsz` calibration + serve-anchor rework +
+  racket-detection eval, (2) overlay interpolation + ball-path overlay —
+  plus doc updates, none of it committed. Same shape as the 2026-09-02
+  backlog that needed a deliberate batch-merge. Worth landing before it
+  drifts further or a third workstream lands on top. **S**.
+- **The Notion "ML Reliability Plan" is a component-status page that hides
+  the end-to-end gap.** It reads as a stack of "Working / Blocked / Live"
+  rows with no row for "is the product output any good" — exactly the
+  question a reader wants answered. Restructure it to lead with an
+  end-to-end health table (one row per user-facing output, each with how
+  it's validated and a 🟢/🟡/⚠️ confidence flag) before the
+  dependency-ordered stage view. **S**. (Being done alongside this pass.)
+
+---
+
 ### 2026-09-01
 
 Context for this pass: a competitor-analysis pass, not a routine brainstorm —

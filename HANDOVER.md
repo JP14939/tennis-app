@@ -3076,3 +3076,49 @@ first, then ~1.8hr CPU + the three gate audits.
 
 Rough far-side landing zone (gravity-arc from the net-crossing velocity) —
 its own follow-up once there's a trustworthy near-side track.
+
+## Session 2026-09-07 (later) — "this doesn't look like my swing" flag + the end-to-end eval gap
+
+Came out of a conversation with Jack: **is the DTW comparison actually any
+good?** Answer: nobody knows. Every eval in the repo (`17_amateur_eval`,
+`eval_pro_clip_contact.py`, the classifier/verifier trust logs) measures a
+*component*. Nothing measures the user-facing output — the closest-pro
+match, the 0–100 `similarity_score` (`100·exp(−dist/0.4)`, uncalibrated
+constant), or the tips. See `docs/future-ideas.md` 2026-09-07 for the full
+list of missing evals (a held-out match-quality set is the pre-beta
+priority) and an on-device-architecture assessment (the swing loop is
+edge-scale; the blocker is the Python orchestration, not model size).
+
+Shipped the cheapest of those: a **one-tap "This doesn't look like my
+swing" flag on `ResultsScreen`** (under the Compare button, only on a saved
+analysis). Toggles `analyses.match_flagged` via the existing
+`PATCH /history/:id` and, on a newly-raised flag, appends to
+`data/06_pro_database/match_quality_flags.jsonl` (`{timestamp, source:
+'user_flag', analysis_id, user_id, pro_entry_id, player_name, shot_type,
+similarity, angle_label}`).
+
+- **Deliberately NOT `clip_review_log.jsonl`.** That log's verdicts drive a
+  rebuild-and-exclude pass; one user's dislike is far weaker signal than a
+  reviewed exclusion and must never feed it.
+- New `scripts/06_database_build/match_quality_flags.py` — `load_flags()` +
+  a `__main__` summary (count, distinct users, by shot type / angle, most
+  flagged pro entries, similarity distribution of flagged matches).
+- `match_flagged` is independent of `flagged_not_shot`/`confirmed_real_shot`
+  (a different question — "is the MATCH good", not "is this a real shot").
+- The JSONL write is skipped under `NODE_ENV=test` so the suite doesn't
+  pollute the real file (the older training logs predate that guard).
+- Files: `backend/src/db.js` (+`match_flagged` column via
+  `addColumnIfMissing`), `backend/src/routes/history.js`
+  (`logMatchQualityFlag` + PATCH handling + `serializeRow`),
+  `frontend/api/history.js` (`flagMatch`), `ResultsScreen.js`,
+  `HistoryScreen.js` (nav param). Tests: `history.validation.test.js` +3
+  (41 in that suite; full backend 602 green, `verify:db` 94).
+
+**Branch note:** this landed on `batch/2026-09-06-find-games-rally-shots`
+alongside several parallel-session workstreams (serve-anchor Phase 1a/1b,
+ROI ball tracker NO-GO, ball-detector retrain queued, overlay
+interpolation). Some of the overlay-interpolation work got committed inside
+other sessions' commits; `scripts/00_utils/interpolate_track.py` is imported
+by the now-committed `compare_swing.py` but is **itself still untracked** —
+a fresh checkout of HEAD would `ModuleNotFoundError`. Needs a
+`git add` in whatever batch-commit lands next.

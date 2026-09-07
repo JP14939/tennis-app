@@ -7,7 +7,7 @@ import Alert from '../utils/alert';
 import { API_BASE } from '../config/api';
 import { SHOT_TYPES } from '../config/shotTypes';
 import { useAuth } from '../context/AuthContext';
-import { saveHistory, flagNotShot, confirmRealShot, correctShotType } from '../api/history';
+import { saveHistory, flagNotShot, confirmRealShot, correctShotType, flagMatch } from '../api/history';
 import { getNotes, addNote } from '../api/coach';
 import { colors, fonts, radius, spacing, scoreColor } from '../theme';
 import CourtBackground from '../components/CourtBackground';
@@ -128,7 +128,7 @@ export default function ResultsScreen({ navigation, route }) {
   const {
     videoUri, shotType, contactTimeSec, viewDirectionHint,
     savedResult, analysisId: routeAnalysisId, canAddNotes,
-    flaggedNotShot = false, confirmedRealShot = false,
+    flaggedNotShot = false, confirmedRealShot = false, matchFlagged: matchFlaggedInitial = false,
     practiceStepId,
   } = route.params ?? {};
   const { token, isAuthenticated } = useAuth();
@@ -162,6 +162,7 @@ export default function ResultsScreen({ navigation, route }) {
 
   const [flagged, setFlagged] = useState(flaggedNotShot);
   const [confirmed, setConfirmed] = useState(confirmedRealShot);
+  const [matchFlagged, setMatchFlagged] = useState(matchFlaggedInitial);
   const [displayShotType, setDisplayShotType] = useState(shotType);
   const [showTypePicker, setShowTypePicker] = useState(false);
 
@@ -211,6 +212,16 @@ export default function ResultsScreen({ navigation, route }) {
       await confirmRealShot(token, analysisId, nextConfirmed);
     } catch (err) {
       setConfirmed(!nextConfirmed); // revert on failure
+    }
+  };
+
+  const handleToggleMatchFlag = async () => {
+    const next = !matchFlagged;
+    setMatchFlagged(next);
+    try {
+      await flagMatch(token, analysisId, next);
+    } catch (err) {
+      setMatchFlagged(!next); // revert on failure
     }
   };
 
@@ -400,6 +411,8 @@ export default function ResultsScreen({ navigation, route }) {
                   overlayB: result.user_overlay_trajectory ?? null,
                   racketPathA: top.pro_racket_overlay_trajectory ?? null,
                   racketPathB: result.racket_overlay_trajectory ?? null,
+                  ballPathA: top.pro_ball_overlay_trajectory ?? null,
+                  ballPathB: result.ball_overlay_trajectory ?? null,
                   labelA: formatProId(top.pro_id, top.player_name),
                   labelB: 'You',
                   analysisId,
@@ -408,6 +421,22 @@ export default function ResultsScreen({ navigation, route }) {
                 })}
               >
                 <Text style={s.compareBtnText}>Compare side-by-side →</Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Match-quality signal for the DTW comparison -- one tap, no
+                prompt. Only offered on a saved analysis (needs an id to
+                flag against). See backend history.js logMatchQualityFlag. */}
+            {analysisId && (
+              <TouchableOpacity
+                style={s.matchFlagLink}
+                onPress={handleToggleMatchFlag}
+                activeOpacity={0.7}
+              >
+                <FlagIcon size={11} color={matchFlagged ? colors.coral : colors.muted} />
+                <Text style={[s.matchFlagText, matchFlagged && s.matchFlagTextOn]}>
+                  {matchFlagged ? "Flagged — thanks, we'll review this match" : "This doesn't look like my swing"}
+                </Text>
               </TouchableOpacity>
             )}
 
@@ -701,6 +730,12 @@ const s = StyleSheet.create({
     paddingVertical: 12, alignItems: 'center', marginBottom: 14,
   },
   sendBtnText: { color: colors.mutedDark, fontSize: 13.5, fontFamily: fonts.bold },
+  matchFlagLink: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 6, paddingVertical: 8, marginTop: -6, marginBottom: 14,
+  },
+  matchFlagText: { color: colors.muted, fontSize: 12, fontFamily: fonts.semibold },
+  matchFlagTextOn: { color: colors.coral },
   generalNotesWrap: { marginBottom: 26 },
 
   saveBanner: {

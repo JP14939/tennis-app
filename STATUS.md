@@ -6,7 +6,7 @@ where things stand in under 2 minutes. For the full detailed history, see
 `HANDOVER.md` (dated build log) and `TODO_MANUAL.md` (full backlog, also
 chronological) — this file is a filter on top of those, not a replacement.
 
-**Last updated:** 2026-09-06 (later) — overlay interpolation: new shared `scripts/00_utils/interpolate_track.py` gap-fills the racket + pose overlay payloads server-side (short bounded gaps, local quadratic; DTW trajectories untouched); new visible ball-path overlay in Sync Compare; `SkeletonOverlay.js` One Euro filter re-seeds across long gaps. Prior: racket-detection measured (item 10); 2026-09-05 Find Games revamp, auth-convention guard
+**Last updated:** 2026-09-07 — "this doesn't look like my swing" flag on ResultsScreen → `data/06_pro_database/match_quality_flags.jsonl` (`match_quality_flags.py` summarises it): the cheapest way to start measuring whether the DTW match is any good, which has **no end-to-end eval** (new finding — every eval covers a component, nothing covers the closest-pro match / 0–100 score / tips). Prior: overlay interpolation (`interpolate_track.py`, ball-path overlay); racket-detection measured (item 10); 2026-09-05 Find Games revamp
 
 ---
 

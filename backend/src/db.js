@@ -543,6 +543,18 @@ function addColumnIfMissing(table, column, ddl) {
   if (!has) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
 }
 
+// match_flagged: a user marking their top pro-match as "doesn't look like my
+// swing" -- wrong pro, score seems off, pose looks wrong. A cheap
+// match-quality signal for the DTW comparison, which has no end-to-end eval
+// yet (see docs/future-ideas.md 2026-09-07). Independent of
+// flagged_not_shot/confirmed_real_shot (a different question -- "is the
+// MATCH good", not "is this a real shot"). Logged to
+// data/06_pro_database/match_quality_flags.jsonl, deliberately NOT
+// clip_review_log.jsonl: that log's verdicts drive a rebuild-and-exclude
+// pass, and one user's dislike is far weaker signal than a reviewed
+// exclusion.
+addColumnIfMissing('analyses', 'match_flagged', 'match_flagged INTEGER NOT NULL DEFAULT 0');
+
 // postcode: best-effort reverse-geocode via utils/postcodeLookup.js
 // (postcodes.io -- free, UK-only, no API key). Nullable and populated
 // lazily/best-effort (a failed lookup, or a location postcodes.io has

@@ -68,6 +68,19 @@ export function confirmRealShot(token, id, confirmed = true) {
   }).then(handle);
 }
 
+// "This match doesn't look like my swing" -- a match-quality signal for the
+// DTW comparison. Independent of flagNotShot/confirmRealShot.
+export function flagMatch(token, id, flagged = true) {
+  return fetch(`${API_BASE}/api/history/${id}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ match_flagged: flagged }),
+  }).then(handle);
+}
+
 export function correctShotType(token, id, shotType) {
   return fetch(`${API_BASE}/api/history/${id}`, {
     method: 'PATCH',

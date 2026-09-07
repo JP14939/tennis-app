@@ -47,6 +47,38 @@ const SHOT_CLASSIFIER_LOG_PATH = path.join(DATA_DIR, '14_shot_classifier', 'shot
 // disk for any row still correctable here.
 const USER_CLIPS_DIR = path.join(DATA_DIR, 'runtime', 'user_clips');
 
+// A user flagging their top pro-match as "doesn't look like my swing" -- a
+// raw match-quality signal for the DTW comparison (which has no end-to-end
+// eval yet). Sits next to clip_review_log.jsonl in the same directory /
+// mental model, but is a SEPARATE file on purpose: clip_review_log verdicts
+// drive a rebuild-and-exclude pass, and one user's dislike must never feed
+// that. Jack reads this to see which pro entries get flagged most and at
+// what score -- the cheapest way to start measuring "is the match any good"
+// before a labelled eval set exists.
+const MATCH_QUALITY_LOG_PATH = path.join(DATA_DIR, '06_pro_database', 'match_quality_flags.jsonl');
+
+function logMatchQualityFlag(row, result) {
+  // Don't pollute the real data file from the test suite (this log is new
+  // enough to start clean; the older training logs predate this guard).
+  if (process.env.NODE_ENV === 'test') return;
+  fs.mkdirSync(path.dirname(MATCH_QUALITY_LOG_PATH), { recursive: true });
+  const top = result?.matches?.[0] || null;
+  const record = {
+    timestamp: Date.now() / 1000,
+    source: 'user_flag',
+    analysis_id: row.id,
+    user_id: row.user_id,
+    // top.pro_id IS the pro_database entry id (entry['id'] in compare_swing.py),
+    // the same key clip_review_log.py logs verdicts against.
+    pro_entry_id: top?.pro_id ?? row.pro_id ?? null,
+    player_name: top?.player_name ?? null,
+    shot_type: row.shot_type,
+    similarity: row.similarity ?? top?.similarity ?? null,
+    angle_label: row.angle_label ?? null,
+  };
+  fs.appendFileSync(MATCH_QUALITY_LOG_PATH, JSON.stringify(record) + '\n');
+}
+
 function logShotTypeCorrection(analysisId, correctedShotType, result) {
   fs.mkdirSync(path.dirname(SHOT_CLASSIFIER_LOG_PATH), { recursive: true });
   // clip_path + contact_time_sec: without these, extract_training_features_
@@ -91,6 +123,7 @@ function serializeRow(row) {
     created_at: row.created_at,
     flagged_not_shot: !!row.flagged_not_shot,
     confirmed_real_shot: !!row.confirmed_real_shot,
+    match_flagged: !!row.match_flagged,
     // A single corrupted result_json used to throw here and crash the
     // whole list this row was part of (see GET /history below) -- now
     // that one row just comes back with result: null instead.
@@ -107,7 +140,9 @@ function serializeRow(row) {
 // untouched full result for whichever single item is actually opened.
 function stripHeavyOverlays(result) {
   if (!result) return result;
-  const { user_overlay_trajectory, racket_overlay_trajectory, ...rest } = result;
+  const {
+    user_overlay_trajectory, racket_overlay_trajectory, ball_overlay_trajectory, ...rest
+  } = result;
   // matches is only validated at index 0 on the way in (see POST /history's
   // comment on why this whole body is untrusted) -- a stored row can have a
   // non-array matches, or an array containing null/non-object entries past
@@ -120,7 +155,9 @@ function stripHeavyOverlays(result) {
     ...rest,
     matches: matches.map((m) => {
       if (!m || typeof m !== 'object') return m;
-      const { pro_overlay_trajectory, pro_racket_overlay_trajectory, ...rest2 } = m;
+      const {
+        pro_overlay_trajectory, pro_racket_overlay_trajectory, pro_ball_overlay_trajectory, ...rest2
+      } = m;
       return rest2;
     }),
   };
@@ -226,10 +263,12 @@ router.post('/history', requireAuth, (req, res) => {
 });
 
 router.patch('/history/:id', requireAuth, (req, res) => {
-  const { flagged_not_shot, confirmed_real_shot, shot_type } = req.body || {};
+  const { flagged_not_shot, confirmed_real_shot, shot_type, match_flagged } = req.body || {};
   const hasShotType = typeof shot_type === 'string';
-  if (typeof flagged_not_shot !== 'boolean' && typeof confirmed_real_shot !== 'boolean' && !hasShotType) {
-    return res.status(400).json({ error: 'flagged_not_shot, confirmed_real_shot (boolean), or shot_type (string) is required' });
+  const hasMatchFlag = typeof match_flagged === 'boolean';
+  if (typeof flagged_not_shot !== 'boolean' && typeof confirmed_real_shot !== 'boolean'
+      && !hasShotType && !hasMatchFlag) {
+    return res.status(400).json({ error: 'flagged_not_shot, confirmed_real_shot, match_flagged (boolean), or shot_type (string) is required' });
   }
   if (hasShotType && !isShotType(shot_type)) {
     return res.status(400).json({ error: `shot_type ${oneOfMessage(SHOT_TYPES)}`, field: 'shot_type' });
@@ -257,9 +296,12 @@ router.patch('/history/:id', requireAuth, (req, res) => {
     ? confirmed_real_shot
     : (flagged_not_shot ? false : !!row.confirmed_real_shot);
   const nextShotType = hasShotType ? shot_type : row.shot_type;
+  // Independent of the two "is this a real shot" verdicts -- a different
+  // question ("is the MATCH any good").
+  const nextMatchFlagged = hasMatchFlag ? match_flagged : !!row.match_flagged;
 
-  db.prepare('UPDATE analyses SET flagged_not_shot = ?, confirmed_real_shot = ?, shot_type = ? WHERE id = ?')
-    .run(nextFlagged ? 1 : 0, nextConfirmed ? 1 : 0, nextShotType, row.id);
+  db.prepare('UPDATE analyses SET flagged_not_shot = ?, confirmed_real_shot = ?, shot_type = ?, match_flagged = ? WHERE id = ?')
+    .run(nextFlagged ? 1 : 0, nextConfirmed ? 1 : 0, nextShotType, nextMatchFlagged ? 1 : 0, row.id);
 
   // Only log a genuinely new verdict/correction as a training example --
   // toggling either flag back off, or "correcting" to the same type it
@@ -272,6 +314,10 @@ router.patch('/history/:id', requireAuth, (req, res) => {
     }
     if (hasShotType && shot_type !== row.shot_type) {
       logShotTypeCorrection(row.id, shot_type, safeJsonParse(row.result_json, `analysis ${row.id}`));
+    }
+    // Log only a newly-raised flag -- toggling it back off isn't a signal.
+    if (nextMatchFlagged && !row.match_flagged) {
+      logMatchQualityFlag(row, safeJsonParse(row.result_json, `analysis ${row.id}`));
     }
   } catch (e) {
     console.error('[history] failed to log user verdict/correction for training:', e);

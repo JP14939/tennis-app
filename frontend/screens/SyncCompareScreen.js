@@ -8,6 +8,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import PlatformVideo from '../components/PlatformVideo';
 import SkeletonOverlay from '../components/SkeletonOverlay';
 import RacketPathOverlay from '../components/RacketPathOverlay';
+import BallPathOverlay from '../components/BallPathOverlay';
 import { playTapSound } from '../utils/sounds';
 import AnnotationCanvas from '../components/AnnotationCanvas';
 import { useAuth } from '../context/AuthContext';
@@ -72,7 +73,8 @@ const trackFrac = (value) => Math.max(0, Math.min(1, (value - T_MIN) / (T_MAX - 
 
 const VideoPane = memo(function VideoPane({
   label, uri, videoRef, onStatusUpdate, overlayTrajectory, overlayColor, showOverlay,
-  racketTrajectory, racketColor, showRacketPath, isPlaying, paneWidth, paneHeight,
+  racketTrajectory, racketColor, showRacketPath,
+  ballTrajectory, ballColor, showBallPath, isPlaying, paneWidth, paneHeight,
   zoom, panX, panY, onZoomPanChange, annotationRef, annotateActive, tool, annColor,
   onClearAnnotation, onUndoAnnotation,
 }) {
@@ -155,11 +157,11 @@ const VideoPane = memo(function VideoPane({
               width={zoomedWidth}
               height={zoomedHeight}
               onStatusUpdate={handleStatus}
-              highFrequencyUpdates={(showOverlay || showRacketPath) && isPlaying}
+              highFrequencyUpdates={(showOverlay || showRacketPath || showBallPath) && isPlaying}
               onVideoSize={setVideoSize}
               onError={setVideoError}
             />
-            {(showOverlay || showRacketPath) && (
+            {(showOverlay || showRacketPath || showBallPath) && (
               <View style={{ position: 'absolute', left: content.left, top: content.top, width: content.width, height: content.height }}>
                 {showOverlay && (
                   <SkeletonOverlay
@@ -177,6 +179,15 @@ const VideoPane = memo(function VideoPane({
                     width={content.width}
                     height={content.height}
                     color={racketColor}
+                  />
+                )}
+                {showBallPath && (
+                  <BallPathOverlay
+                    trajectory={ballTrajectory}
+                    currentTimeSec={time}
+                    width={content.width}
+                    height={content.height}
+                    color={ballColor}
                   />
                 )}
               </View>
@@ -352,6 +363,7 @@ const ToggleChips = memo(function ToggleChips({
   chipStyle, chipTextStyle,
   hasOverlayData, showSkeleton, onToggleSkeleton,
   hasRacketData, showRacketPath, onToggleRacketPath,
+  hasBallData, showBallPath, onToggleBallPath,
   annotateActive, onToggleAnnotate,
 }) {
   return (
@@ -367,6 +379,13 @@ const ToggleChips = memo(function ToggleChips({
         <TouchableOpacity style={[chipStyle, showRacketPath && s.toggleChipActive]} onPress={onToggleRacketPath}>
           <Text style={[chipTextStyle, showRacketPath && s.toggleChipTextActive]}>
             {showRacketPath ? 'Hide racket path' : 'Show racket path'}
+          </Text>
+        </TouchableOpacity>
+      )}
+      {hasBallData && (
+        <TouchableOpacity style={[chipStyle, showBallPath && s.toggleChipActive]} onPress={onToggleBallPath}>
+          <Text style={[chipTextStyle, showBallPath && s.toggleChipTextActive]}>
+            {showBallPath ? 'Hide ball path' : 'Show ball path'}
           </Text>
         </TouchableOpacity>
       )}
@@ -393,6 +412,7 @@ export default function SyncCompareScreen({ route, navigation }) {
     contactASec = 0, contactBSec = 0,
     overlayA = null, overlayB = null,
     racketPathA = null, racketPathB = null,
+    ballPathA = null, ballPathB = null,
     labelA = 'Reference', labelB = 'You',
     analysisId = null, canAddNotes = false,
     phaseMarkers = DEFAULT_PHASE_MARKERS,
@@ -467,6 +487,7 @@ export default function SyncCompareScreen({ route, navigation }) {
 
   const [showSkeleton, setShowSkeleton] = useState(true);
   const [showRacketPath, setShowRacketPath] = useState(true);
+  const [showBallPath, setShowBallPath] = useState(true);
   const [annotateActive, setAnnotateActive] = useState(false);
   const [tool, setTool] = useState('pen');
   const [annColor, setAnnColor] = useState(ANNOTATION_COLORS[0]);
@@ -568,6 +589,8 @@ export default function SyncCompareScreen({ route, navigation }) {
   const showOverlay = hasOverlayData && showSkeleton;
   const hasRacketData = !!(racketPathA || racketPathB);
   const showRacket = hasRacketData && showRacketPath;
+  const hasBallData = !!(ballPathA || ballPathB);
+  const showBall = hasBallData && showBallPath;
 
   const changeSpeed = useCallback((newSpeed) => {
     setSpeed(newSpeed);
@@ -829,6 +852,7 @@ export default function SyncCompareScreen({ route, navigation }) {
   const undoB = useCallback(() => annotationBRef.current?.undo(), []);
   const toggleSkeleton = useCallback(() => setShowSkeleton((v) => !v), []);
   const toggleRacketPath = useCallback(() => setShowRacketPath((v) => !v), []);
+  const toggleBallPath = useCallback(() => setShowBallPath((v) => !v), []);
   const openNote = useCallback(() => setAddingNote(true), []);
   const cancelNote = useCallback(() => { setAddingNote(false); setNoteText(''); }, []);
   const handlePlayPress = useCallback(() => { playTapSound(); togglePlay(); }, [togglePlay]);
@@ -841,6 +865,7 @@ export default function SyncCompareScreen({ route, navigation }) {
       label={labelA} uri={uriA} videoRef={videoARef} onStatusUpdate={onAStatusUpdate}
       overlayTrajectory={overlayA} overlayColor={GOLD} showOverlay={showOverlay}
       racketTrajectory={racketPathA} racketColor={GOLD} showRacketPath={showRacket}
+      ballTrajectory={ballPathA} ballColor={GOLD} showBallPath={showBall}
       isPlaying={isPlaying} paneWidth={paneWidth} paneHeight={paneHeight}
       zoom={zoom} panX={panX} panY={panY} onZoomPanChange={handleZoomPanChange}
       annotationRef={annotationARef} annotateActive={annotateActive}
@@ -853,6 +878,7 @@ export default function SyncCompareScreen({ route, navigation }) {
       label={labelB} uri={uriB} videoRef={videoBRef} onStatusUpdate={onBStatusUpdate}
       overlayTrajectory={overlayB} overlayColor={GREEN} showOverlay={showOverlay}
       racketTrajectory={racketPathB} racketColor={GREEN} showRacketPath={showRacket}
+      ballTrajectory={ballPathB} ballColor={GREEN} showBallPath={showBall}
       isPlaying={isPlaying} paneWidth={paneWidth} paneHeight={paneHeight}
       zoom={zoom} panX={panX} panY={panY} onZoomPanChange={handleZoomPanChange}
       annotationRef={annotationBRef} annotateActive={annotateActive}
@@ -892,6 +918,7 @@ export default function SyncCompareScreen({ route, navigation }) {
                 chipStyle={s.railChip} chipTextStyle={s.railChipText}
                 hasOverlayData={hasOverlayData} showSkeleton={showSkeleton} onToggleSkeleton={toggleSkeleton}
                 hasRacketData={hasRacketData} showRacketPath={showRacketPath} onToggleRacketPath={toggleRacketPath}
+                hasBallData={hasBallData} showBallPath={showBallPath} onToggleBallPath={toggleBallPath}
                 annotateActive={annotateActive} onToggleAnnotate={handleToggleAnnotate}
               />
               <View style={s.railDivider} />
@@ -1026,6 +1053,7 @@ export default function SyncCompareScreen({ route, navigation }) {
               chipStyle={s.railChip} chipTextStyle={s.railChipText}
               hasOverlayData={hasOverlayData} showSkeleton={showSkeleton} onToggleSkeleton={toggleSkeleton}
               hasRacketData={hasRacketData} showRacketPath={showRacketPath} onToggleRacketPath={toggleRacketPath}
+              hasBallData={hasBallData} showBallPath={showBallPath} onToggleBallPath={toggleBallPath}
               annotateActive={annotateActive} onToggleAnnotate={handleToggleAnnotate}
             />
           </View>
