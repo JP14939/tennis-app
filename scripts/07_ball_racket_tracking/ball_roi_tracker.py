@@ -51,6 +51,14 @@ from racket_tracker import _center_in_original_space, detect_ball  # noqa: E402
 MIN_BOOTSTRAP = 3          # accepted pass-1 ball detections
 MIN_SPAN_FRAMES = 4        # frame span they cover
 
+# Only re-detect a frame within this many frames of an ACCEPTED pass-1
+# detection -- past that the constant-velocity prediction has drifted too far
+# to crop tightly and the ROI just hallucinates on empty frames (measured:
+# unrestricted candidates inflated fp_rate on ball-absent frames). Short gaps
+# at contact / brief occlusions -- the cases worth recovering -- are all
+# within a few frames of a real detection.
+MAX_CANDIDATE_GAP = 3
+
 # ROI half-size (px, original-frame space) = BALL_HALF_PX + MOTION_K*speed
 #                                            + GATE_SIGMAS*sqrt(max eig of P2),
 # clamped to [ROI_MIN_HALF, ROI_MAX_HALF].
@@ -308,9 +316,15 @@ def refine_ball_track(video_path, detections, fps, *, contact_frame=None,
     def _in_contact_guard(f):
         return contact_frame is not None and abs(f - contact_frame) <= guard
 
+    accepted_sorted = sorted(accepted_frames)
+
+    def _near_accepted(f):
+        return min(abs(f - af) for af in accepted_sorted) <= MAX_CANDIDATE_GAP
+
     candidates = sorted(set(missed_frames) | set(gated_frames))
-    # most-confident (smallest predicted covariance) first
-    candidates = [f for f in candidates if f in combined]
+    # most-confident (smallest predicted covariance) first; only frames close
+    # enough to a real detection for the CV prediction to still crop tight
+    candidates = [f for f in candidates if f in combined and _near_accepted(f)]
     candidates.sort(key=lambda f: combined[f]['cov_trace'])
 
     frames_to_read = [f for f in candidates
@@ -419,15 +433,13 @@ def refine_ball_track(video_path, detections, fps, *, contact_frame=None,
         }
 
     # 7. Assembly ---------------------------------------------------------
+    # A pass-1 box is NEVER removed -- only ADDED to or replaced by a
+    # filter-validated ROI recovery. A gated frame whose ROI found nothing
+    # keeps its original box (dropping it regressed pass-1's detect_rate on
+    # the real population; the CV filter still ignores it internally).
     by_frame = {d['frame']: dict(d) for d in detections}
     for d in by_frame.values():
         d.setdefault('ball_source', 'pass1' if d.get('ball_box') else None)
-    for f in dropped_gated:
-        if f in by_frame:
-            by_frame[f] = dict(by_frame[f])
-            by_frame[f]['ball_box'] = None
-            by_frame[f]['ball_conf'] = None
-            by_frame[f]['ball_source'] = 'gated_dropped'
     for f, rec in recovered.items():
         if f in by_frame:
             by_frame[f].update({k: rec[k] for k in
