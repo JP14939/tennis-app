@@ -15,8 +15,11 @@ not re-derived here.
 Resumable: skips entries that already have a view_direction. Backs up
 pro_database.json before patching (see pro_database_backup_pre_view_direction.json).
 
-Usage: python enrich_view_direction.py
+Usage:
+  python enrich_view_direction.py           # fill only entries missing view_direction
+  python enrich_view_direction.py --force    # recompute for every entry (post-v10 regen)
 """
+import argparse
 import json
 import os
 import sys
@@ -45,12 +48,17 @@ def _resolve_clip(clip_path):
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--force', action='store_true',
+                    help='recompute view_direction for every entry, not just missing ones')
+    args = ap.parse_args()
+
     with open(DB_PATH, encoding='utf-8') as f:
         db = json.load(f)
 
     entries = db['entries']
-    todo = [e for e in entries if 'view_direction' not in e]
-    print(f'{len(entries)} total entries, {len(todo)} need view_direction')
+    todo = entries if args.force else [e for e in entries if 'view_direction' not in e]
+    print(f'{len(entries)} total entries, {len(todo)} to {"recompute" if args.force else "fill"}')
 
     landmarker = create_landmarker()
     counts = {'front': 0, 'back': 0, 'unknown': 0, 'missing_clip': 0}

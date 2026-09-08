@@ -398,11 +398,9 @@ export default function ContactMarkingScreen({ navigation, route }) {
               <Text style={s.calibChecking}>Checking camera setup…</Text>
             )}
             {calibration.status === 'done' && calibration.message && (() => {
-              // elevation_status can warn ("possibly_elevated") even when ok
-              // is true (framing is fine, height is the separate concern) —
-              // don't let a green checkmark contradict a height warning.
-              const elevationWarn = calibration.elevation_status === 'possibly_elevated';
-              const isWarn = calibration.ok === false || elevationWarn;
+              // Elevation warning retired (backend Section 8 item 2) — ok is
+              // now the whole story.
+              const isWarn = calibration.ok === false;
               return (
                 <Text style={[s.calibMsg, isWarn && s.calibWarn]}>
                   {isWarn ? '⚠ ' : calibration.ok === true ? '✓ ' : ''}{calibration.message}

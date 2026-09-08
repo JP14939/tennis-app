@@ -581,7 +581,12 @@ def _angle_from_frame(frame, landmarker):
     net_width = right_x - left_x
     net_center_x = (left_x + right_x) / 2
     post_height_frac = detect_post_height(frame, left_x, right_x, net_y)
-    height_ratio = height_ratio_from_keypoints(kp) if used_keypoints else None
+    # Elevation retired (Section 8 item 2): v10 has no post-base keypoints, so
+    # height_ratio_from_keypoints() would always be None anyway. The signal was
+    # only ever validated on 2 videos with synthetic labels -- dropped, not
+    # resurrected via Hough (project_vertical_angle_detection scar tissue).
+    # Tuple slot kept so positional unpacking elsewhere doesn't shift.
+    height_ratio = None
     net_roll = net_roll_deg(kp) if used_keypoints else None
 
     mp_landmarks = _run_landmarker(frame, landmarker) if landmarker is not None else detect_pose(frame)
@@ -760,11 +765,14 @@ LIVE_FRAMING_MESSAGES = {
     'unknown':            '',
 }
 
+# Elevation retired (Section 8 item 2): the live badge no longer shows a
+# camera-height clause (elevation_status is always 'unknown' now). Dict kept
+# only so nothing importing it breaks.
 LIVE_ELEVATION_MESSAGES = {
-    'level':              'Camera height looks good.',
-    'uncertain':          'Height roughly OK — not fully confident.',
-    'possibly_elevated':  'Camera may be too high — lower it.',
-    'unknown':            'Camera height unclear.',
+    'level':              '',
+    'uncertain':          '',
+    'possibly_elevated':  '',
+    'unknown':            '',
 }
 LIVE_MIN_CONFIDENCE = 0.5
 
@@ -792,11 +800,11 @@ def check_camera_setup_frame(frame, landmarker=None):
         }
 
     (net_width, net_center_x, net_y, player_x, player_vis, post_height_frac, ankle_y,
-     used_keypoints, height_ratio, stance_width_ratio, shoulder_tilt_deg, _net_roll) = result
+     used_keypoints, _height_ratio, stance_width_ratio, shoulder_tilt_deg, _net_roll) = result
 
-    apparent_ratio = min(net_width / FULL_NET_FRACTION, 1.0)
-    angle = math.degrees(math.acos(max(apparent_ratio, 0.001)))
-    angle = round(max(0.0, min(90.0, angle)), 1)
+    # Same acos + player-offset formula as the finished-video path -- via the
+    # shared helper (Section 8 item 3), so this is no longer a divergent copy.
+    angle = _angle_from_measurement(result)[0]
 
     # Hough-fallback base lowered from 0.7 -- this session proved the v4
     # keypoint model (trained on real negatives for the first time) reliably
@@ -809,7 +817,9 @@ def check_camera_setup_frame(frame, landmarker=None):
     base_confidence = 0.85 if used_keypoints else 0.35
     confidence = round(min(base_confidence + player_vis * 0.3, 1.0), 3)
 
-    elevation_status = elevation_label(height_ratio)
+    # Elevation retired (Section 8 item 2) -- always None / 'unknown'.
+    height_ratio = None
+    elevation_status = 'unknown'
     framing_status = framing_label(stance_width_ratio, shoulder_tilt_deg)
 
     # Behind-the-baseline view gate -- same verdict compare_swing.py applies to
@@ -845,7 +855,7 @@ def check_camera_setup_frame(frame, landmarker=None):
         'framing_status': framing_status,
         'view_direction': view_direction, 'view_reason': None,
         'message': (
-            f'{angle_label(angle)}. {LIVE_ELEVATION_MESSAGES.get(elevation_status, LIVE_ELEVATION_MESSAGES["unknown"])}'
+            f'{angle_label(angle)}.'
             f'{LIVE_FRAMING_MESSAGES.get(framing_status, "")}'
         ),
     }
@@ -907,6 +917,118 @@ def _court_line_fallback_angle(video_path, candidate_frames, view_direction_hint
     return median_angle, confidence, debug
 
 
+def _angle_from_measurement(m):
+    """
+    Camera angle (deg, 0 = front, 90 = pure side) from ONE frame's
+    _angle_from_frame() tuple. This is the exact legacy formula -- net
+    foreshortening via acos(net_width / FULL_NET_FRACTION), an optional player-
+    offset secondary via asin(offset / 0.40), weighted average (net 2.0 /
+    player player_vis). Extracted verbatim (Section 8 item 3) so
+    check_camera_setup_frame() consumes the same helper instead of keeping a
+    divergent inline copy of it.
+
+    Returns (angle_deg, net_angle, player_angle | None).
+    """
+    net_width, net_center_x = m[0], m[1]
+    player_x, player_vis = m[3], m[4]
+
+    apparent_ratio = min(net_width / FULL_NET_FRACTION, 1.0)
+    net_angle = max(0.0, min(90.0, math.degrees(math.acos(max(apparent_ratio, 0.001)))))
+
+    player_angle = None
+    if player_x is not None:
+        offset_ratio = min(abs(player_x - net_center_x) / 0.40, 1.0)
+        player_angle = max(0.0, min(90.0, math.degrees(math.asin(offset_ratio))))
+
+    net_weight = 2.0
+    player_weight = player_vis if player_angle is not None else 0.0
+    if player_angle is not None and player_weight > 0:
+        angle = (net_angle * net_weight + player_angle * player_weight) / (net_weight + player_weight)
+    else:
+        angle = net_angle
+    return round(max(0.0, min(90.0, angle)), 1), round(net_angle, 1), (
+        round(player_angle, 1) if player_angle is not None else None)
+
+
+def _aggregate_frame_angles(measurements, *, kp_base=0.85, hough_base=0.35,
+                            player_vis_weight=0.3):
+    """
+    Shared 5-frame aggregation for infer_camera_angle / infer_angle_from_source
+    (Section 8 item 3). Was: median of net_widths -> angle from the single frame
+    closest to that median. Now: an angle per frame, then the median of the
+    per-frame angles, with a confidence that reflects how much of the answer
+    came from the trusted keypoint model vs the Hough fallback.
+
+    Returns a dict:
+      {'ok', 'reason', 'angle', 'confidence', 'n_keypoint_frames', 'debug'}
+    ok=False means the net path did not produce a usable answer -- 'reason' is
+    a banner-false-positive message or 'net_path_insufficient' (< 2 keypoint
+    frames); the caller picks the fallback (court sidelines / give up). 'angle'
+    is still filled on 'net_path_insufficient' for debug logging.
+    """
+    net_widths = [m[0] for m in measurements]
+    median_width = sorted(net_widths)[len(net_widths) // 2]
+    width_spread = max(net_widths) - min(net_widths)
+
+    agg_debug = {
+        'net_widths':   [round(w, 3) for w in net_widths],
+        'median_width': round(median_width, 3),
+        'width_spread': round(width_spread, 3),
+    }
+
+    # Banner false-positive: every frame found a suspiciously wide, suspiciously
+    # consistent line (the same backdrop banner in each sample).
+    if median_width > 0.72 and width_spread < 0.05:
+        return {'ok': False,
+                'reason': f'Net detection unreliable: consistent wide line (w={median_width:.2f}) likely a banner',
+                'angle': None, 'confidence': 0.0, 'n_keypoint_frames': 0, 'debug': agg_debug}
+
+    n_keypoint_frames = sum(1 for m in measurements if m[7])
+    kp_frac = n_keypoint_frames / len(measurements)
+
+    per_frame = [(_angle_from_measurement(m)[0], m) for m in measurements]
+    # A Hough banner-line angle mixed into the median is pure noise -- once we
+    # have >= 3 real keypoint frames, drop the Hough ones from the vote.
+    if n_keypoint_frames >= 3:
+        chosen = [a for a, m in per_frame if m[7]]
+    else:
+        chosen = [a for a, _ in per_frame]
+    chosen_sorted = sorted(chosen)
+    median_angle = chosen_sorted[len(chosen_sorted) // 2]
+    angle_spread = max(chosen) - min(chosen)
+
+    # Secondary signals read from the frame closest to the median net width
+    # (the legacy "best" frame): player visibility feeds both the confidence
+    # bump and -- historically -- the offset term already folded into per-frame.
+    best = min(measurements, key=lambda m: abs(m[0] - median_width))
+    player_vis = best[4]
+
+    agg_debug.update({
+        'net_keypoint_frames': f'{n_keypoint_frames}/{len(measurements)}',
+        'kp_frac':             round(kp_frac, 2),
+        'per_frame_angles':    [round(a, 1) for a, _ in per_frame],
+        'angle_spread':        round(angle_spread, 1),
+        'angle_median':        round(median_angle, 1),
+        'player_vis':          round(player_vis, 3),
+    })
+
+    # The net path only counts as "produced a usable answer" with >= 2 real
+    # keypoint frames. Below that the caller falls back to court sidelines.
+    if n_keypoint_frames < 2:
+        return {'ok': False, 'reason': 'net_path_insufficient',
+                'angle': round(median_angle, 1), 'confidence': 0.0,
+                'n_keypoint_frames': n_keypoint_frames, 'debug': agg_debug}
+
+    base = kp_base * kp_frac + hough_base * (1 - kp_frac)
+    confidence = base - min(angle_spread / 20.0, 0.3) + player_vis * player_vis_weight
+    confidence = round(max(0.0, min(1.0, confidence)), 3)
+
+    return {'ok': True, 'reason': None,
+            'angle': round(max(0.0, min(90.0, median_angle)), 1),
+            'confidence': confidence,
+            'n_keypoint_frames': n_keypoint_frames, 'debug': agg_debug}
+
+
 def infer_camera_angle(video_path, frame_number=None, landmarker=None, view_direction_hint=None):
     """
     Returns (angle_deg, confidence, debug_info) or (None, 0, reason_str).
@@ -932,22 +1054,20 @@ def infer_camera_angle(video_path, frame_number=None, landmarker=None, view_dire
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.release()
 
-    # Sample 3 candidate frames; use caller-specified frame as anchor if provided
+    # Sample 5 candidate frames (Section 8 item 3): anchored around the
+    # caller's frame if given, else spread across the clip.
     if frame_number is not None:
-        offsets = [-int(total * 0.15), 0, int(total * 0.15)]
-        candidate_frames = [max(0, min(frame_number + o, total - 1)) for o in offsets]
+        candidate_frames = [max(0, min(frame_number + int(total * f), total - 1))
+                            for f in (-0.15, -0.075, 0.0, 0.075, 0.15)]
     else:
-        candidate_frames = [int(total * q) for q in (0.25, 0.50, 0.75)]
+        candidate_frames = [int(total * q) for q in (0.2, 0.35, 0.5, 0.65, 0.8)]
 
     measurements = []
     if view_direction_hint != 'front':
         for fn in candidate_frames:
             # extract_frame() raises when cap.read() fails on a clamped-but-
-            # undecodable frame -- common on phone-recorded/VFR video where
-            # the reported frame count overstates what's actually decodable.
-            # One bad frame among the 3 sampled used to abort angle
-            # detection entirely instead of just being skipped, the same as
-            # a frame with no confident net detection already is below.
+            # undecodable frame (common on phone/VFR video). Skip it rather
+            # than abort the whole detection, same as a no-net frame below.
             try:
                 frame = extract_frame(video_path, fn)
             except RuntimeError:
@@ -962,61 +1082,52 @@ def infer_camera_angle(video_path, frame_number=None, landmarker=None, view_dire
         # try the court-sideline fallback before giving up.
         return _court_line_fallback_angle(video_path, candidate_frames, view_direction_hint)
 
-    # Use median net_width for robustness against outlier frames
-    net_widths = [m[0] for m in measurements]
-    net_widths_sorted = sorted(net_widths)
-    median_width = net_widths_sorted[len(net_widths_sorted) // 2]
+    agg = _aggregate_frame_angles(measurements)
 
-    # Reject if all detections are suspiciously wide (banner false-positives)
-    # and they are consistent (low spread = same banner detected in every frame)
-    width_spread = max(net_widths) - min(net_widths)
-    if median_width > 0.72 and width_spread < 0.05:
-        return None, 0.0, f'Net detection unreliable: consistent wide line (w={median_width:.2f}) likely a banner'
+    # Banner false-positive -- give up (unchanged behaviour).
+    if not agg['ok'] and agg['reason'] != 'net_path_insufficient':
+        return None, 0.0, agg['reason']
 
-    # Use the measurement closest to the median width
+    # < 2 keypoint frames: the net path isn't trustworthy on its own. Try the
+    # court-sideline fallback (unless the front hint already ruled the net out).
+    if not agg['ok']:
+        fb_angle, fb_conf, fb_debug = _court_line_fallback_angle(
+            video_path, candidate_frames, view_direction_hint)
+        if fb_angle is not None:
+            if isinstance(fb_debug, dict):
+                fb_debug['net_path'] = agg['debug']
+            return fb_angle, fb_conf, fb_debug
+        # Court lines failed too -- fall through to the low-confidence net-path
+        # median (confidence 0.0 from the aggregation flags it as a guess).
+
+    # Assemble the full debug dict. Roll / framing / net geometry are read from
+    # the measurements; the angle + confidence come from the aggregation.
+    median_width = agg['debug']['median_width']
     best = min(measurements, key=lambda m: abs(m[0] - median_width))
-    (net_width, net_center_x, net_y, player_x, player_vis, post_height_frac, ankle_y,
+    (net_width, net_center_x, net_y, player_x, player_vis, _post_height_frac, _ankle_y,
      used_keypoints, _, stance_width_ratio, shoulder_tilt_deg, _net_roll) = best
-    n_keypoint_frames = sum(1 for m in measurements if m[7])
-
-    # Vertical elevation: median height_ratio across whichever sampled frames
-    # got one (keypoint-model frames with a detected post base), not just the
-    # `best` frame -- more robust than relying on a single sample.
-    height_ratios = sorted(m[8] for m in measurements if m[8] is not None)
-    # In-plane camera roll: same median-across-samples treatment as
-    # height_ratio -- m[11] is net_roll (None on non-keypoint frames).
     roll_samples = sorted(m[11] for m in measurements if m[11] is not None)
     median_roll = roll_samples[len(roll_samples) // 2] if roll_samples else None
-    median_height_ratio = height_ratios[len(height_ratios) // 2] if height_ratios else None
 
-    # Stance/tilt: same "closest-to-median-net-width" frame's values as the
-    # rest of `best` -- these two are read straight from the player's own
-    # pose in that one frame, not medianed across samples like height_ratio.
+    angle_deg = agg['angle']
+    confidence = agg['confidence']
 
     debug = {
         'frames_sampled':  candidate_frames,
-        'net_widths':      [round(w, 3) for w in net_widths],
-        'median_width':    round(median_width, 3),
-        'width_spread':    round(width_spread, 3),
         'player_x':        round(player_x, 3) if player_x is not None else None,
-        'player_vis':      round(player_vis, 3),
         'net_detection_method': 'keypoint_model' if used_keypoints else 'hough_heuristic',
-        'net_keypoint_frames':  f'{n_keypoint_frames}/{len(measurements)}',
         'net': {
             'width':    round(net_width, 3),
             'center_x': round(net_center_x, 3),
             'y':        round(net_y, 3),
         },
-        # height_ratio/elevation_status: the validated keypoint-model-based
-        # vertical signal (see height_ratio_from_keypoints docstring for
-        # calibration caveats -- only 2 known-elevated reference videos).
-        # post_height_frac/ankle_y below are the older raw Hough-based signal,
-        # kept for continuity/debugging, not used for elevation_status.
-        'height_ratio':      round(median_height_ratio, 4) if median_height_ratio is not None else None,
-        'elevation_status':  elevation_label(median_height_ratio),
-        'post_height_frac': round(post_height_frac, 4) if post_height_frac is not None else None,
-        'ankle_y':           round(ankle_y, 4) if ankle_y is not None else None,
-        'elevation_gap':     round(ankle_y - net_y, 4) if ankle_y is not None else None,
+        # Elevation retired (Section 8 item 2): the v10 net model has no
+        # post-base keypoints, so this signal is permanently None / 'unknown'.
+        # Keys kept so downstream readers and the pro-DB schema don't need a
+        # coordinated change. NOT resurrected via a Hough post-height fallback
+        # (project_vertical_angle_detection: every such attempt failed on real data).
+        'height_ratio':      None,
+        'elevation_status':  'unknown',
         'stance_width_ratio': stance_width_ratio,
         'shoulder_tilt_deg':  shoulder_tilt_deg,
         'framing_status':     framing_label(stance_width_ratio, shoulder_tilt_deg),
@@ -1026,57 +1137,9 @@ def infer_camera_angle(video_path, frame_number=None, landmarker=None, view_dire
         # rotate trajectories level before DTW -- see usable_roll().
         'camera_roll_deg':    round(median_roll, 1) if median_roll is not None else None,
         'camera_roll_source': 'net_keypoints' if median_roll is not None else None,
+        'angle_final':        angle_deg,
     }
-
-    # --- Primary: angle from net foreshortening ---
-    apparent_ratio = min(net_width / FULL_NET_FRACTION, 1.0)
-    net_angle = math.degrees(math.acos(max(apparent_ratio, 0.001)))
-    net_angle = max(0.0, min(90.0, net_angle))
-
-    debug['net_apparent_ratio'] = round(apparent_ratio, 3)
-    debug['net_angle'] = round(net_angle, 1)
-
-    # --- Secondary: player offset from net centre ---
-    player_angle = None
-    if player_x is not None:
-        offset = abs(player_x - net_center_x)
-        MAX_SIDE_OFFSET = 0.40
-        offset_ratio = min(offset / MAX_SIDE_OFFSET, 1.0)
-        player_angle = math.degrees(math.asin(offset_ratio))
-        player_angle = max(0.0, min(90.0, player_angle))
-        debug['player_net_offset'] = round(offset, 3)
-        debug['player_angle'] = round(player_angle, 1)
-
-    # --- Weighted average ---
-    net_weight    = 2.0
-    player_weight = player_vis if player_angle is not None else 0.0
-
-    if player_angle is not None and player_weight > 0:
-        angle_deg = (net_angle * net_weight + player_angle * player_weight) / (net_weight + player_weight)
-    else:
-        angle_deg = net_angle
-
-    angle_deg = round(max(0.0, min(90.0, angle_deg)), 1)
-
-    # Confidence: net detected consistently (penalty for high spread).
-    # Higher base when the keypoint model found the net directly -- validated
-    # this session as much more reliable than the Hough-line fallback, which
-    # frequently locks onto backdrop boards (or, proven this session, street
-    # furniture/rooflines on non-tennis footage) instead of the net.
-    #
-    # Fallback base lowered 0.7 -> 0.35 this session: the v4 keypoint model
-    # (first ever trained on real negative/no-net examples) was validated to
-    # reliably abstain on non-tennis scenes rather than guess, so when it's
-    # the Hough fallback firing instead, that's a weaker signal than it used
-    # to be treated as. 0.35 alone can't clear MIN_CONFIDENCE (0.5) in
-    # check_camera_setup.py; needs real player-pose corroboration
-    # (player_vis >= ~0.5) to cross it -- present in any genuine swing video,
-    # absent in a street photo with no player in frame.
-    base_confidence = 0.85 if used_keypoints else 0.35
-    spread_penalty = min(width_spread / 0.2, 0.3)
-    confidence = round(min(base_confidence - spread_penalty + player_vis * 0.3, 1.0), 3)
-
-    debug['angle_final'] = angle_deg
+    debug.update(agg['debug'])
 
     return angle_deg, confidence, debug
 
@@ -1121,65 +1184,46 @@ def infer_angle_from_source(source_video_path, peak_time_sec, landmarker=None):
     if not measurements:
         return None, 0.0, 'Net not detected in source video frames around swing'
 
-    net_widths = [m[0] for m in measurements]
-    net_widths_sorted = sorted(net_widths)
-    median_width = net_widths_sorted[len(net_widths_sorted) // 2]
-    width_spread = max(net_widths) - min(net_widths)
+    # Same 5-frame aggregation as infer_camera_angle (Section 8 item 3), but
+    # keeping this path's lower confidence bases -- source frames sit further
+    # from the swing than the clip's own frames do.
+    agg = _aggregate_frame_angles(measurements, kp_base=0.75, hough_base=0.6,
+                                  player_vis_weight=0.25)
+    if not agg['ok'] and agg['reason'] != 'net_path_insufficient':
+        return None, 0.0, agg['reason'].replace('Net detection unreliable',
+                                                'Source video detection unreliable')
+    if not agg['ok']:
+        # No court-sideline fallback on the source path -- give up.
+        return None, 0.0, 'Net not reliably detected in source video frames around swing'
 
-    if median_width > 0.72 and width_spread < 0.05:
-        return None, 0.0, f'Source video detection unreliable: consistent wide line (w={median_width:.2f})'
-
+    median_width = agg['debug']['median_width']
     best = min(measurements, key=lambda m: abs(m[0] - median_width))
-    (net_width, net_center_x, net_y, player_x, player_vis, post_height_frac, ankle_y,
+    (net_width, net_center_x, net_y, player_x, player_vis, _post_height_frac, _ankle_y,
      used_keypoints, _, _stance_width_ratio, _shoulder_tilt_deg, _net_roll) = best
-    height_ratios = sorted(m[8] for m in measurements if m[8] is not None)
-    median_height_ratio = height_ratios[len(height_ratios) // 2] if height_ratios else None
     roll_samples = sorted(m[11] for m in measurements if m[11] is not None)
     median_roll = roll_samples[len(roll_samples) // 2] if roll_samples else None
 
-    apparent_ratio = min(net_width / FULL_NET_FRACTION, 1.0)
-    net_angle = math.degrees(math.acos(max(apparent_ratio, 0.001)))
-    net_angle = max(0.0, min(90.0, net_angle))
-
-    player_angle = None
-    if player_x is not None:
-        offset = abs(player_x - net_center_x)
-        offset_ratio = min(offset / 0.40, 1.0)
-        player_angle = math.degrees(math.asin(offset_ratio))
-        player_angle = max(0.0, min(90.0, player_angle))
-
-    net_weight    = 2.0
-    player_weight = player_vis if player_angle is not None else 0.0
-
-    if player_angle is not None and player_weight > 0:
-        angle_deg = (net_angle * net_weight + player_angle * player_weight) / (net_weight + player_weight)
-    else:
-        angle_deg = net_angle
-
-    angle_deg = round(max(0.0, min(90.0, angle_deg)), 1)
-
-    spread_penalty = min(width_spread / 0.2, 0.3)
-    # Slightly lower confidence than clip-based detection (source frames are further from the swing)
-    base_confidence = 0.75 if used_keypoints else 0.6
-    confidence = round(min(base_confidence - spread_penalty + player_vis * 0.25, 1.0), 3)
+    angle_deg = agg['angle']
+    confidence = agg['confidence']
 
     debug = {
         'source': source_video_path,
         'peak_time_sec': peak_time_sec,
         'frames_sampled': candidate_frames,
-        'net_widths': [round(w, 3) for w in net_widths],
-        'median_width': round(median_width, 3),
-        'net_angle': round(net_angle, 1),
         'net_detection_method': 'keypoint_model' if used_keypoints else 'hough_heuristic',
         'angle_final': angle_deg,
-        'height_ratio':      round(median_height_ratio, 4) if median_height_ratio is not None else None,
-        'elevation_status':  elevation_label(median_height_ratio),
-        'post_height_frac': round(post_height_frac, 4) if post_height_frac is not None else None,
-        'ankle_y':           round(ankle_y, 4) if ankle_y is not None else None,
-        'elevation_gap':     round(ankle_y - net_y, 4) if ankle_y is not None else None,
+        # Elevation retired (Section 8 item 2) -- see infer_camera_angle.
+        'height_ratio':      None,
+        'elevation_status':  'unknown',
+        'net': {
+            'width':    round(net_width, 3),
+            'center_x': round(net_center_x, 3),
+            'y':        round(net_y, 3),
+        },
         'camera_roll_deg':    round(median_roll, 1) if median_roll is not None else None,
         'camera_roll_source': 'net_keypoints' if median_roll is not None else None,
     }
+    debug.update(agg['debug'])
 
     return angle_deg, confidence, debug
 

@@ -135,11 +135,10 @@ def compare_videos(reference_path, your_path, shot_type, contact_a=None, contact
             "Couldn't confirm both videos were filmed from a similar angle — "
             'film both from a similar side/face-on position and try again.'
         )
-    if not elevation_compatible(debug_a.get('elevation_status'), debug_b.get('elevation_status')):
-        raise RuntimeError(
-            'Camera heights look different between the two videos — film both '
-            'from a similar height (see the fence-mount guide) and try again.'
-        )
+    # Elevation gate retired (Section 8 item 2): the post-base keypoints it
+    # depended on are gone from the v10 net model, so elevation_status is now
+    # always 'unknown'. Left the helper + ELEVATION_ORDER in place (harmless,
+    # imported elsewhere) but no longer gating -- the angle gate above stays.
 
     # Phase breakdown (backswing/contact/follow-through/body-rotation), same
     # as compare_swing.py computes for its top match -- here the reference

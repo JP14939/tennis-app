@@ -10,22 +10,19 @@ import { colors as theme } from '../theme';
 // state colors (ok/warn/error) shown over a live camera feed, not surface
 // colors, so they keep their own literals rather than pulling from theme.js.
 const GREEN  = theme.lime;
-const YELLOW = theme.gold;
 const RED    = theme.coral;
 const NEUTRAL = '#aaa';
 const DARK   = '#0d0d0d';
 
 const LIVE_CHECK_INTERVAL_MS = 1500;
 
-// Same ok/elevation_status branching ContactMarkingScreen's post-record
-// banner uses (calibMsg/calibWarn styling) -- extracted here so both the
-// live badge and that banner render the same signal the same way instead of
-// duplicating the logic.
+// Same ok branching ContactMarkingScreen's post-record banner uses
+// (calibMsg/calibWarn styling) -- extracted here so both the live badge and
+// that banner render the same signal the same way instead of duplicating the
+// logic. (Elevation warning retired -- backend Section 8 item 2.)
 export function calibColor(calibration) {
   if (!calibration || calibration.status !== 'done') return null;
-  const elevationWarn = calibration.elevation_status === 'possibly_elevated';
   if (calibration.ok === false) return RED;
-  if (elevationWarn) return YELLOW;
   if (calibration.ok === true) return GREEN;
   return null;
 }
