@@ -38,8 +38,12 @@ IDX = {
 }
 
 # Expected net width as a fraction of frame width at a pure front view.
-# Calibrated from broadcast tennis footage — net fills ~80% of frame when
-# the camera is head-on. Adjust if results are consistently biased.
+# Hand-set from broadcast tennis footage (~80% head-on) -- NEVER data-tuned.
+# There is no data-free way to improve it; scripts/10_net_detection/
+# calibrate_full_net_fraction.py fits it once 0c fence footage with coarse
+# known angles exists (Section 8 item 5). If it changes, that is one atomic
+# commit: VIEW_GATE_SIDE_ON_ANGLE_DEG, ball_speed.MIN_RELIABLE_ANGLE_DEG,
+# angle_label buckets, and a full pro-DB re-enrich all move with it.
 FULL_NET_FRACTION = 0.80
 
 
@@ -715,7 +719,15 @@ def detect_view_direction(frame, landmarker=None):
 # (1a-val). 'unknown' view alone does NOT fail: detect_view_direction() is
 # unreliable and the record-time picker hint is the tie-breaker.
 VIEW_GATE_SIDE_ON_ANGLE_DEG = 78.0   # >= this ~= angle_label "Side view" -- no usable court depth
-VIEW_GATE_MIN_ANGLE_CONF    = 0.25   # below this the angle estimate is noise (real clips sit ~0.3)
+# 0.45 (was 0.25): re-tuned on the Section 8 item 3 confidence distribution
+# (scripts/10_net_detection/eval_view_gate_conf.py). On net_keypoint_testset_v1
+# via the single-frame path, no-net frames cluster at 0.35 (Hough base, no
+# player) and has-net frames at >=0.85 -- 0.45 rejects ~88% of no-net while
+# keeping ~92% of has-net, and lines up with
+# compare_swing.ANGLE_FILTER_MIN_CONF (D12: keep them unified). Front / side-on
+# behind-baseline buckets are handled by the view_direction / SIDE_ON rules,
+# not this one; the 0c-footage 1a-val pass revisits the absolute number.
+VIEW_GATE_MIN_ANGLE_CONF    = 0.45
 
 # Full-length copy for the results banner / post-pick check.
 VIEW_GATE_MESSAGES = {

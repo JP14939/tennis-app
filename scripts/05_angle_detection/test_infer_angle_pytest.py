@@ -184,3 +184,104 @@ def test_view_gate_unknown_view_alone_passes():
 def test_view_gate_missing_angle_passes():
     r = evaluate_view_usable('back', None, None)
     assert r['usable'] is True
+
+
+# ---- Section 8: _angle_from_measurement / _aggregate_frame_angles ----
+
+import math as _math
+
+
+def _meas(net_width, net_center_x=0.5, player_x=None, player_vis=0.0, used_kp=True, roll=None):
+    return (net_width, net_center_x, 0.4, player_x, player_vis, None, None,
+            used_kp, None, None, None, roll)
+
+
+def test_angle_from_measurement_matches_legacy_formula():
+    # net only
+    m = _meas(0.55)
+    expect = _math.degrees(_math.acos(min(0.55 / ia.FULL_NET_FRACTION, 1.0)))
+    assert abs(ia._angle_from_measurement(m)[0] - round(expect, 1)) < 0.1
+    # net + player offset, weighted 2.0 / player_vis
+    m = _meas(0.55, net_center_x=0.5, player_x=0.7, player_vis=0.8)
+    net_a = _math.degrees(_math.acos(min(0.55 / ia.FULL_NET_FRACTION, 1.0)))
+    pl_a = _math.degrees(_math.asin(min(0.2 / 0.40, 1.0)))
+    expect = (net_a * 2.0 + pl_a * 0.8) / (2.0 + 0.8)
+    assert abs(ia._angle_from_measurement(m)[0] - round(expect, 1)) < 0.1
+
+
+def test_aggregate_drops_hough_frames_when_enough_keypoint_frames():
+    kp = [_meas(0.55, player_x=0.55, player_vis=0.9) for _ in range(3)]
+    hough = [_meas(0.95, player_x=0.55, player_vis=0.9, used_kp=False)]  # absurd wide -> ~18 deg
+    agg = ia._aggregate_frame_angles(kp + hough + [_meas(0.55, player_x=0.55, player_vis=0.9)])
+    assert agg['ok'] and agg['n_keypoint_frames'] == 4
+    # median is over the 4 keypoint frames only -> the ~0.55 angle, not pulled toward the hough one
+    kp_angle = ia._angle_from_measurement(_meas(0.55, player_x=0.55, player_vis=0.9))[0]
+    assert abs(agg['angle'] - kp_angle) < 1.0
+
+
+def test_aggregate_insufficient_keypoint_frames_flagged():
+    ms = [_meas(0.55), _meas(0.6, used_kp=False), _meas(0.62, used_kp=False),
+          _meas(0.58, used_kp=False), _meas(0.59, used_kp=False)]
+    agg = ia._aggregate_frame_angles(ms)
+    assert agg['ok'] is False and agg['reason'] == 'net_path_insufficient'
+    assert agg['angle'] is not None  # still filled for debug logging
+
+
+def test_aggregate_confidence_blends_kp_frac():
+    all_kp = ia._aggregate_frame_angles([_meas(0.55, player_x=0.55, player_vis=0.0) for _ in range(5)])
+    half_kp = ia._aggregate_frame_angles(
+        [_meas(0.55, player_x=0.55, player_vis=0.0) for _ in range(3)]
+        + [_meas(0.55, player_x=0.55, player_vis=0.0, used_kp=False) for _ in range(2)])
+    assert all_kp['confidence'] > half_kp['confidence']
+
+
+def test_aggregate_banner_false_positive_rejected():
+    ms = [_meas(0.9, used_kp=False) for _ in range(5)]
+    agg = ia._aggregate_frame_angles(ms)
+    assert agg['ok'] is False and 'banner' in agg['reason']
+
+
+def test_aggregate_median_odd_even():
+    # 5 keypoint frames with distinct widths -> median is the middle angle
+    ms = [_meas(w) for w in (0.50, 0.52, 0.54, 0.56, 0.58)]
+    agg = ia._aggregate_frame_angles(ms)
+    mid = ia._angle_from_measurement(_meas(0.54))[0]
+    assert abs(agg['angle'] - mid) < 0.6
+
+
+def test_run_net_keypoint_model_tolerates_two_keypoint_output(monkeypatch):
+    import numpy as np
+
+    class _T:
+        """minimal torch-tensor shim: indexes like an array, has .cpu().numpy()"""
+        def __init__(self, a):
+            self._a = np.asarray(a)
+        def __getitem__(self, i):
+            return _T(self._a[i])
+        @property
+        def shape(self):
+            return self._a.shape
+        def cpu(self):
+            return self
+        def numpy(self):
+            return self._a
+
+    class _KP:
+        def __init__(self):
+            self.xy = _T([[[100.0, 50.0], [500.0, 55.0]]])   # shape (1, 2, 2)
+            self.conf = _T([[0.9, 0.9]])
+
+        def __len__(self):
+            return 1
+
+    class _Res:
+        keypoints = _KP()
+
+    class _Model:
+        def predict(self, frame, **kw):
+            return [_Res()]
+
+    monkeypatch.setattr(ia, '_get_net_kp_model', lambda: _Model())
+    import numpy as np
+    out = ia.run_net_keypoint_model(np.zeros((360, 640, 3), dtype=np.uint8))
+    assert set(out) == {'net_top_left', 'net_top_right'}  # no IndexError on the missing post bases
