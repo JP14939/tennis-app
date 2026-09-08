@@ -26,8 +26,10 @@ SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '05_angle_detection'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '06_database_build'))
+sys.path.insert(0, os.path.join(SCRIPTS_DIR, '08_comparison_engine'))
 
 from infer_angle import infer_camera_angle
+from compare_swing import eligible_by_angle
 from build_pro_database import build_pose_index, extract_swing_trajectory, KEY_LANDMARKS
 from trajectory_compare import dtw_distance
 from tip_selector import score_issues
@@ -48,7 +50,6 @@ MANIFEST_PATH = r'C:\Users\jackp\tennis_app\data\04_clips\amateur\manifest.json'
 POSES_DIR = r'C:\Users\jackp\tennis_app\data\02_pose_extraction'
 SWINGS_DIR = r'C:\Users\jackp\tennis_app\data\03_swing_detection'
 DB_PATH = r'C:\Users\jackp\tennis_app\data\06_pro_database\pro_database.json'
-ANGLE_WINDOW = 20
 
 # Tracks which individual swings (not whole videos -- later runs add more
 # swings from the same videos) have already been run through this script, so
@@ -59,12 +60,8 @@ PROCESSED_PATH = r'C:\Users\jackp\tennis_app\data\08_coaching_ai\amateur_swings_
 
 def find_best_pro_match(user_trajectory, shot_type, user_angle, db_entries):
     candidates = [e for e in db_entries if e['shot_type'] == shot_type]
-    if user_angle is not None:
-        angle_filtered = [c for c in candidates
-                           if c.get('camera_angle') is not None
-                           and abs(c['camera_angle'] - user_angle) <= ANGLE_WINDOW]
-        if len(angle_filtered) >= 5:
-            candidates = angle_filtered
+    # Legacy behaviour (base window, no confidence gate) -- offline training.
+    candidates, _ = eligible_by_angle(candidates, user_angle, None, conf_aware=False)
 
     best_entry, best_dist = None, float('inf')
     for entry in candidates:

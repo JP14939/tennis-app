@@ -42,10 +42,68 @@ import clip_review_log
 SERVE_AUDIO_WINDOW_SEC = 0.8
 GROUNDSTROKE_AUDIO_WINDOW_SEC = 0.5
 
+# How far from the geometric anchor the visual refinement (find_contact_frame)
+# may look on the no-audio fallback path. Serves get a wider window than
+# find_contact_frame's 0.3s default -- the overhead-apex anchor sits a few
+# frames from contact and can be noisier on distant poses.
+SERVE_CONTACT_REFINE_WINDOW_SEC = 0.45
+
+# Camera-angle pool filter (Section 8 item 4). Canonical home for these two --
+# calibrate_similarity.py / redesign_similarity.py re-export them from here.
+ANGLE_WINDOW = 20            # +/- degrees around the user's angle
+MIN_POOL_AFTER_FILTER = 5    # never filter below this many candidates
+# Confidence gating for the angle filter. Below MIN the angle estimate is too
+# weak to filter on at all -- skip it and lean on view-direction + shot-type.
+# Between MIN and FULL the window is widened proportionally. At/above FULL the
+# base window applies unchanged. (Tuned against the pre-Section-8 confidence
+# formula; item 8 re-derives MIN once item 3's distribution settles -- likely
+# unified with infer_angle.VIEW_GATE_MIN_ANGLE_CONF.)
+ANGLE_FILTER_MIN_CONF = 0.45
+ANGLE_FILTER_FULL_CONF = 0.70
+
 DB_PATH         = os.path.join(DATA_DIR, '06_pro_database', 'pro_database.json')
 OVERLAY_DB_PATH = os.path.join(DATA_DIR, '06_pro_database', 'overlay_trajectories.json')
 PLAYER_NAMES_PATH = os.path.join(DATA_DIR, '06_pro_database', 'player_names.json')
 MODEL_PATH      = os.path.join(os.path.dirname(__file__), '..', 'pose_landmarker.task')
+
+
+def eligible_by_angle(candidates, user_angle, angle_conf, *,
+                      base_window=ANGLE_WINDOW, min_pool=MIN_POOL_AFTER_FILTER,
+                      conf_aware=True):
+    """
+    Narrow a candidate pool to pros filmed at a similar camera angle.
+
+    Returns (pool, status):
+      'no_angle'          user_angle is None -- nothing to filter on
+      'skipped_low_conf'  conf_aware and angle_conf < ANGLE_FILTER_MIN_CONF:
+                          the angle estimate is noise; the caller should lean
+                          on the view-direction + shot-type filters instead
+      'full'              filtered at base_window (conf >= FULL, or conf_aware=False)
+      'widened'           filtered at a window widened for a middling confidence
+      'too_few'           filtering would leave < min_pool -- pool returned intact
+
+    conf_aware=False reproduces the legacy behaviour exactly (base window, no
+    confidence gate) and is what the offline calibration harnesses pass.
+    """
+    if user_angle is None:
+        return candidates, 'no_angle'
+
+    window = base_window
+    status = 'full'
+    if conf_aware:
+        if angle_conf is None or angle_conf < ANGLE_FILTER_MIN_CONF:
+            return candidates, 'skipped_low_conf'
+        if angle_conf < ANGLE_FILTER_FULL_CONF:
+            t = (angle_conf - ANGLE_FILTER_MIN_CONF) / (ANGLE_FILTER_FULL_CONF - ANGLE_FILTER_MIN_CONF)
+            window = base_window * (1 + 2 * (1 - t))
+            status = 'widened'
+
+    filtered = [c for c in candidates
+                if c.get('camera_angle') is not None
+                and abs(c['camera_angle'] - user_angle) <= window]
+    if len(filtered) >= min_pool:
+        return filtered, status
+    return candidates, 'too_few'
 
 
 def eligible_match_candidates(entries, shot_type, reviewed_practice_ids=None):
@@ -403,6 +461,11 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
     # only used when the classifier is confident -- so this can only improve
     # the auto-detect, never make it worse. Fully guarded: no audio stream /
     # no model / any error -> unchanged behaviour.
+    # Which detector actually set the contact frame -- surfaced in the result
+    # JSON as `contact_source` for logs/analytics/debugging (e.g. a no-mark
+    # upload returning 'audio_onset' proves onset_classifier.pkl is live on the
+    # server). 'user' when the caller passed a manual mark.
+    contact_source = 'user' if contact_time_sec is not None else None
     audio_unconfident_sec = None  # an audio pick that was below the confidence bar
     if contact_time_sec is None:
         try:
@@ -419,6 +482,7 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
             )
             if ac and ac['confident']:
                 contact_time_sec = ac['contact_time_sec']
+                contact_source = 'audio_onset'
                 print(f"  Contact auto-detected via AUDIO onset at {contact_time_sec:.3f}s "
                       f"(confidence {ac['confidence']:.2f}, margin {ac['margin']:.2f})", file=sys.stderr)
             elif ac:
@@ -428,56 +492,46 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         except Exception as e:  # noqa: BLE001
             print(f'  [audio-contact] skipped: {e}', file=sys.stderr)
 
-    # Phase C.4 -- audioless (or audio-unconfident) fallback: the visual
-    # contact-frame student (racket/ball geometry + wrist kinematics -> a
-    # learned offset on find_contact_frame's guess). Gated on
-    # contact_frame_ml_training_log reporting the model has earned trust, so an
-    # unproven model can never push the auto-detect below today's wrist-peak
-    # baseline. Same try/except-and-carry-on philosophy as the audio block.
+    # No-audio (or audio-unconfident) fallback: the visual contact-frame
+    # refinement. `racket_tracker.find_contact_frame` (via compute_contact_
+    # evidence) tracks the racket + ball in a window around the geometric anchor
+    # and picks the ball-occlusion-gap midpoint or the closest ball-racket
+    # approach -- both far stronger contact signals than the wrist-velocity peak
+    # (~9f off) when the evidence is there. Only used when there IS real
+    # racket/ball evidence (`student_method != 'wrist_velocity_fallback'`), so
+    # this can only improve the auto-detect, never make it worse. The
+    # twice-rejected Phase C learned-offset model is deliberately NOT applied --
+    # the raw geometric pick is used directly. Same try/except-and-carry-on
+    # philosophy as the audio block.
     if contact_time_sec is None:
         try:
             from contact_evidence import compute_contact_evidence  # noqa: PLC0415
-            from train_contact_frame_model import predict_contact_offset  # noqa: PLC0415
-            import contact_frame_ml_training_log as cf_ml  # noqa: PLC0415
-            if cf_ml.stats().get('trusted'):
-                anchor_frame = auto_contact_anchor_frame(frames, fps, shot_type)
-                anchor_idx = min(range(len(frames)),
-                                 key=lambda i: abs(frames[i]['frame'] - anchor_frame))
-                ev = compute_contact_evidence(video_path, frames, fps, anchor_frame, anchor_idx,
-                                              shot_type=shot_type)
-                if ev and ev['student_method'] != 'wrist_velocity_fallback':
-                    offset, available = predict_contact_offset({
-                        'student_method': ev['student_method'],
-                        'student_confidence': ev['student_confidence'],
-                        'fps': fps, 'student_meta': ev['student_meta'],
-                        'source': 'user_submitted',
-                    })
-                    if available:
-                        corrected_sec = max(0.0, (ev['student_frame'] + offset) / fps)
-                        # Audio + visual agreeing within ~2 frames: prefer the
-                        # audio time (the sharper signal) -- the visual pick's
-                        # role here is to corroborate the sub-threshold audio.
-                        if (audio_unconfident_sec is not None
-                                and abs(corrected_sec - audio_unconfident_sec) <= 2.0 / fps):
-                            contact_time_sec = audio_unconfident_sec
-                            print(f"  Contact auto-detected via AUDIO+VISUAL agreement at "
-                                  f"{contact_time_sec:.3f}s", file=sys.stderr)
-                        else:
-                            contact_time_sec = corrected_sec
-                            print(f"  Contact auto-detected via VISUAL student at {contact_time_sec:.3f}s "
-                                  f"(offset {offset:+d}f from {ev['student_method']})", file=sys.stderr)
-            else:
-                print("  [visual-contact] skipped: model has not earned trust yet "
-                      "-- using wrist-velocity peak", file=sys.stderr)
+            anchor_frame = auto_contact_anchor_frame(frames, fps, shot_type)
+            anchor_idx = min(range(len(frames)),
+                             key=lambda i: abs(frames[i]['frame'] - anchor_frame))
+            refine_window = (SERVE_CONTACT_REFINE_WINDOW_SEC if shot_type == 'serve'
+                             else None)
+            ev = compute_contact_evidence(video_path, frames, fps, anchor_frame, anchor_idx,
+                                          search_window_sec=refine_window)
+            if ev and ev['student_method'] != 'wrist_velocity_fallback':
+                visual_sec = max(0.0, ev['student_frame'] / fps)
+                # Audio + visual agreeing within ~2 frames: prefer the audio
+                # time (the sharper signal) -- the visual pick's role here is to
+                # corroborate the sub-threshold audio.
+                if (audio_unconfident_sec is not None
+                        and abs(visual_sec - audio_unconfident_sec) <= 2.0 / fps):
+                    contact_time_sec = audio_unconfident_sec
+                    contact_source = 'audio_visual'
+                    print(f"  Contact auto-detected via AUDIO+VISUAL agreement at "
+                          f"{contact_time_sec:.3f}s", file=sys.stderr)
+                else:
+                    contact_time_sec = visual_sec
+                    contact_source = ev['student_method']
+                    print(f"  Contact auto-detected via VISUAL refinement at {contact_time_sec:.3f}s "
+                          f"({ev['student_method']}, conf {ev['student_confidence']})", file=sys.stderr)
         except Exception as e:  # noqa: BLE001
             print(f'  [visual-contact] skipped: {e}', file=sys.stderr)
 
-    # Serve auto-detect (no user mark): the win comes from the overhead-apex
-    # anchor feeding build_user_trajectory (and the audio band above). compare()
-    # never calls racket_tracker.find_contact_frame directly -- that refinement
-    # is only reached via the trust-gated visual-student block above -- so the
-    # serve window widening in racket_tracker mainly benefits eval_pro_clip_
-    # contact.py and the visual student once it earns trust.
     user_trajectory, peak_frame = build_user_trajectory(frames, fps, contact_time_sec, shot_type=shot_type)
     if not user_trajectory:
         # Same guard compare_videos.py already has for the equivalent case --
@@ -500,6 +554,14 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         # this function does not touch it at all.
     else:
         print(f'  Contact point auto-detected at frame {peak_frame} ({peak_frame/fps:.2f}s)', file=sys.stderr)
+
+    # Nothing above set a contact -- build_user_trajectory used the geometric
+    # anchor directly (serve overhead-apex, or the wrist-velocity peak).
+    if contact_source is None:
+        contact_source = ('serve_apex' if shot_type == 'serve'
+                          and serve_contact_anchor_frame(
+                              pose_by_frame_from_frames_list(frames), fps) is not None
+                          else 'wrist_peak')
 
     # A single shared landmarker for the angle/view-direction detection below
     # (both accept one for exactly this reason -- see infer_angle.py's
@@ -605,21 +667,21 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
 
     all_candidates = eligible_match_candidates(db['entries'], shot_type)
 
-    # Filter by angle if we have a user angle and the database has angle data
-    if user_angle is not None:
-        angle_filtered = [
-            c for c in all_candidates
-            if c.get('camera_angle') is not None
-            and abs(c['camera_angle'] - user_angle) <= angle_window
-        ]
-        if len(angle_filtered) >= 5:
-            candidates = angle_filtered
-            print(f'  Angle filter ±{angle_window}°: {len(candidates)}/{len(all_candidates)} {shot_type} candidates', file=sys.stderr)
-        else:
-            candidates = all_candidates
-            print(f'  Angle filter: only {len(angle_filtered)} within ±{angle_window}° — using all {len(candidates)} {shot_type} swings', file=sys.stderr)
+    # Confidence-aware angle filter (Section 8 item 4): a guessed angle no
+    # longer narrows the pool as hard as a confident one. Below
+    # ANGLE_FILTER_MIN_CONF the angle is skipped entirely and the
+    # view-direction + shot-type filters carry the load.
+    candidates, angle_filter_status = eligible_by_angle(
+        all_candidates, user_angle, angle_conf, base_window=angle_window)
+    if angle_filter_status == 'skipped_low_conf':
+        print(f'  Angle filter: SKIPPED (confidence {angle_conf} < {ANGLE_FILTER_MIN_CONF}) '
+              f'— relying on view-direction + shot-type, all {len(candidates)} {shot_type} swings', file=sys.stderr)
+    elif angle_filter_status in ('full', 'widened'):
+        print(f'  Angle filter ({angle_filter_status}) around {user_angle}°: '
+              f'{len(candidates)}/{len(all_candidates)} {shot_type} candidates', file=sys.stderr)
+    elif angle_filter_status == 'too_few':
+        print(f'  Angle filter: too few pros within window — using all {len(candidates)} {shot_type} swings', file=sys.stderr)
     else:
-        candidates = all_candidates
         print(f'  No angle data — comparing against all {len(candidates)} {shot_type} swings', file=sys.stderr)
 
     # Filter by view direction on top of the angle filter, same
@@ -790,7 +852,9 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         'user_camera_roll_deg': angle_debug.get('camera_roll_deg') if isinstance(angle_debug, dict) else None,
         'roll_corrected': user_roll is not None,
         'view_gate': view_gate,
+        'angle_filter': angle_filter_status,
         'contact_time_sec': round(peak_frame / fps, 3),
+        'contact_source': contact_source,
         'ball_speed_kmh': ball_speed_kmh,
         'user_view_direction': user_view_direction,
         'user_overlay_trajectory': build_overlay_trajectory(frames),
