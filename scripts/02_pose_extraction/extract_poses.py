@@ -89,6 +89,22 @@ def extract_poses(video_path, output_path, sample_every=3, start_frame=0, end_fr
                         for i, lm in enumerate(result.pose_landmarks[0])
                     ]
 
+                # Metric 3D landmarks (meters, hip-origin, image-aligned axes) --
+                # additive, for viewpoint_normalization.facing_azimuth(). Nothing
+                # reads this until yaw normalization is wired; existing pose JSONs
+                # simply won't have the key (handled downstream).
+                if result.pose_world_landmarks:
+                    frame_data["world_landmarks"] = [
+                        {
+                            "name": LANDMARK_NAMES[i],
+                            "x": round(lm.x, 4),
+                            "y": round(lm.y, 4),
+                            "z": round(lm.z, 4),
+                            "visibility": round(lm.visibility, 4)
+                        }
+                        for i, lm in enumerate(result.pose_world_landmarks[0])
+                    ]
+
                 results.append(frame_data)
                 processed += 1
 

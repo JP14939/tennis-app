@@ -309,7 +309,14 @@ def extract_user_poses(video_path):
                 if result.pose_landmarks:
                     lm_dict = {LANDMARK_NAMES[i]: {'name': LANDMARK_NAMES[i], 'x': lm.x, 'y': lm.y, 'z': lm.z, 'visibility': lm.visibility}
                                for i, lm in enumerate(result.pose_landmarks[0])}
-                frames.append({'frame': idx, 'timestamp': round(idx / fps, 3), 'landmarks': lm_dict})
+                # Metric 3D landmarks -- additive, consumed by viewpoint_normalization
+                # for yaw (camera-azimuth) correction. Same shape as lm_dict.
+                world_dict = None
+                if result.pose_world_landmarks:
+                    world_dict = {LANDMARK_NAMES[i]: {'name': LANDMARK_NAMES[i], 'x': lm.x, 'y': lm.y, 'z': lm.z, 'visibility': lm.visibility}
+                                  for i, lm in enumerate(result.pose_world_landmarks[0])}
+                frames.append({'frame': idx, 'timestamp': round(idx / fps, 3),
+                               'landmarks': lm_dict, 'world_landmarks': world_dict})
             idx += 1
 
     cap.release()
