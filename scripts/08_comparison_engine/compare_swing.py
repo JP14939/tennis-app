@@ -26,7 +26,9 @@ sys.path.insert(0, os.path.join(SCRIPTS_DIR, '09_coaching_ai'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '00_utils'))
 from infer_angle import infer_camera_angle, angle_label, detect_view_direction, extract_frame, create_landmarker, usable_roll, evaluate_view_usable
 from build_pro_database import normalise_landmarks, trajectory_scale, PRE_SEC, POST_SEC, MIN_TRAJECTORY_POINTS
-from trajectory_extraction import mirror_trajectory, rotate_trajectory
+from trajectory_extraction import (
+    mirror_trajectory, rotate_trajectory, extract_trajectory_from_index,
+)
 from trajectory_compare import dtw_distance
 from track_racket_in_clip import track_racket_body, avg_racket_body_distance, track_racket_path
 from ball_speed import estimate_net_crossing_ball_speed_kmh
@@ -378,7 +380,15 @@ def auto_contact_anchor_frame(frames, fps, shot_type):
     return frames[find_peak_wrist_frame(frames, fps)]['frame']
 
 
-def build_user_trajectory(frames, fps, contact_time_sec=None, shot_type=None):
+# Yaw (camera-azimuth) normalization of the user's swing -- see
+# scripts/06_database_build/viewpoint_normalization.py and the yaw-norm plan.
+# OFF by default in Phase 1: needs the calibration-footage validation (Phase 2)
+# before it's trusted. RALLYMAX_YAW_NORM=1 turns it on.
+YAW_NORM_ENABLED = os.environ.get('RALLYMAX_YAW_NORM') == '1'
+
+
+def build_user_trajectory(frames, fps, contact_time_sec=None, shot_type=None,
+                          yaw_enabled=None, return_meta=False):
     """
     Sample every available pose frame (native ~15-30fps, since
     extract_user_poses keeps every 3rd frame) from PRE_SEC before to POST_SEC
@@ -393,9 +403,21 @@ def build_user_trajectory(frames, fps, contact_time_sec=None, shot_type=None):
     shot_type: routes the auto-detect anchor — 'serve' uses the overhead-apex
     anchor, everything else the wrist-velocity peak (see auto_contact_anchor_frame).
 
-    Returns (trajectory, contact_frame_num).
+    yaw_enabled: viewpoint (camera-azimuth) normalization. None -> module
+    default (YAW_NORM_ENABLED / RALLYMAX_YAW_NORM). Low-confidence estimate or
+    no world landmarks -> identity, byte-identical to the pre-yaw trajectory.
+
+    Returns (trajectory, contact_frame_num) by default, or
+    (trajectory, contact_frame_num, meta) when return_meta=True -- meta is
+    {'yaw_deg': float|None, 'yaw_n': int}.
     """
+    if yaw_enabled is None:
+        yaw_enabled = YAW_NORM_ENABLED
+
     frame_index = {f['frame']: f['landmarks'] for f in frames if f['landmarks']}
+    # extract_user_poses stores landmarks as {name: {...}} dicts already (not the
+    # list form build_world_pose_index parses), so index them the same way.
+    world_index = {f['frame']: f['world_landmarks'] for f in frames if f.get('world_landmarks')}
 
     if contact_time_sec is not None:
         target_frame = round(contact_time_sec * fps)
@@ -403,31 +425,13 @@ def build_user_trajectory(frames, fps, contact_time_sec=None, shot_type=None):
     else:
         contact_frame_num = auto_contact_anchor_frame(frames, fps, shot_type)
 
-    lo = contact_frame_num - int(PRE_SEC * fps)
-    hi = contact_frame_num + int(POST_SEC * fps)
-
-    window_frames = [frame_index[f] for f in range(lo, hi + 1) if f in frame_index]
-    scale = trajectory_scale(window_frames)
-    if scale is None:
-        return [], contact_frame_num
-
-    trajectory = []
-    for f in sorted(fr for fr in frame_index if lo <= fr <= hi):
-        norm = normalise_landmarks(frame_index[f], scale)
-        if norm is not None:
-            trajectory.append({'t': round((f - contact_frame_num) / fps, 4), 'landmarks': norm})
-
-    # Mirrors extract_swing_trajectory's guard in build_pro_database.py --
-    # without it, a near-empty (1-4 point) trajectory sails past the `if not
-    # user_trajectory` check below (it's non-empty, just barely) and DTW
-    # against a full pro swing degrades into little more than the average
-    # per-frame distance from one static pose, silently returning a
-    # meaningless similarity score instead of the clear "couldn't extract a
-    # usable pose trajectory" error this same failure mode already produces
-    # when it's total rather than near-total.
-    if len(trajectory) < MIN_TRAJECTORY_POINTS:
-        return [], contact_frame_num
-
+    # The too-few-points guard lives in extract_trajectory_from_index (returns
+    # [] the same way the old inline code did) -- see the comment there.
+    trajectory, meta = extract_trajectory_from_index(
+        frame_index, fps, contact_frame_num,
+        world_pose_index=world_index, yaw_enabled=yaw_enabled)
+    if return_meta:
+        return trajectory, contact_frame_num, meta
     return trajectory, contact_frame_num
 
 
@@ -539,7 +543,14 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         except Exception as e:  # noqa: BLE001
             print(f'  [visual-contact] skipped: {e}', file=sys.stderr)
 
-    user_trajectory, peak_frame = build_user_trajectory(frames, fps, contact_time_sec, shot_type=shot_type)
+    user_trajectory, peak_frame, yaw_meta = build_user_trajectory(
+        frames, fps, contact_time_sec, shot_type=shot_type, return_meta=True)
+    if yaw_meta.get('yaw_deg') is not None:
+        print(f"  Yaw-normalised user trajectory: camera azimuth "
+              f"{yaw_meta['yaw_deg']:.1f}deg (from {yaw_meta['yaw_n']} lead-in frames)", file=sys.stderr)
+    elif YAW_NORM_ENABLED:
+        print(f"  Yaw normalization: skipped (no confident azimuth from "
+              f"{yaw_meta['yaw_n']} lead-in frames) -- trajectory unchanged", file=sys.stderr)
     if not user_trajectory:
         # Same guard compare_videos.py already has for the equivalent case --
         # without it, DTW against every pro candidate returns inf, similarity
@@ -858,6 +869,8 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         'angle_conf':   angle_conf if user_angle is not None else None,
         'user_camera_roll_deg': angle_debug.get('camera_roll_deg') if isinstance(angle_debug, dict) else None,
         'roll_corrected': user_roll is not None,
+        'user_yaw_deg': yaw_meta.get('yaw_deg'),
+        'yaw_corrected': yaw_meta.get('yaw_deg') is not None,
         'view_gate': view_gate,
         'angle_filter': angle_filter_status,
         'contact_time_sec': round(peak_frame / fps, 3),

@@ -14,7 +14,14 @@ test_build_pro_database_pytest.py) -- that continues to work unchanged
 since Python re-exports names imported into a module's own namespace.
 """
 import math
+import os
 import statistics
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from viewpoint_normalization import (  # noqa: E402
+    yaw_normalise_window, rotate_world_landmarks, project_canonical_2d,
+)
 
 # Upper-body landmarks used for comparison (ignore legs)
 KEY_LANDMARKS = [
@@ -33,6 +40,18 @@ def build_pose_index(frames):
     for f in frames:
         if f['landmarks']:
             index[f['frame']] = {lm['name']: lm for lm in f['landmarks']}
+    return index
+
+
+def build_world_pose_index(frames):
+    """Like build_pose_index but off f['world_landmarks'] (MediaPipe metric 3D).
+    Returns {} for pose files predating world-landmark capture -- every yaw
+    consumer treats an empty index as "no yaw estimate available"."""
+    index = {}
+    for f in frames:
+        wl = f.get('world_landmarks')
+        if wl:
+            index[f['frame']] = {lm['name']: lm for lm in wl}
     return index
 
 
@@ -124,6 +143,10 @@ def extract_swing_trajectory(swing, pose_index, fps):
 
     Returns a list of {'t': seconds relative to contact, 'landmarks': {...}},
     or None if too few usable frames are found.
+
+    Pro-side builder -- deliberately does NOT yaw-normalise (the pro database
+    trajectories are left as they are; see the yaw-norm plan). The user side
+    goes through extract_trajectory_from_index() instead.
     """
     peak = swing['peak_frame']
     lo = peak - int(PRE_SEC * fps)
@@ -143,6 +166,66 @@ def extract_swing_trajectory(swing, pose_index, fps):
     if len(trajectory) < MIN_TRAJECTORY_POINTS:
         return None
     return trajectory
+
+
+def extract_trajectory_from_index(pose_index, fps, contact_frame, *,
+                                  world_pose_index=None, yaw_enabled=False):
+    """
+    Window-sampling core for the USER side (compare_swing.build_user_trajectory).
+
+    Same PRE_SEC..POST_SEC sampling + single-median-scale normalisation as
+    extract_swing_trajectory, but optionally yaw-normalised first: when
+    `world_pose_index` is given and `yaw_enabled`, the camera azimuth is read
+    from the lead-in frames (viewpoint_normalization.yaw_normalise_window) and
+    rotated out about the vertical axis before scale/normalise. Low-confidence
+    estimate -> identity, i.e. byte-identical to `yaw_enabled=False`.
+
+    Returns (trajectory, meta) where trajectory is [] on the same too-few-frames
+    guard as extract_swing_trajectory's None, and meta is
+    {'yaw_deg': float|None, 'yaw_n': int}.
+    """
+    lo = contact_frame - int(PRE_SEC * fps)
+    hi = contact_frame + int(POST_SEC * fps)
+    frame_nums = sorted(f for f in pose_index if lo <= f <= hi)
+
+    yaw_deg, yaw_samples = None, []
+    lm_by_frame = {f: pose_index[f] for f in frame_nums}
+
+    if yaw_enabled and world_pose_index:
+        wt = [((f - contact_frame) / fps, world_pose_index[f])
+              for f in frame_nums if f in world_pose_index]
+        yaw_deg, yaw_samples = yaw_normalise_window(wt)
+        if yaw_deg is not None:
+            rotated = {}
+            for f in frame_nums:
+                w = world_pose_index.get(f)
+                if w is None:
+                    continue
+                rotated[f] = project_canonical_2d(rotate_world_landmarks(w, yaw_deg),
+                                                  pose_index[f])
+            if len(rotated) >= MIN_TRAJECTORY_POINTS:
+                lm_by_frame = rotated
+                frame_nums = sorted(rotated)
+            else:
+                # not enough world-landmark frames to build the swing -- fall
+                # back to the raw image trajectory rather than a stub.
+                yaw_deg = None
+
+    meta = {'yaw_deg': yaw_deg, 'yaw_n': len(yaw_samples)}
+
+    scale = trajectory_scale([lm_by_frame[f] for f in frame_nums])
+    if scale is None:
+        return [], meta
+
+    trajectory = []
+    for f in frame_nums:
+        norm = normalise_landmarks(lm_by_frame[f], scale)
+        if norm is not None:
+            trajectory.append({'t': round((f - contact_frame) / fps, 4), 'landmarks': norm})
+
+    if len(trajectory) < MIN_TRAJECTORY_POINTS:
+        return [], meta
+    return trajectory, meta
 
 
 def build_swing_overlay(pose_index, fps, peak_frame, clip_start_frame):

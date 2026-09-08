@@ -16,7 +16,9 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from compare_swing import find_peak_wrist_frame, eligible_match_candidates  # noqa: E402
+from compare_swing import (  # noqa: E402
+    find_peak_wrist_frame, eligible_match_candidates, build_user_trajectory,
+)
 
 
 def _landmark(x, y, visibility):
@@ -115,3 +117,46 @@ def test_filters_to_requested_shot_type():
     entries = [_entry('forehand_0001', 'forehand'), _entry('backhand_0001', 'backhand')]
     result = eligible_match_candidates(entries, 'forehand', reviewed_practice_ids=set())
     assert [e['id'] for e in result] == ['forehand_0001']
+
+
+# ── yaw normalization: back-compat (Phase 1, flag OFF) ──────────────────────
+
+def _swing_frames(n=40, fps=30):
+    """A crude synthetic swing: shoulders/hips/wrist drifting frame to frame,
+    every 3rd frame kept (matching extract_user_poses). No world_landmarks."""
+    frames = []
+    for i in range(0, n * 3, 3):
+        p = i / (n * 3)
+        lm = {
+            'left_shoulder':  _landmark(0.45, 0.40, 1.0),
+            'right_shoulder': _landmark(0.55, 0.40, 1.0),
+            'left_hip':       _landmark(0.46, 0.55, 1.0),
+            'right_hip':      _landmark(0.54, 0.55, 1.0),
+            'right_wrist':    _landmark(0.50 + 0.25 * p, 0.45 - 0.1 * p, 1.0),
+            'left_wrist':     _landmark(0.48, 0.52, 1.0),
+            'nose':           _landmark(0.50, 0.30, 1.0),
+            'left_elbow':     _landmark(0.47, 0.48, 1.0),
+            'right_elbow':    _landmark(0.53, 0.48, 1.0),
+        }
+        frames.append({'frame': i, 'timestamp': i / fps, 'landmarks': lm})
+    return frames
+
+
+def test_yaw_off_is_unchanged_and_meta_none():
+    frames = _swing_frames()
+    traj_a, cf_a = build_user_trajectory(frames, 30, contact_time_sec=0.6, shot_type='forehand')
+    traj_b, cf_b, meta = build_user_trajectory(
+        frames, 30, contact_time_sec=0.6, shot_type='forehand',
+        yaw_enabled=False, return_meta=True)
+    assert traj_a == traj_b and cf_a == cf_b
+    assert meta['yaw_deg'] is None
+
+
+def test_yaw_on_without_world_landmarks_is_identity():
+    frames = _swing_frames()  # no 'world_landmarks' key at all
+    off, _ = build_user_trajectory(frames, 30, contact_time_sec=0.6, shot_type='forehand', yaw_enabled=False)
+    on, _, meta = build_user_trajectory(
+        frames, 30, contact_time_sec=0.6, shot_type='forehand',
+        yaw_enabled=True, return_meta=True)
+    assert on == off
+    assert meta['yaw_deg'] is None
