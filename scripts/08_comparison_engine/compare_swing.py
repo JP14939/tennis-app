@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.join(SCRIPTS_DIR, '06_database_build'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '07_ball_racket_tracking'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '09_coaching_ai'))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '00_utils'))
-from infer_angle import infer_camera_angle, angle_label, detect_view_direction, extract_frame, create_landmarker, usable_roll
+from infer_angle import infer_camera_angle, angle_label, detect_view_direction, extract_frame, create_landmarker, usable_roll, evaluate_view_usable
 from build_pro_database import normalise_landmarks, trajectory_scale, PRE_SEC, POST_SEC, MIN_TRAJECTORY_POINTS
 from trajectory_extraction import mirror_trajectory, rotate_trajectory
 from trajectory_compare import dtw_distance
@@ -558,6 +558,21 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
     else:
         print(f'  View direction: {user_view_direction}', file=sys.stderr)
 
+    # Behind-the-baseline view gate (roadmap 1a). v1 only supports the
+    # behind-baseline view; without this an unsupported view (filmed from the
+    # net, or wildly side-on) is silently scored against the whole pro pool.
+    # Advisory by default -- the match still runs and `view_gate` rides along
+    # in the result for the frontend to warn on. Set RALLYMAX_ENFORCE_VIEW_GATE=1
+    # (once VIEW_GATE_* is tuned on labelled footage, 1a-val) to hard-reject
+    # instead: the RuntimeError surfaces via analyse.js's nonzero_exit branch.
+    view_gate = evaluate_view_usable(user_view_direction, user_angle, angle_conf)
+    if not view_gate['usable']:
+        print(f'  View gate: NOT USABLE ({view_gate["reason"]})', file=sys.stderr)
+        if os.environ.get('RALLYMAX_ENFORCE_VIEW_GATE') == '1':
+            raise RuntimeError(view_gate['message'])
+    else:
+        print('  View gate: ok', file=sys.stderr)
+
     # Ball speed at the net crossing -- see ball_speed.py's module docstring
     # for why "at the net" rather than off the racket at contact, and why a
     # low/unknown camera angle just silently disables the stat rather than
@@ -774,6 +789,7 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         'angle_conf':   angle_conf if user_angle is not None else None,
         'user_camera_roll_deg': angle_debug.get('camera_roll_deg') if isinstance(angle_debug, dict) else None,
         'roll_corrected': user_roll is not None,
+        'view_gate': view_gate,
         'contact_time_sec': round(peak_frame / fps, 3),
         'ball_speed_kmh': ball_speed_kmh,
         'user_view_direction': user_view_direction,

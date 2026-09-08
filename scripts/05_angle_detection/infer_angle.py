@@ -688,6 +688,55 @@ def detect_view_direction(frame, landmarker=None):
     return 'unknown'
 
 
+# --- Behind-the-baseline view gate (roadmap 1a) --------------------------------
+# A single "is this a usable behind-baseline setup?" verdict, computed the same
+# way for a finished upload (compare_swing.py) and a live snapshot
+# (check_camera_setup_frame). v1 only supports the behind-baseline view; today
+# an unsupported view is silently scored against the whole pro pool. Advisory
+# for now (compare_swing keeps matching) -- promoted to a hard reject via
+# RALLYMAX_ENFORCE_VIEW_GATE once VIEW_GATE_* is tuned on labelled footage
+# (1a-val). 'unknown' view alone does NOT fail: detect_view_direction() is
+# unreliable and the record-time picker hint is the tie-breaker.
+VIEW_GATE_SIDE_ON_ANGLE_DEG = 78.0   # >= this ~= angle_label "Side view" -- no usable court depth
+VIEW_GATE_MIN_ANGLE_CONF    = 0.25   # below this the angle estimate is noise (real clips sit ~0.3)
+
+# Full-length copy for the results banner / post-pick check.
+VIEW_GATE_MESSAGES = {
+    'front_view':       'This looks filmed from the net. Stand behind the baseline fence so the camera sees your back.',
+    'side_on':          'This looks filmed side-on. Move around behind the baseline so the camera looks down the court.',
+    'angle_unreliable': "We couldn't read the court angle clearly -- check the fence-mount guide and try again.",
+}
+# Shorter copy for the live positioning badge (tight UI), same signal.
+VIEW_GATE_LIVE_MESSAGES = {
+    'front_view':       'Filmed from the net -- move behind the baseline fence.',
+    'side_on':          'Too side-on -- move behind the baseline.',
+    'angle_unreliable': "Can't read the court angle -- see the fence-mount guide.",
+}
+
+
+def evaluate_view_usable(view_direction, angle_deg, angle_conf):
+    """
+    Decide whether a camera setup is a usable behind-the-baseline view.
+
+    Returns {'usable': bool, 'reason': str|None, 'severity': 'ok'|'warn',
+             'message': str|None} where reason is one of None, 'front_view',
+             'side_on', 'angle_unreliable'. First failing rule wins.
+    """
+    reason = None
+    if view_direction == 'front':
+        reason = 'front_view'
+    elif angle_deg is not None and angle_deg >= VIEW_GATE_SIDE_ON_ANGLE_DEG:
+        reason = 'side_on'
+    elif (angle_deg is not None and angle_conf is not None
+          and angle_conf < VIEW_GATE_MIN_ANGLE_CONF):
+        reason = 'angle_unreliable'
+
+    if reason is None:
+        return {'usable': True, 'reason': None, 'severity': 'ok', 'message': None}
+    return {'usable': False, 'reason': reason, 'severity': 'warn',
+            'message': VIEW_GATE_MESSAGES[reason]}
+
+
 # Mirrors check_camera_setup.py's ELEVATION_MESSAGES, but shorter -- meant for
 # a small live overlay badge during camera positioning, not a full results
 # banner. Kept separate/duplicated deliberately: same signal, different
@@ -751,18 +800,38 @@ def check_camera_setup_frame(frame, landmarker=None):
     elevation_status = elevation_label(height_ratio)
     framing_status = framing_label(stance_width_ratio, shoulder_tilt_deg)
 
+    # Behind-the-baseline view gate -- same verdict compare_swing.py applies to
+    # a finished upload, so the live badge warns about a wrong-side setup
+    # before the user records rather than after they get their result.
+    try:
+        view_direction = detect_view_direction(frame, landmarker=landmarker)
+    except Exception:
+        view_direction = 'unknown'
+    view_gate = evaluate_view_usable(view_direction, angle, confidence)
+
     if confidence < LIVE_MIN_CONFIDENCE:
         return {
             'ok': False, 'angle': angle, 'confidence': confidence,
             'height_ratio': height_ratio, 'elevation_status': elevation_status,
             'framing_status': framing_status,
+            'view_direction': view_direction, 'view_reason': view_gate['reason'],
             'message': f'Uncertain ({angle_label(angle)}, low confidence).',
+        }
+
+    if not view_gate['usable']:
+        return {
+            'ok': False, 'angle': angle, 'confidence': confidence,
+            'height_ratio': height_ratio, 'elevation_status': elevation_status,
+            'framing_status': framing_status,
+            'view_direction': view_direction, 'view_reason': view_gate['reason'],
+            'message': VIEW_GATE_LIVE_MESSAGES[view_gate['reason']],
         }
 
     return {
         'ok': True, 'angle': angle, 'confidence': confidence,
         'height_ratio': height_ratio, 'elevation_status': elevation_status,
         'framing_status': framing_status,
+        'view_direction': view_direction, 'view_reason': None,
         'message': (
             f'{angle_label(angle)}. {LIVE_ELEVATION_MESSAGES.get(elevation_status, LIVE_ELEVATION_MESSAGES["unknown"])}'
             f'{LIVE_FRAMING_MESSAGES.get(framing_status, "")}'
