@@ -101,8 +101,15 @@ def extract_frame(video_path, frame_number):
 
 # ── Net detection ─────────────────────────────────────────────────────────────
 
-NET_KEYPOINT_MODEL_PATH = os.path.join(DATA_DIR, '10_net_detection', 'yolo_pose_run_v4', 'weights', 'best.pt')
-NET_KEYPOINT_CONF_MIN = 0.4
+# v10 (2026-09-08): 2-keypoint (net_top_left/right only, no post bases),
+# retrained with amateur data. 87% test recall / 59% held-out amateur vs v4's
+# 21% on amateur. A/B revert to v4 is this one path + NET_KEYPOINT_NAMES below.
+NET_KEYPOINT_MODEL_PATH = os.path.join(DATA_DIR, '10_net_detection', 'yolo_pose_run_v10', 'weights', 'best.pt')
+NET_KEYPOINT_IMGSZ = 640  # matches yolo_pose_run_v10/args.yaml -- passed explicitly so predict() doesn't guess
+# 0.5 (was 0.4 for v4): v10 is ~8% FP on non-tennis footage vs v4's 0%. The
+# lone-keypoint FP is further gated downstream by MIN_CONFIDENCE requiring a
+# corroborating player pose; residual FP is noted for a v11 retrain.
+NET_KEYPOINT_CONF_MIN = 0.5
 _net_kp_model = None
 
 
@@ -114,7 +121,10 @@ def _get_net_kp_model():
     return _net_kp_model
 
 
-NET_KEYPOINT_NAMES = ['net_top_left', 'net_top_right', 'left_post_base', 'right_post_base']
+# v10 is 2-keypoint. The two post-base names are kept in the list (commented)
+# so an A/B revert to the 4-kpt v4 checkpoint is a one-line change; the loop in
+# run_net_keypoint_model slices to whatever the loaded checkpoint actually emits.
+NET_KEYPOINT_NAMES = ['net_top_left', 'net_top_right']  # + 'left_post_base', 'right_post_base' for v4
 
 
 def run_net_keypoint_model(frame):
@@ -128,11 +138,13 @@ def run_net_keypoint_model(frame):
     Returns a dict of whichever of NET_KEYPOINT_NAMES were detected with
     confidence >= NET_KEYPOINT_CONF_MIN, each a (x, y) normalised [0, 1]
     tuple. Missing points (occluded/not visible) are simply absent from the
-    dict -- callers must check membership, not assume all 4 keys exist.
+    dict -- callers must check membership, not assume every key exists. The
+    loop slices NET_KEYPOINT_NAMES to the checkpoint's actual keypoint count,
+    so a 2-kpt (v10) or 4-kpt (v4) model both work unchanged.
     """
     h, w = frame.shape[:2]
     model = _get_net_kp_model()
-    results = model.predict(frame, verbose=False)
+    results = model.predict(frame, verbose=False, imgsz=NET_KEYPOINT_IMGSZ)
     if len(results[0].keypoints) == 0 or results[0].keypoints.xy.shape[1] == 0:
         return {}
 
@@ -140,7 +152,7 @@ def run_net_keypoint_model(frame):
     confs = results[0].keypoints.conf[0].cpu().numpy() if results[0].keypoints.conf is not None else None
 
     out = {}
-    for i, name in enumerate(NET_KEYPOINT_NAMES):
+    for i, name in enumerate(NET_KEYPOINT_NAMES[:kpts.shape[0]]):
         x, y = kpts[i]
         if x == 0 and y == 0:
             continue
