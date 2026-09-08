@@ -73,6 +73,29 @@ def _collect_clips(source, shot, n, seed):
     return pool[:n]
 
 
+def _filmstrip(path, n=6, strip_w=900):
+    """A horizontal tile of n raw frames across the clip -- shows the footage
+    and the swing motion without embedding video."""
+    cap = cv2.VideoCapture(path)
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if total <= 0:
+        cap.release()
+        return None
+    idxs = [int(total * f) for f in [i / (n - 1) for i in range(n)]]
+    tiles = []
+    for idx in idxs:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, min(idx, total - 1))
+        ok, fr = cap.read()
+        if ok and fr is not None:
+            tiles.append(fr)
+    cap.release()
+    if not tiles:
+        return None
+    tw = strip_w // len(tiles)
+    th = int(tiles[0].shape[0] * tw / tiles[0].shape[1])
+    return cv2.hconcat([cv2.resize(t, (tw, th)) for t in tiles])
+
+
 def _draw(frame, kp, angle, conf, debug):
     h, w = frame.shape[:2]
     if w > 960:  # keep the gallery / embedded HTML a sane size
@@ -146,16 +169,25 @@ def main():
             frame = None
 
         img_name = f'{i:03d}_{src}.jpg'
+        strip_name = f'{i:03d}_{src}_strip.jpg'
         if frame is not None:
             kp = run_net_keypoint_model(frame)
             cv2.imwrite(os.path.join(out_dir, img_name),
                         _draw(frame, kp, angle, conf, debug))
         else:
             img_name = None
+        strip = _filmstrip(path)
+        if strip is not None:
+            cv2.imwrite(os.path.join(out_dir, strip_name), strip,
+                        [cv2.IMWRITE_JPEG_QUALITY, 70])
+        else:
+            strip_name = None
 
         rows.append({
             'i': i, 'source': src, 'clip': os.path.relpath(path, CLIPS_DIR),
+            'clip_abs': path,
             'image': img_name,
+            'strip': strip_name,
             'pred_angle': angle, 'pred_label': angle_label(angle),
             'confidence': conf,
             'method': debug.get('net_detection_method') if isinstance(debug, dict) else str(debug),
@@ -173,25 +205,37 @@ def main():
 
     _write_html(out_dir, run, rows, 'index_linked.html', embed=False)
     _write_html(out_dir, run, rows, 'index.html', embed=True)  # self-contained, portable
+    size_mb = os.path.getsize(os.path.join(out_dir, 'index.html')) / 1e6
     print(f'\n{len(rows)} clips -> {out_dir}')
-    print(f'open {os.path.join(out_dir, "index.html")}  (self-contained)')
+    print(f'open {os.path.join(out_dir, "index.html")}  (self-contained, {size_mb:.1f} MB)')
+    if size_mb > 20:
+        print('  (large -- use index_linked.html locally, or lower --n, for a lighter file)')
+    print(f'or  {os.path.join(out_dir, "index_linked.html")}  (references clips in place, local only)')
 
 
 def _write_html(out_dir, run, rows, fname='index.html', embed=False):
+    def _src(name):
+        p = os.path.join(out_dir, name)
+        if embed:
+            with open(p, 'rb') as fh:
+                return 'data:image/jpeg;base64,' + base64.b64encode(fh.read()).decode()
+        return name
+
     cards = []
     for r in rows:
-        if r['image'] and embed:
-            with open(os.path.join(out_dir, r['image']), 'rb') as fh:
-                b64 = base64.b64encode(fh.read()).decode()
-            img = f'<img src="data:image/jpeg;base64,{b64}" style="width:100%;border-radius:6px">'
-        elif r['image']:
-            img = f'<img src="{r["image"]}" style="width:100%;border-radius:6px">'
-        else:
-            img = '<div>(no frame)</div>'
+        img = (f'<img src="{_src(r["image"])}" style="width:100%;border-radius:6px">'
+               if r['image'] else '<div>(no frame)</div>')
+        strip = (f'<img src="{_src(r["strip"])}" style="width:100%;border-radius:6px">'
+                 if r.get('strip') else '')
+        rel_clip = os.path.relpath(r['clip_abs'], out_dir).replace(os.sep, '/')
+
         stored = f' &nbsp; stored-pro: {r["stored_pro_angle"]}' if r['stored_pro_angle'] is not None else ''
         cards.append(f"""
         <div style="border:1px solid #ccc;border-radius:8px;padding:10px;background:#fff">
           {img}
+          <div style="font:11px system-ui;color:#999;margin:2px 0 6px">detected net (green) + corners (orange) + prediction</div>
+          {strip}
+          <div style="font:11px system-ui;color:#999;margin-top:2px">the clip, {6} frames start→end &nbsp;·&nbsp; <a href="{rel_clip}">open full clip</a></div>
           <div style="font:13px system-ui;margin-top:6px">
             <b>#{r['i']} · {r['source']}</b> &nbsp; <span style="color:#555">{r['clip']}</span><br>
             <b style="font-size:15px">{r['pred_angle']}° → {r['pred_label']}</b> &nbsp; conf {r['confidence']}{stored}<br>
@@ -202,10 +246,12 @@ def _write_html(out_dir, run, rows, fname='index.html', embed=False):
     html = f"""<!doctype html><meta charset=utf-8><title>angle review · {run}</title>
     <body style="margin:20px;background:#f4f4f4;font:14px system-ui">
     <h2>Camera-angle review — {run}</h2>
-    <p>{len(rows)} clips. Green line = detected net top cord, orange dots = corners.
-    Eyeball whether the printed angle/label matches what you see. Record verdicts in
-    <code>scores.json</code>.</p>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px">
+    <p>{len(rows)} clips. Top image: a mid-clip frame with the detected net top cord
+    (green) + corners (orange) and the predicted angle / label / confidence. Below it:
+    a 6-frame start→end filmstrip of the actual clip (and a link to the full video,
+    which opens when this file sits next to the clips). Eyeball whether the call
+    matches the footage; record verdicts in <code>scores.json</code>.</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:14px">
     {''.join(cards)}
     </div></body>"""
     with open(os.path.join(out_dir, fname), 'w', encoding='utf-8') as f:
