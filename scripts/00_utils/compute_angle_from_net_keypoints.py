@@ -16,7 +16,14 @@ ones), the same way FULL_NET_FRACTION itself was originally calibrated.
 Usage:
   python compute_angle_from_net_keypoints.py labels   # sanity-check against hand labels
   python compute_angle_from_net_keypoints.py model <video_path>  # run trained model on a video
+  python compute_angle_from_net_keypoints.py angle-error --labels <testset_labels.json>
+      # per-frame |horizontal_angle(GT corners) - horizontal_angle(v10 corners)|,
+      # median / p90 overall and by predicted angle_label bucket. Isolates the
+      # corner-localisation error's contribution to the angle from the
+      # FULL_NET_FRACTION calibration error (the constant is the same on both
+      # sides of the subtraction). Target: median <= 5 deg, p90 <= 12 deg.
 """
+import argparse
 import json
 import math
 import os
@@ -24,10 +31,13 @@ import sys
 
 SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '05_angle_detection'))
-from infer_angle import FULL_NET_FRACTION
+from infer_angle import (
+    FULL_NET_FRACTION, NET_KEYPOINT_IMGSZ, NET_KEYPOINT_NAMES, angle_label,
+)
 
 LABELS_PATH = r'C:\Users\jackp\tennis_app\data\10_net_detection\net_geometry_labels_v2.json'
-MODEL_PATH = r'C:\Users\jackp\tennis_app\data\10_net_detection\yolo_pose_run_v2\weights\best.pt'
+MODEL_PATH = r'C:\Users\jackp\tennis_app\data\10_net_detection\yolo_pose_run_v10\weights\best.pt'
+TESTSET_LABELS_PATH = r'C:\Users\jackp\tennis_app\data\10_net_detection\net_keypoint_testset_v1\net_keypoint_testset_v1_labels.json'
 
 # Frame files whose source is one of the 2 known-elevated real videos --
 # everything else in the labeled set comes from pro source footage.
@@ -87,11 +97,33 @@ def from_labels():
         print(f'\nElevated group height-ratio is {gap:.1f}% {"lower" if gap > 0 else "higher"} than pro mean.')
 
 
+_MODEL = None
+
+
+def _get_model():
+    global _MODEL
+    if _MODEL is None:
+        from ultralytics import YOLO
+        _MODEL = YOLO(MODEL_PATH)
+    return _MODEL
+
+
+def predict_keypoints(frame):
+    """v10-aware: returns {name: (x, y)} in pixels for whichever of
+    NET_KEYPOINT_NAMES the loaded checkpoint emits (2 for v10, 4 for v4)."""
+    model = _get_model()
+    results = model.predict(frame, verbose=False, imgsz=NET_KEYPOINT_IMGSZ)
+    if len(results[0].keypoints) == 0 or results[0].keypoints.xy.shape[1] == 0:
+        return {}
+    kpts = results[0].keypoints.xy[0].cpu().numpy()
+    return {n: (float(kpts[i][0]), float(kpts[i][1]))
+            for i, n in enumerate(NET_KEYPOINT_NAMES[:kpts.shape[0]])
+            if not (kpts[i][0] == 0 and kpts[i][1] == 0)}
+
+
 def from_model(video_path):
     import cv2
-    from ultralytics import YOLO
 
-    model = YOLO(MODEL_PATH)
     cap = cv2.VideoCapture(video_path)
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.set(cv2.CAP_PROP_POS_FRAMES, total // 2)
@@ -102,14 +134,10 @@ def from_model(video_path):
         return
 
     h, w = frame.shape[:2]
-    results = model.predict(frame, verbose=False)
-    if len(results[0].keypoints) == 0 or results[0].keypoints.xy.shape[1] == 0:
+    kp = predict_keypoints(frame)
+    if not kp:
         print('No net detected by model')
         return
-
-    kpts = results[0].keypoints.xy[0].cpu().numpy()
-    names = ['net_top_left', 'net_top_right', 'left_post_base', 'right_post_base']
-    kp = {n: tuple(kpts[i]) for i, n in enumerate(names) if not (kpts[i][0] == 0 and kpts[i][1] == 0)}
     print(f'Predicted keypoints: {kp}')
 
     if 'net_top_left' in kp and 'net_top_right' in kp:
@@ -121,10 +149,81 @@ def from_model(video_path):
                 print(f'Height ratio ({base_key}): {ratio:.4f}')
 
 
+def _pctl(xs, q):
+    if not xs:
+        return None
+    xs = sorted(xs)
+    i = min(len(xs) - 1, int(round(q * (len(xs) - 1))))
+    return xs[i]
+
+
+def angle_error_mode(labels_path):
+    """Per-frame |horizontal_angle(GT) - horizontal_angle(v10 pred)|."""
+    import cv2
+
+    with open(labels_path) as f:
+        data = json.load(f)
+    rows = data['labels'] if isinstance(data, dict) else data
+    frames_dir = os.path.join(os.path.dirname(labels_path), 'frames')
+
+    per_bucket = {}          # predicted angle_label -> [ |dAngle| ]
+    all_errs = []
+    n_gt_missing = n_pred_missing = n_frame_missing = 0
+
+    for r in rows:
+        if not r.get('usable') or r.get('no_net'):
+            continue
+        kp = r['keypoints']
+        if not kp.get('net_top_left') or not kp.get('net_top_right'):
+            n_gt_missing += 1
+            continue
+        fp = os.path.join(frames_dir, r['frame_file'])
+        frame = cv2.imread(fp)
+        if frame is None:
+            n_frame_missing += 1
+            continue
+        w = r.get('img_w') or frame.shape[1]
+
+        pred = predict_keypoints(frame)
+        if 'net_top_left' not in pred or 'net_top_right' not in pred:
+            n_pred_missing += 1
+            continue
+
+        gt_a = horizontal_angle(kp['net_top_left'], kp['net_top_right'], frame_w=w)
+        pred_a = horizontal_angle(pred['net_top_left'], pred['net_top_right'], frame_w=w)
+        err = abs(gt_a - pred_a)
+        all_errs.append(err)
+        per_bucket.setdefault(angle_label(gt_a), []).append(err)
+
+    print(f'\n=== angle-error: |horizontal_angle(GT) - horizontal_angle(v10)| ===')
+    print(f'frames scored: {len(all_errs)}   '
+          f'(GT corners missing: {n_gt_missing}, v10 no-detect: {n_pred_missing}, frame file missing: {n_frame_missing})')
+    if all_errs:
+        med, p90 = _pctl(all_errs, 0.5), _pctl(all_errs, 0.9)
+        print(f'  overall   n={len(all_errs):>3}  median={med:5.1f} deg   p90={p90:5.1f} deg   '
+              f'max={max(all_errs):5.1f}   [target: median<=5, p90<=12]')
+    print('  by GT angle_label bucket:')
+    for label, errs in sorted(per_bucket.items()):
+        print(f'    {label:<18} n={len(errs):>3}  median={_pctl(errs,0.5):5.1f}   p90={_pctl(errs,0.9):5.1f}')
+    print('\n  NOTE: no per-view bucket -- the testset has no view_direction label. '
+          'Coarse-view-bucketed eval waits on 0c fence footage (item 7.2).')
+
+
 if __name__ == '__main__':
-    if len(sys.argv) < 2 or sys.argv[1] == 'labels':
+    mode = sys.argv[1] if len(sys.argv) > 1 else 'labels'
+    if mode == 'labels':
         from_labels()
-    elif sys.argv[1] == 'model' and len(sys.argv) >= 3:
+    elif mode == 'model' and len(sys.argv) >= 3:
         from_model(sys.argv[2])
+    elif mode == 'angle-error':
+        ap = argparse.ArgumentParser()
+        ap.add_argument('--labels', default=TESTSET_LABELS_PATH)
+        args = ap.parse_args(sys.argv[2:])
+        labels = args.labels
+        if not os.path.isabs(labels) and not os.path.exists(labels):
+            # allow a bare filename living next to the default testset
+            cand = os.path.join(os.path.dirname(TESTSET_LABELS_PATH), labels)
+            labels = cand if os.path.exists(cand) else labels
+        angle_error_mode(labels)
     else:
         print(__doc__)
