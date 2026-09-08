@@ -20,7 +20,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from viewpoint_normalization import (  # noqa: E402
-    yaw_normalise_window, rotate_world_landmarks, project_canonical_2d,
+    rotate_world_landmarks, project_canonical_2d,
 )
 
 # Upper-body landmarks used for comparison (ignore legs)
@@ -169,49 +169,45 @@ def extract_swing_trajectory(swing, pose_index, fps):
 
 
 def extract_trajectory_from_index(pose_index, fps, contact_frame, *,
-                                  world_pose_index=None, yaw_enabled=False):
+                                  world_pose_index=None, yaw_deg=None):
     """
     Window-sampling core for the USER side (compare_swing.build_user_trajectory).
 
     Same PRE_SEC..POST_SEC sampling + single-median-scale normalisation as
-    extract_swing_trajectory, but optionally yaw-normalised first: when
-    `world_pose_index` is given and `yaw_enabled`, the camera azimuth is read
-    from the lead-in frames (viewpoint_normalization.yaw_normalise_window) and
-    rotated out about the vertical axis before scale/normalise. Low-confidence
-    estimate -> identity, i.e. byte-identical to `yaw_enabled=False`.
+    extract_swing_trajectory, but optionally yaw-normalised: when a `yaw_deg`
+    is supplied (the caller estimates it from the clip lead-in -- NOT from the
+    DTW window, which is dominated by the swing itself) and `world_pose_index`
+    covers the window, each frame's world landmarks are rotated by -yaw_deg
+    about the vertical axis and projected to 2D before scale/normalise.
+    yaw_deg None, or too few world-landmark frames in the window -> identity,
+    byte-identical to the no-yaw path.
 
     Returns (trajectory, meta) where trajectory is [] on the same too-few-frames
-    guard as extract_swing_trajectory's None, and meta is
-    {'yaw_deg': float|None, 'yaw_n': int}.
+    guard as extract_swing_trajectory's None, and meta is {'yaw_deg': float|None}.
     """
     lo = contact_frame - int(PRE_SEC * fps)
     hi = contact_frame + int(POST_SEC * fps)
     frame_nums = sorted(f for f in pose_index if lo <= f <= hi)
 
-    yaw_deg, yaw_samples = None, []
     lm_by_frame = {f: pose_index[f] for f in frame_nums}
+    applied_yaw = None
 
-    if yaw_enabled and world_pose_index:
-        wt = [((f - contact_frame) / fps, world_pose_index[f])
-              for f in frame_nums if f in world_pose_index]
-        yaw_deg, yaw_samples = yaw_normalise_window(wt)
-        if yaw_deg is not None:
-            rotated = {}
-            for f in frame_nums:
-                w = world_pose_index.get(f)
-                if w is None:
-                    continue
-                rotated[f] = project_canonical_2d(rotate_world_landmarks(w, yaw_deg),
-                                                  pose_index[f])
-            if len(rotated) >= MIN_TRAJECTORY_POINTS:
-                lm_by_frame = rotated
-                frame_nums = sorted(rotated)
-            else:
-                # not enough world-landmark frames to build the swing -- fall
-                # back to the raw image trajectory rather than a stub.
-                yaw_deg = None
+    if yaw_deg is not None and world_pose_index:
+        rotated = {}
+        for f in frame_nums:
+            w = world_pose_index.get(f)
+            if w is None:
+                continue
+            rotated[f] = project_canonical_2d(rotate_world_landmarks(w, yaw_deg),
+                                              pose_index[f])
+        if len(rotated) >= MIN_TRAJECTORY_POINTS:
+            lm_by_frame = rotated
+            frame_nums = sorted(rotated)
+            applied_yaw = yaw_deg
+        # else: not enough world-landmark frames in the window -- fall back to
+        # the raw image trajectory rather than a stub.
 
-    meta = {'yaw_deg': yaw_deg, 'yaw_n': len(yaw_samples)}
+    meta = {'yaw_deg': applied_yaw}
 
     scale = trajectory_scale([lm_by_frame[f] for f in frame_nums])
     if scale is None:
