@@ -314,22 +314,23 @@ def extract_user_poses(video_path):
             ret, frame = cap.read()
             if not ret:
                 break
-            if idx % 3 == 0:  # match extract_poses.py's sample_every=3 used for the pro database, so DTW compares equal-density trajectories
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-                result = lmk.detect(img)
-                lm_dict = None
-                if result.pose_landmarks:
-                    lm_dict = {LANDMARK_NAMES[i]: {'name': LANDMARK_NAMES[i], 'x': lm.x, 'y': lm.y, 'z': lm.z, 'visibility': lm.visibility}
-                               for i, lm in enumerate(result.pose_landmarks[0])}
-                # Metric 3D landmarks -- additive, consumed by viewpoint_normalization
-                # for yaw (camera-azimuth) correction. Same shape as lm_dict.
-                world_dict = None
-                if result.pose_world_landmarks:
-                    world_dict = {LANDMARK_NAMES[i]: {'name': LANDMARK_NAMES[i], 'x': lm.x, 'y': lm.y, 'z': lm.z, 'visibility': lm.visibility}
-                                  for i, lm in enumerate(result.pose_world_landmarks[0])}
-                frames.append({'frame': idx, 'timestamp': round(idx / fps, 3),
-                               'landmarks': lm_dict, 'world_landmarks': world_dict})
+            # Every frame -- matches the stride-1 (sample_every=1) pro database,
+            # so DTW compares equal-density trajectories.
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            result = lmk.detect(img)
+            lm_dict = None
+            if result.pose_landmarks:
+                lm_dict = {LANDMARK_NAMES[i]: {'name': LANDMARK_NAMES[i], 'x': lm.x, 'y': lm.y, 'z': lm.z, 'visibility': lm.visibility}
+                           for i, lm in enumerate(result.pose_landmarks[0])}
+            # Metric 3D landmarks -- additive, consumed by viewpoint_normalization
+            # for yaw (camera-azimuth) correction. Same shape as lm_dict.
+            world_dict = None
+            if result.pose_world_landmarks:
+                world_dict = {LANDMARK_NAMES[i]: {'name': LANDMARK_NAMES[i], 'x': lm.x, 'y': lm.y, 'z': lm.z, 'visibility': lm.visibility}
+                              for i, lm in enumerate(result.pose_world_landmarks[0])}
+            frames.append({'frame': idx, 'timestamp': round(idx / fps, 3),
+                           'landmarks': lm_dict, 'world_landmarks': world_dict})
             idx += 1
 
     cap.release()
@@ -401,8 +402,8 @@ YAW_NORM_ENABLED = os.environ.get('RALLYMAX_YAW_NORM') == '1'
 def build_user_trajectory(frames, fps, contact_time_sec=None, shot_type=None,
                           yaw_enabled=None, return_meta=False):
     """
-    Sample every available pose frame (native ~15-30fps, since
-    extract_user_poses keeps every 3rd frame) from PRE_SEC before to POST_SEC
+    Sample every available pose frame (extract_user_poses keeps every frame,
+    matching the stride-1 pro database) from PRE_SEC before to POST_SEC
     after the contact frame, mirroring extract_swing_trajectory in
     build_pro_database.py so the two are DTW-comparable.
 

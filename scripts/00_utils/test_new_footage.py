@@ -28,7 +28,7 @@ def run(video_path, name, out_root):
     swings_path = os.path.join(swings_dir, f'{name}_swings.json')
 
     print(f"\n=== {name}: pose extraction ===")
-    extract_poses(video_path, poses_path, sample_every=3)
+    extract_poses(video_path, poses_path, sample_every=1)
 
     print(f"\n=== {name}: swing detection ===")
     clips = detect_swings(poses_path, swings_path, pre_sec=1.0, post_sec=2.0)

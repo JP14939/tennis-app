@@ -17,7 +17,7 @@ LANDMARK_NAMES = [
     "right_heel","left_foot_index","right_foot_index"
 ]
 
-def extract_poses(video_path, output_path, sample_every=3, start_frame=0, end_frame=None):
+def extract_poses(video_path, output_path, sample_every=1, start_frame=0, end_frame=None):
     """
     start_frame/end_frame (inclusive-exclusive, in raw video frame indices):
     restricts extraction to that range instead of the whole file -- for a
@@ -127,4 +127,4 @@ def extract_poses(video_path, output_path, sample_every=3, start_frame=0, end_fr
 if __name__ == "__main__":
     video = r"C:\Users\jackp\tennis_app\data\01_source_videos\forehand\forehand_compilation_1.mp4"
     output = r"C:\Users\jackp\tennis_app\data\02_pose_extraction\forehand_poses.json"
-    extract_poses(video, output, sample_every=3)
+    extract_poses(video, output, sample_every=1)

@@ -45,7 +45,7 @@ def _entry(shot_type='forehand', swing_id=4, peak_time=10.0, clip_contact_time_s
 
 
 def test_batch_reextract_anchors_on_start_frame_plus_contact(monkeypatch):
-    monkeypatch.setattr(rh, '_load_pose_index', lambda path: (FPS, _pose_index()))
+    monkeypatch.setattr(rh, '_load_pose_bundle', lambda path: (FPS, _pose_index(), {}))
     lookup = {('forehand', 4): {'poses_path': 'x', 'fps': FPS,
                                 'orig_peak_frame': 200, 'start_frame': 180}}
     entry = _entry(clip_contact_time_sec=1.4)
@@ -67,7 +67,7 @@ def test_single_reextract_uses_peak_time_minus_prior_contact(monkeypatch, tmp_pa
     poses_file = tmp_path / 'poses.json'
     poses_file.write_text('{}')
     monkeypatch.setattr(rh, 'poses_path_for', lambda st, sid: str(poses_file))
-    monkeypatch.setattr(rh, '_load_pose_index', lambda path: (FPS, _pose_index()))
+    monkeypatch.setattr(rh, '_load_pose_bundle', lambda path: (FPS, _pose_index(), {}))
     entry = _entry(peak_time=10.0, clip_contact_time_sec=1.4)
 
     res = rh.reextract_for_entry(entry, single=True, prior_contact_time_sec=1.0)
@@ -78,7 +78,7 @@ def test_single_reextract_uses_peak_time_minus_prior_contact(monkeypatch, tmp_pa
 
 
 def test_missing_lookup_batch(monkeypatch):
-    monkeypatch.setattr(rh, '_load_pose_index', lambda path: (FPS, _pose_index()))
+    monkeypatch.setattr(rh, '_load_pose_bundle', lambda path: (FPS, _pose_index(), {}))
     res = rh.reextract_for_entry(_entry(), lookup={})
     assert res['status'] == 'missing_lookup'
     assert res['trajectory'] is None
@@ -93,7 +93,7 @@ def test_missing_lookup_single_when_no_pose_file(monkeypatch):
 def test_practice_entry_uses_its_own_poses_path_and_clip_start_frame(monkeypatch, tmp_path):
     poses_file = tmp_path / 'practice_02_poses.json'
     poses_file.write_text('{}')
-    monkeypatch.setattr(rh, '_load_pose_index', lambda path: (FPS, _pose_index()))
+    monkeypatch.setattr(rh, '_load_pose_bundle', lambda path: (FPS, _pose_index(), {}))
     entry = _entry(shot_type='backhand', swing_id=200005, clip_contact_time_sec=1.1)
     entry['id'] = 'practice_200005'
     entry['poses_path'] = str(poses_file)      # absolute -> used directly
@@ -116,8 +116,8 @@ def test_practice_entry_missing_pose_file(monkeypatch):
 
 
 def test_too_few_points(monkeypatch):
-    monkeypatch.setattr(rh, '_load_pose_index', lambda path: (FPS, _pose_index()))
-    monkeypatch.setattr(rh, 'extract_swing_trajectory', lambda swing, idx, fps: None)
+    monkeypatch.setattr(rh, '_load_pose_bundle', lambda path: (FPS, _pose_index(), {}))
+    monkeypatch.setattr(rh, 'extract_swing_trajectory', lambda swing, idx, fps, **kw: None)
     lookup = {('forehand', 4): {'poses_path': 'x', 'fps': FPS,
                                 'orig_peak_frame': 200, 'start_frame': 180}}
     res = rh.reextract_for_entry(_entry(), lookup=lookup)

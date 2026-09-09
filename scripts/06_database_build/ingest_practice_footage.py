@@ -131,7 +131,7 @@ def _get_poses(video_path, poses_path):
         print(f'  extracting poses (slow) -> {poses_path}', file=sys.stderr)
         os.makedirs(os.path.dirname(poses_path), exist_ok=True)
         with contextlib.redirect_stdout(sys.stderr):
-            extract_poses(video_path, poses_path, sample_every=3)
+            extract_poses(video_path, poses_path, sample_every=1)
     with open(poses_path) as f:
         return json.load(f)
 

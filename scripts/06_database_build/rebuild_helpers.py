@@ -30,7 +30,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '00_utils'))
-from trajectory_extraction import build_pose_index, extract_swing_trajectory, build_swing_overlay  # noqa: E402
+from trajectory_extraction import (  # noqa: E402
+    build_pose_index, build_world_pose_index, extract_swing_trajectory, build_swing_overlay,
+)
 from source_footage_lookup import (  # noqa: E402
     POSES_BY_SHOT_TYPE, SWINGS_VALIDATED_BY_SHOT_TYPE, poses_path_for,
     swings_validated_path_for,
@@ -53,14 +55,26 @@ def _start_frame_from_swings_file(shot_type, swing_id):
 
 
 @functools.lru_cache(maxsize=2)
-def _load_pose_index(poses_path):
+def _load_pose_bundle(poses_path):
     """Cached: a full pose file is tens of MB and its index a few hundred MB
     resident. maxsize=2 keeps peak memory bounded -- the batch rebuild
     processes entries in DB (= job) order, so in practice one job's pose
-    index is live at a time."""
+    index is live at a time.
+
+    Returns (fps, pose_index, world_pose_index). world_pose_index is {} for
+    pose files predating world-landmark capture (pre-stride1 re-extract) -- the
+    yaw path treats an empty index as "no estimate available" -> identity."""
     with open(poses_path) as f:
         pose_data = json.load(f)
-    return pose_data['fps'], build_pose_index(pose_data['frames'])
+    frames = pose_data['frames']
+    return pose_data['fps'], build_pose_index(frames), build_world_pose_index(frames)
+
+
+def _load_pose_index(poses_path):
+    """Back-compat 2-tuple wrapper (fps, pose_index) for callers that don't
+    need world landmarks (reanchor_pro_serves.py, tests)."""
+    fps, pose_index, _world = _load_pose_bundle(poses_path)
+    return fps, pose_index
 
 
 def build_swing_lookup():
@@ -93,7 +107,8 @@ def build_swing_lookup():
 
 
 def reextract_for_entry(entry, lookup=None, single=False,
-                        prior_contact_time_sec=None, original_shot_type=None):
+                        prior_contact_time_sec=None, original_shot_type=None,
+                        yaw_enabled=False):
     """Recompute entry['trajectory'] + its overlay around the CURRENT
     entry['clip_contact_time_sec']. Never mutates `entry`. Never touches
     video / MediaPipe.
@@ -124,10 +139,12 @@ def reextract_for_entry(entry, lookup=None, single=False,
         if not os.path.exists(poses_abs):
             return {'status': 'missing_lookup', 'trajectory': None, 'overlay': None,
                     'new_peak_frame': None, 'new_peak_time': None}
-        fps, pose_index = _load_pose_index(poses_abs)
+        fps, pose_index, world_pose_index = _load_pose_bundle(poses_abs)
         clip_start_frame = entry['clip_start_frame']
         new_peak_frame = clip_start_frame + round(contact * fps)
-        trajectory = extract_swing_trajectory({'peak_frame': new_peak_frame}, pose_index, fps)
+        trajectory = extract_swing_trajectory(
+            {'peak_frame': new_peak_frame}, pose_index, fps,
+            world_pose_index=world_pose_index, yaw_enabled=yaw_enabled)
         if trajectory is None:
             return {'status': 'too_few_points', 'trajectory': None, 'overlay': None,
                     'new_peak_frame': new_peak_frame, 'new_peak_time': round(new_peak_frame / fps, 3)}
@@ -140,7 +157,7 @@ def reextract_for_entry(entry, lookup=None, single=False,
         if not poses_path or not os.path.exists(poses_path):
             return {'status': 'missing_lookup', 'trajectory': None, 'overlay': None,
                     'new_peak_frame': None, 'new_peak_time': None}
-        fps, pose_index = _load_pose_index(poses_path)
+        fps, pose_index, world_pose_index = _load_pose_bundle(poses_path)
         if prior_contact_time_sec is not None:
             clip_start_frame = round(entry['peak_time'] * fps) - round(prior_contact_time_sec * fps)
         else:
@@ -153,12 +170,14 @@ def reextract_for_entry(entry, lookup=None, single=False,
         if not found:
             return {'status': 'missing_lookup', 'trajectory': None, 'overlay': None,
                     'new_peak_frame': None, 'new_peak_time': None}
-        fps, pose_index = _load_pose_index(found['poses_path'])
+        fps, pose_index, world_pose_index = _load_pose_bundle(found['poses_path'])
         clip_start_frame = found['start_frame']
 
     new_peak_frame = clip_start_frame + round(contact * fps)
 
-    trajectory = extract_swing_trajectory({'peak_frame': new_peak_frame}, pose_index, fps)
+    trajectory = extract_swing_trajectory(
+        {'peak_frame': new_peak_frame}, pose_index, fps,
+        world_pose_index=world_pose_index, yaw_enabled=yaw_enabled)
     if trajectory is None:
         return {'status': 'too_few_points', 'trajectory': None, 'overlay': None,
                 'new_peak_frame': new_peak_frame, 'new_peak_time': round(new_peak_frame / fps, 3)}

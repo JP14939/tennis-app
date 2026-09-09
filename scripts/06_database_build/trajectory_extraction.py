@@ -20,7 +20,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from viewpoint_normalization import (  # noqa: E402
-    rotate_world_landmarks, project_canonical_2d,
+    rotate_world_landmarks, project_canonical_2d, yaw_normalise_window,
 )
 
 # Upper-body landmarks used for comparison (ignore legs)
@@ -134,7 +134,8 @@ POST_SEC = 1.0
 MIN_TRAJECTORY_POINTS = 5
 
 
-def extract_swing_trajectory(swing, pose_index, fps):
+def extract_swing_trajectory(swing, pose_index, fps, *,
+                             world_pose_index=None, yaw_enabled=False):
     """
     Sample every available pose frame (native ~20fps from extract_poses.py)
     from PRE_SEC before to POST_SEC after the peak (contact) frame, instead
@@ -144,28 +145,28 @@ def extract_swing_trajectory(swing, pose_index, fps):
     Returns a list of {'t': seconds relative to contact, 'landmarks': {...}},
     or None if too few usable frames are found.
 
-    Pro-side builder -- deliberately does NOT yaw-normalise (the pro database
-    trajectories are left as they are; see the yaw-norm plan). The user side
-    goes through extract_trajectory_from_index() instead.
+    Pro-side builder. By default (yaw_enabled=False, or no world landmarks in
+    the pose file) it does NOT yaw-normalise -- byte-identical to the original.
+    When `yaw_enabled` and `world_pose_index` covers the window, the camera
+    azimuth is read from this swing's LEAD-IN (the ~1s of pose before the peak,
+    NOT the DTW window, which is dominated by the swing's own trunk rotation)
+    and rotated out about the vertical axis before scale/normalise -- the same
+    correction the user side gets via extract_trajectory_from_index(). A weak /
+    absent estimate falls back to identity.
     """
     peak = swing['peak_frame']
-    lo = peak - int(PRE_SEC * fps)
-    hi = peak + int(POST_SEC * fps)
 
-    window_frames = [pose_index[f] for f in range(lo, hi + 1) if f in pose_index]
-    scale = trajectory_scale(window_frames)
-    if scale is None:
-        return None
+    yaw_deg = None
+    if yaw_enabled and world_pose_index:
+        lead_lo = peak - int(1.0 * fps)
+        wt = [((f - peak) / fps, world_pose_index[f])
+              for f in sorted(world_pose_index) if lead_lo <= f <= peak]
+        yaw_deg, _samples = yaw_normalise_window(wt)
 
-    trajectory = []
-    for f in sorted(fr for fr in pose_index if lo <= fr <= hi):
-        norm = normalise_landmarks(pose_index[f], scale)
-        if norm is not None:
-            trajectory.append({'t': round((f - peak) / fps, 4), 'landmarks': norm})
-
-    if len(trajectory) < MIN_TRAJECTORY_POINTS:
-        return None
-    return trajectory
+    trajectory, _meta = extract_trajectory_from_index(
+        pose_index, fps, peak,
+        world_pose_index=world_pose_index, yaw_deg=yaw_deg)
+    return trajectory or None
 
 
 def extract_trajectory_from_index(pose_index, fps, contact_frame, *,

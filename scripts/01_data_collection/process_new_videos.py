@@ -45,7 +45,7 @@ def main():
             continue
 
         print('  [1/3] Extracting poses...')
-        extract_poses(video_path, poses_path, sample_every=3)
+        extract_poses(video_path, poses_path, sample_every=1)
 
         print('  [2/3] Detecting swings...')
         pre_sec, post_sec = SHOT_WINDOWS[shot_type]
