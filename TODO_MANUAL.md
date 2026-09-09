@@ -443,7 +443,13 @@ sheets and do a first-pass read for you if you want.
 click-tested the *live* feedback loop itself (only curl'd the backend in
 isolation) — run `npx expo start`, try "Record now," check the
 positioning badge feels responsive and the messaging makes sense as you
-move the phone.
+move the phone. **2026-09-09:** the behind-baseline view gate is now
+ENFORCED — film from the side / from the net / with the net cut off and the
+app should hard-stop at ContactMarkingScreen (⛔ "Record another swing") and,
+if you get past that, at ResultsScreen ("Check your camera setup"). Verify a
+normal behind-baseline swing still sails through. `RALLYMAX_ENFORCE_VIEW_GATE`
+no longer needs setting on the server (on by default; `=0` = advisory, batch
+eval only).
 
 **Keep `frontend/config/api.js`'s LAN-IP fallback current** if Expo Go
 ever can't reach the backend and nothing else changed — check `ipconfig`,
