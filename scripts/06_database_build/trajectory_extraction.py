@@ -20,7 +20,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from viewpoint_normalization import (  # noqa: E402
-    rotate_world_landmarks, project_canonical_2d, yaw_normalise_window,
+    rotate_world_landmarks, project_canonical_2d, yaw_normalise_window, soft_yaw,
 )
 
 # Upper-body landmarks used for comparison (ignore legs)
@@ -134,8 +134,8 @@ POST_SEC = 1.0
 MIN_TRAJECTORY_POINTS = 5
 
 
-def extract_swing_trajectory(swing, pose_index, fps, *,
-                             world_pose_index=None, yaw_enabled=False, return_yaw=False):
+def extract_swing_trajectory(swing, pose_index, fps, *, world_pose_index=None,
+                             yaw_enabled=False, return_yaw=False, return_meta=False):
     """
     Sample every available pose frame (native ~20fps from extract_poses.py)
     from PRE_SEC before to POST_SEC after the peak (contact) frame, instead
@@ -143,55 +143,68 @@ def extract_swing_trajectory(swing, pose_index, fps, *,
     for DTW comparison rather than compressing it to 3 points.
 
     Returns a list of {'t': seconds relative to contact, 'landmarks': {...}},
-    or None if too few usable frames are found. With return_yaw=True, returns
-    (trajectory_or_None, applied_yaw_deg) -- applied_yaw_deg is the rotation
-    actually baked in (None when yaw was off, abstained, or had too few
-    world-landmark frames). A trajectory carries metric-scale z iff a yaw was
-    applied (else the z is raw monocular image-z from normalise_landmarks).
+    or None if too few usable frames are found.
+    - return_yaw=True  -> (trajectory_or_None, applied_yaw_deg)  [x/y rotation]
+    - return_meta=True -> (trajectory_or_None, meta)  where meta is
+      {'yaw_deg', 'z_yaw_deg', 'z_metric'} (see extract_trajectory_from_index).
 
-    Pro-side builder. By default (yaw_enabled=False, or no world landmarks in
-    the pose file) it does NOT yaw-normalise -- byte-identical to the original.
-    When `yaw_enabled` and `world_pose_index` covers the window, the camera
-    azimuth is read from this swing's LEAD-IN (the ~1s of pose before the peak,
-    NOT the DTW window, which is dominated by the swing's own trunk rotation)
-    and rotated out about the vertical axis before scale/normalise -- the same
-    correction the user side gets via extract_trajectory_from_index(). A weak /
-    absent estimate falls back to identity.
+    Pro-side builder. x/y are yaw-normalised only when `yaw_enabled` and the
+    lead-in gives a confident (>=YAW_DEADBAND_DEG) estimate -- otherwise
+    byte-identical to the original. z is taken from world landmarks (metric)
+    whenever `world_pose_index` covers the window, rotated by the hard yaw if
+    applied else by the softer `soft_yaw` estimate -- so z is metric even when
+    x/y aren't rotated. The camera azimuth is read from this swing's LEAD-IN
+    (the ~1s of pose before the peak), NOT the DTW window (dominated by the
+    swing's own trunk rotation).
     """
     peak = swing['peak_frame']
 
-    yaw_deg = None
-    if yaw_enabled and world_pose_index:
+    yaw_deg = z_yaw_deg = None
+    if world_pose_index:
         lead_lo = peak - int(1.0 * fps)
         wt = [((f - peak) / fps, world_pose_index[f])
               for f in sorted(world_pose_index) if lead_lo <= f <= peak]
-        yaw_deg, _samples = yaw_normalise_window(wt)
+        hard, samples = yaw_normalise_window(wt)
+        if yaw_enabled:
+            yaw_deg = hard
+        z_yaw_deg = soft_yaw(samples)
 
     trajectory, meta = extract_trajectory_from_index(
         pose_index, fps, peak,
-        world_pose_index=world_pose_index, yaw_deg=yaw_deg)
+        world_pose_index=world_pose_index, yaw_deg=yaw_deg, z_yaw_deg=z_yaw_deg)
     trajectory = trajectory or None
+    if return_meta:
+        return trajectory, meta
     if return_yaw:
         return trajectory, meta['yaw_deg']
     return trajectory
 
 
 def extract_trajectory_from_index(pose_index, fps, contact_frame, *,
-                                  world_pose_index=None, yaw_deg=None):
+                                  world_pose_index=None, yaw_deg=None, z_yaw_deg=None):
     """
-    Window-sampling core for the USER side (compare_swing.build_user_trajectory).
+    Window-sampling core for the USER side (compare_swing.build_user_trajectory)
+    and, via extract_swing_trajectory, the pro side.
 
     Same PRE_SEC..POST_SEC sampling + single-median-scale normalisation as
-    extract_swing_trajectory, but optionally yaw-normalised: when a `yaw_deg`
-    is supplied (the caller estimates it from the clip lead-in -- NOT from the
-    DTW window, which is dominated by the swing itself) and `world_pose_index`
-    covers the window, each frame's world landmarks are rotated by -yaw_deg
-    about the vertical axis and projected to 2D before scale/normalise.
-    yaw_deg None, or too few world-landmark frames in the window -> identity,
-    byte-identical to the no-yaw path.
+    before, but the x/y source and the z source are DECOUPLED:
 
-    Returns (trajectory, meta) where trajectory is [] on the same too-few-frames
-    guard as extract_swing_trajectory's None, and meta is {'yaw_deg': float|None}.
+    * x/y: when `yaw_deg` is supplied (the caller estimates it from the clip
+      lead-in -- NOT the DTW window, which is dominated by the swing itself) and
+      `world_pose_index` covers the window, each frame's world landmarks are
+      rotated by -yaw_deg about the vertical and projected to 2D before
+      scale/normalise. Otherwise x/y are the raw image landmarks, byte-identical
+      to the pre-yaw path.
+    * z: whenever `world_pose_index` covers the window, z is taken from the
+      world landmarks (metric, hip-origin) rotated by the hard `yaw_deg` if one
+      was applied, else by the softer `z_yaw_deg` (may be None -> unrotated but
+      still metric). This replaces the raw monocular image-z that
+      normalise_landmarks would otherwise produce on the identity path. When
+      the world data can't be used, z stays image-z (older-schema fallback).
+
+    Returns (trajectory, meta); meta is
+    {'yaw_deg': float|None, 'z_yaw_deg': float|None, 'z_metric': bool}.
+    trajectory is [] on the same too-few-frames guard as before.
     """
     lo = contact_frame - int(PRE_SEC * fps)
     hi = contact_frame + int(POST_SEC * fps)
@@ -199,6 +212,7 @@ def extract_trajectory_from_index(pose_index, fps, contact_frame, *,
 
     lm_by_frame = {f: pose_index[f] for f in frame_nums}
     applied_yaw = None
+    rotated = None
 
     if yaw_deg is not None and world_pose_index:
         rotated = {}
@@ -212,10 +226,32 @@ def extract_trajectory_from_index(pose_index, fps, contact_frame, *,
             lm_by_frame = rotated
             frame_nums = sorted(rotated)
             applied_yaw = yaw_deg
-        # else: not enough world-landmark frames in the window -- fall back to
-        # the raw image trajectory rather than a stub.
+        else:
+            rotated = None  # too few -- fell back to image x/y; don't reuse a stub
 
-    meta = {'yaw_deg': applied_yaw}
+    # ── metric z source ──────────────────────────────────────────────────────
+    # Always via project_canonical_2d(rotate_world_landmarks(...), pose_index[f])
+    # so trajectory_scale / normalise_landmarks gate on the IMAGE landmark's
+    # visibility, exactly like every other path -- never on world-landmark
+    # confidence.
+    z_yaw_applied = None
+    if applied_yaw is not None:
+        z_src = rotated                      # already rotated by the hard yaw
+        z_yaw_applied = applied_yaw
+    elif world_pose_index:
+        z_src = {f: project_canonical_2d(rotate_world_landmarks(world_pose_index[f], z_yaw_deg),
+                                         pose_index[f])
+                 for f in frame_nums if world_pose_index.get(f) is not None}
+        if len(z_src) >= MIN_TRAJECTORY_POINTS:
+            z_yaw_applied = z_yaw_deg
+        else:
+            z_src = None
+    else:
+        z_src = None
+
+    world_scale = trajectory_scale([z_src[f] for f in sorted(z_src)]) if z_src else None
+    z_metric = bool(z_src and world_scale)
+    meta = {'yaw_deg': applied_yaw, 'z_yaw_deg': z_yaw_applied, 'z_metric': z_metric}
 
     scale = trajectory_scale([lm_by_frame[f] for f in frame_nums])
     if scale is None:
@@ -224,8 +260,16 @@ def extract_trajectory_from_index(pose_index, fps, contact_frame, *,
     trajectory = []
     for f in frame_nums:
         norm = normalise_landmarks(lm_by_frame[f], scale)
-        if norm is not None:
-            trajectory.append({'t': round((f - contact_frame) / fps, 4), 'landmarks': norm})
+        if norm is None:
+            continue
+        if z_metric:
+            wf = z_src.get(f)
+            for name, v in norm.items():
+                if v is None:
+                    continue
+                lm = wf.get(name) if wf else None
+                v['z'] = round(lm['z'] / world_scale, 4) if lm and lm.get('z') is not None else None
+        trajectory.append({'t': round((f - contact_frame) / fps, 4), 'landmarks': norm})
 
     if len(trajectory) < MIN_TRAJECTORY_POINTS:
         return [], meta

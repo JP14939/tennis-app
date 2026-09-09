@@ -79,6 +79,17 @@ def reslice(dry_run=False, limit=None):
         if res['status'] == 'ok':
             entry['trajectory'] = res['trajectory']
             entry['peak_time'] = res['new_peak_time']
+            # stride-1 trajectory. traj_version 4 = z is metric world-derived on
+            # every joint (redesign_similarity._entry_metric_z gates the depth
+            # axes on >=4); 3 = dense but no world landmarks (image-z), excluded.
+            # traj_yaw_deg = x/y rotation (float when the hard >=deadband
+            # estimate fired, else None); traj_z_yaw_deg = rotation baked into
+            # the z channel (hard yaw, soft sub-deadband yaw, or None=unrotated
+            # but still metric). Only the 'ok' branch: missing_lookup /
+            # too_few_points entries keep their old trajectory and stay unstamped.
+            entry['traj_version'] = 4 if res.get('z_metric') else 3
+            entry['traj_yaw_deg'] = res.get('traj_yaw_deg')
+            entry['traj_z_yaw_deg'] = res.get('traj_z_yaw_deg')
             if overlays_usable:
                 overlays[eid] = res['overlay']
             ok.append(eid)
@@ -111,6 +122,7 @@ def reslice(dry_run=False, limit=None):
                              f'pro_database_backup_pre_stride1_reslice_{ts}.json')
     with open(PRO_DB_PATH) as f, open(db_backup, 'w') as bf:
         bf.write(f.read())
+    db['traj_version'] = 4  # top-level marker; per-entry traj_version is what scoring reads
     with open(PRO_DB_PATH, 'w') as f:
         json.dump(db, f)
     print(f'\n  backup: {db_backup}')

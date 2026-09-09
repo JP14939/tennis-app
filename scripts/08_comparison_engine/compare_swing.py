@@ -29,7 +29,7 @@ from build_pro_database import normalise_landmarks, trajectory_scale, PRE_SEC, P
 from trajectory_extraction import (
     mirror_trajectory, rotate_trajectory, extract_trajectory_from_index,
 )
-from viewpoint_normalization import yaw_normalise_window
+from viewpoint_normalization import yaw_normalise_window, soft_yaw
 from trajectory_compare import dtw_distance
 from track_racket_in_clip import track_racket_body, avg_racket_body_distance, track_racket_path
 from ball_speed import estimate_net_crossing_ball_speed_kmh
@@ -421,7 +421,9 @@ def build_user_trajectory(frames, fps, contact_time_sec=None, shot_type=None,
 
     Returns (trajectory, contact_frame_num) by default, or
     (trajectory, contact_frame_num, meta) when return_meta=True -- meta is
-    {'yaw_deg': float|None, 'yaw_n': int} (yaw_n = lead-in frames used).
+    {'yaw_deg': float|None, 'yaw_n': int, 'z_yaw_deg': float|None,
+    'z_metric': bool}. The z channel is metric world-derived whenever world
+    landmarks are present, independent of `yaw_enabled` (which only gates x/y).
     """
     if yaw_enabled is None:
         yaw_enabled = YAW_NORM_ENABLED
@@ -440,20 +442,27 @@ def build_user_trajectory(frames, fps, contact_time_sec=None, shot_type=None,
     # Estimate the camera azimuth from the CLIP LEAD-IN (first ~0.35s of
     # available pose, player still in the ready stance) -- read over the whole
     # clip, not the DTW window, so it doesn't shift with contact detection and
-    # isn't contaminated by the swing's own trunk rotation.
-    yaw_deg, yaw_n = None, 0
-    if yaw_enabled and world_index:
+    # isn't contaminated by the swing's own trunk rotation. The HARD estimate
+    # (>=deadband) gates x/y rotation and only fires when yaw_enabled; the SOFT
+    # one drives the metric-z channel regardless of the flag.
+    yaw_deg, yaw_n, z_yaw_deg = None, 0, None
+    if world_index:
         wt = [((f - contact_frame_num) / fps, world_index[f]) for f in sorted(world_index)]
-        yaw_deg, samples = yaw_normalise_window(wt)
+        hard, samples = yaw_normalise_window(wt)
         yaw_n = len(samples)
+        if yaw_enabled:
+            yaw_deg = hard
+        z_yaw_deg = soft_yaw(samples)
 
     # The too-few-points guard lives in extract_trajectory_from_index (returns
     # [] the same way the old inline code did) -- see the comment there.
     trajectory, meta = extract_trajectory_from_index(
         frame_index, fps, contact_frame_num,
-        world_pose_index=world_index, yaw_deg=yaw_deg)
+        world_pose_index=world_index, yaw_deg=yaw_deg, z_yaw_deg=z_yaw_deg)
     if return_meta:
-        return trajectory, contact_frame_num, {'yaw_deg': meta['yaw_deg'], 'yaw_n': yaw_n}
+        return trajectory, contact_frame_num, {
+            'yaw_deg': meta['yaw_deg'], 'yaw_n': yaw_n,
+            'z_yaw_deg': meta['z_yaw_deg'], 'z_metric': meta['z_metric']}
     return trajectory, contact_frame_num
 
 
@@ -900,6 +909,8 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         'roll_corrected': user_roll is not None,
         'user_yaw_deg': yaw_meta.get('yaw_deg'),
         'yaw_corrected': yaw_meta.get('yaw_deg') is not None,
+        'user_z_yaw_deg': yaw_meta.get('z_yaw_deg'),
+        'z_metric': yaw_meta.get('z_metric', False),
         'view_gate': view_gate,
         'angle_filter': angle_filter_status,
         'contact_time_sec': round(peak_frame / fps, 3),

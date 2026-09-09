@@ -134,6 +134,33 @@ def usable_yaw(samples):
     return med
 
 
+def soft_yaw(samples):
+    """
+    Like usable_yaw() but WITHOUT the YAW_DEADBAND_DEG check -- returns the
+    windowed median whenever the estimate is *coherent* (enough frames, low
+    per-frame spread) and not near side-on, even for a sub-10-degree camera
+    angle.
+
+    usable_yaw() drops sub-deadband angles because a <10 deg rotation of the 2D
+    x/y trajectory isn't worth the risk of a slightly-off estimate. But the
+    metric world-z channel IS sensitive to a few degrees (sin 10 deg ~ 0.17,
+    and z magnitudes are O(1) after scaling), so the z-only path rotates
+    whenever there's any trustworthy signal. None (thin / noisy / side-on
+    lead-in) -> caller leaves z unrotated (still metric world z, just carrying
+    the residual camera azimuth -- fine for the within-body differential depth
+    axes on near-canonical footage).
+    """
+    samples = [s for s in samples if s is not None]
+    if len(samples) < YAW_MIN_FRAMES:
+        return None
+    med = _median(samples)
+    if _stdev(samples) > YAW_MAX_STDEV_DEG:
+        return None
+    if _folded(med) > YAW_MAX_CORRECTION_DEG:
+        return None
+    return med
+
+
 def rotate_world_landmarks(world_lm, yaw_deg):
     """
     Rotate every landmark about the vertical (y) axis so its horizontal azimuth

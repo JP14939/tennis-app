@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from viewpoint_normalization import (  # noqa: E402
-    facing_azimuth, usable_yaw, rotate_world_landmarks, project_canonical_2d,
+    facing_azimuth, usable_yaw, soft_yaw, rotate_world_landmarks, project_canonical_2d,
     yaw_normalise_window, YAW_MIN_FRAMES, YAW_DEADBAND_DEG, YAW_MAX_STDEV_DEG,
     YAW_MAX_CORRECTION_DEG,
 )
@@ -107,6 +107,25 @@ def test_usable_yaw_too_noisy():
 
 def test_usable_yaw_side_on_cap():
     assert usable_yaw([YAW_MAX_CORRECTION_DEG + 5] * 8) is None
+
+
+def test_soft_yaw_rotates_inside_the_deadband():
+    # sub-deadband, coherent -> soft_yaw returns the median, usable_yaw abstains
+    s = [YAW_DEADBAND_DEG - 4] * 8
+    assert usable_yaw(s) is None
+    assert soft_yaw(s) == YAW_DEADBAND_DEG - 4
+
+
+def test_soft_yaw_keeps_the_noise_and_side_on_guards():
+    noisy = [-40, 50, -30, 45, -20, 60]
+    assert soft_yaw(noisy) is None
+    assert soft_yaw([YAW_MAX_CORRECTION_DEG + 5] * 8) is None
+    assert soft_yaw([5.0] * (YAW_MIN_FRAMES - 1)) is None
+
+
+def test_soft_yaw_matches_usable_yaw_when_both_pass():
+    s = [30.0, 31.0, 29.0, 30.5, 29.5, 30.0]
+    assert soft_yaw(s) == usable_yaw(s) == 30.0
 
 
 def _stdev_gt(xs, thr):

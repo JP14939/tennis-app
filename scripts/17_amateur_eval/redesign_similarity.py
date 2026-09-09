@@ -52,25 +52,29 @@ sys.path.insert(0, os.path.join(SCRIPTS_DIR, '07_ball_racket_tracking'))
 from track_racket_in_clip import track_racket_body, avg_racket_body_distance, racket_body_features  # noqa: E402
 
 CACHE_DIR = os.path.join(OUT_DIR, 'traj_cache')
-CACHE_VERSION = 3   # v3: yaw-normalized user trajectories (yaw_enabled=True) so
-                    # z is canonical metric depth -> the metric-z depth axes in
-                    # axis_values(metric_z=...) become meaningful. v2: + racket_frames,
-                    # + LH-mirror for amateur queries.
+CACHE_VERSION = 4   # v4: z on every joint is metric world-derived (soft-yaw
+                    # rotated), regardless of whether x/y were yaw-normalized --
+                    # so the depth axes fire on the whole pool, not just the
+                    # hard-yaw subset. v3: yaw-normalized user trajectories.
+                    # v2: + racket_frames, + LH-mirror for amateur queries.
 
 
 def _rec_metric_z(rec):
-    """A cache rec carries metric (canonical, yaw-normalized) z only from v3 on
-    AND only when yaw was actually applied to the user trajectory (weak estimate
-    -> identity -> z is still raw image-z)."""
+    """v4 cache recs carry an explicit z_metric flag (metric world-derived z on
+    every joint -- see the trajectory_extraction z-overlay). v3 and below: only
+    when yaw actually rotated the swing."""
+    if rec.get('v', 1) >= 4:
+        return rec.get('z_metric', True)
     return rec.get('v', 1) >= 3 and rec.get('user_yaw_deg') is not None
 
 
 def _entry_metric_z(entry):
-    """A pro entry carries metric (canonical, world-landmark) z only when the
-    yaw re-slice actually rotated it -- traj_version>=3 AND a non-null yaw was
-    applied. traj_version>=3 with traj_yaw_deg None means yaw abstained and the
-    z is still raw monocular image-z (do NOT feed it the depth axes)."""
-    return entry.get('traj_version', 0) >= 3 and entry.get('traj_yaw_deg') is not None
+    """A traj_version-4 pro entry carries metric world-derived z on every joint.
+    v3: only when the reslice actually yaw-rotated it (traj_yaw_deg not None)."""
+    tv = entry.get('traj_version', 0)
+    if tv >= 4:
+        return True
+    return tv >= 3 and entry.get('traj_yaw_deg') is not None
 
 # swing-arm chain carries the technique signal; nose/hips are gross position
 LANDMARK_WEIGHTS = {
@@ -267,9 +271,9 @@ def _extract_one(q, db_entries, reviewed, lmk):
     ct = q.get('contact_time_sec')
     if ct is None and q.get('clip_peak_frame') is not None:
         ct = q['clip_peak_frame'] / fps
-    # yaw_enabled=True: the cache is v3, so the user trajectory is yaw-normalized
-    # to a canonical facing (metric-z depth axes need it). Weak estimate -> identity
-    # (yaw_meta['yaw_deg'] None -> z stays raw image-z, not metric).
+    # yaw_enabled=True: x/y are yaw-normalized to a canonical facing when the
+    # lead-in estimate is confident. The z channel is metric world-derived
+    # regardless (v4) -- yaw_meta['z_metric'] says whether it landed.
     user_traj, peak, yaw_meta = build_user_trajectory(frames, fps, ct, shot_type=q['shot_type'],
                                                       yaw_enabled=True, return_meta=True)
     if not user_traj:
@@ -318,6 +322,8 @@ def _extract_one(q, db_entries, reviewed, lmk):
         'pool_ids': [c['id'] for c in pool],
         'user_traj': user_traj,
         'user_yaw_deg': yaw_meta.get('yaw_deg'),
+        'user_z_yaw_deg': yaw_meta.get('z_yaw_deg'),
+        'z_metric': yaw_meta.get('z_metric', False),
         'racket_frames': racket_frames,
     }
 
@@ -660,16 +666,29 @@ def do_axes(args):
 # groundstrokes (flat). racket_* on spec (weight small) -- re-curate once the
 # enrich pass + 60-held-out cache land. Weights ~ sep magnitude.
 
+# Re-curated 2026-09-09 from the post-stride-1 + yaw (metric-3D) `axes` run
+# (648-entry DB, 67-held-out / 45-amateur v3 cache). Rule: keep sep >= +7,
+# weight ~ sep/10. Dropped where they now invert: forehand contact_elbow_angle
+# (-3) & wrist_path_ratio (+1); serve follow_through_height (-35),
+# contact_wrist_lateral (-21), tempo_peak_frac (-6), rotation_range (-1).
+# Added the metric-3D depth axes that landed strong: forehand
+# contact_depth_ahead (+46, the top forehand discriminator) & wrist_elbow_depth_lag
+# (+32); backhand coil_depth_xfactor (+26) & forward_weight_transfer (+15).
+# Serve depth axes EXCLUDED -- back-n=0 (no yaw-rotated serve pros => image-z
+# fallback, unreliable); serve is left with only 3 solid axes, itself a finding.
 CURATED_AXES = {
-    'forehand': {'wrist_path_ratio': 1.5, 'contact_elbow_angle': 1.2, 'contact_wrist_height': 1.0,
-                 'follow_through_height': 1.0, 'tempo_peak_frac': 0.8,
-                 'racket_body_dist': 0.6, 'racket_body_range': 0.6, 'racket_path_ratio': 0.5},
-    'backhand': {'tempo_peak_frac': 1.5, 'backswing_depth': 1.3, 'contact_wrist_lateral': 1.3,
-                 'wrist_path_ratio': 1.0, 'contact_wrist_height': 1.0,
-                 'racket_body_dist': 0.6, 'racket_body_range': 0.6, 'racket_path_ratio': 0.5},
-    'serve':    {'tempo_peak_frac': 1.5, 'contact_wrist_lateral': 1.2, 'backswing_depth': 0.9,
-                 'follow_through_height': 0.9, 'rotation_range': 0.9, 'contact_elbow_angle': 0.7,
-                 'racket_body_range': 0.5, 'racket_path_ratio': 0.5},
+    'forehand': {'contact_depth_ahead': 4.5, 'wrist_elbow_depth_lag': 3.2,
+                 'follow_through_height': 3.0, 'racket_body_dist': 2.1,
+                 'racket_path_ratio': 1.8, 'contact_wrist_height': 1.2,
+                 'contact_wrist_lateral': 1.1, 'tempo_peak_frac': 0.9,
+                 'racket_body_range': 0.7},
+    'backhand': {'tempo_peak_frac': 6.2, 'racket_body_range': 5.1, 'backswing_depth': 3.7,
+                 'coil_depth_xfactor': 2.6, 'contact_wrist_lateral': 2.5,
+                 'contact_elbow_angle': 2.2, 'racket_body_dist': 1.6,
+                 'forward_weight_transfer': 1.5, 'contact_wrist_height': 1.4,
+                 'rotation_range': 0.8},
+    'serve':    {'contact_elbow_angle': 5.1, 'racket_body_range': 2.2,
+                 'wrist_path_ratio': 1.8},
 }
 
 

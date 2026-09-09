@@ -120,8 +120,10 @@ def reextract_for_entry(entry, lookup=None, single=False,
 
     Returns {status, trajectory, overlay, new_peak_frame, new_peak_time}:
       status 'ok'            -- trajectory/overlay are fresh lists; also carries
-                                'traj_yaw_deg' (float when yaw was applied -> the
-                                trajectory has metric-scale z; None otherwise)
+                                'traj_yaw_deg' (x/y rotation, float when applied
+                                else None), 'traj_z_yaw_deg' (rotation baked into
+                                the z channel -- hard yaw, soft yaw, or None), and
+                                'z_metric' (bool: z is metric world-derived)
       status 'missing_lookup'-- no pose/swings data for this (shot_type, swing_id)
                                 (split entries, unresolved relabels); leave entry as-is
       status 'too_few_points'-- pose window too sparse to build a trajectory; leave as-is
@@ -144,14 +146,16 @@ def reextract_for_entry(entry, lookup=None, single=False,
         fps, pose_index, world_pose_index = _load_pose_bundle(poses_abs)
         clip_start_frame = entry['clip_start_frame']
         new_peak_frame = clip_start_frame + round(contact * fps)
-        trajectory, applied_yaw = extract_swing_trajectory(
+        trajectory, meta = extract_swing_trajectory(
             {'peak_frame': new_peak_frame}, pose_index, fps,
-            world_pose_index=world_pose_index, yaw_enabled=yaw_enabled, return_yaw=True)
+            world_pose_index=world_pose_index, yaw_enabled=yaw_enabled, return_meta=True)
         if trajectory is None:
             return {'status': 'too_few_points', 'trajectory': None, 'overlay': None,
                     'new_peak_frame': new_peak_frame, 'new_peak_time': round(new_peak_frame / fps, 3)}
         overlay = build_swing_overlay(pose_index, fps, new_peak_frame, clip_start_frame)
-        return {'status': 'ok', 'trajectory': trajectory, 'overlay': overlay, 'traj_yaw_deg': applied_yaw,
+        return {'status': 'ok', 'trajectory': trajectory, 'overlay': overlay,
+                'traj_yaw_deg': meta['yaw_deg'], 'traj_z_yaw_deg': meta['z_yaw_deg'],
+                'z_metric': meta['z_metric'],
                 'new_peak_frame': new_peak_frame, 'new_peak_time': round(new_peak_frame / fps, 3)}
 
     if single:
@@ -177,13 +181,15 @@ def reextract_for_entry(entry, lookup=None, single=False,
 
     new_peak_frame = clip_start_frame + round(contact * fps)
 
-    trajectory, applied_yaw = extract_swing_trajectory(
+    trajectory, meta = extract_swing_trajectory(
         {'peak_frame': new_peak_frame}, pose_index, fps,
-        world_pose_index=world_pose_index, yaw_enabled=yaw_enabled, return_yaw=True)
+        world_pose_index=world_pose_index, yaw_enabled=yaw_enabled, return_meta=True)
     if trajectory is None:
         return {'status': 'too_few_points', 'trajectory': None, 'overlay': None,
                 'new_peak_frame': new_peak_frame, 'new_peak_time': round(new_peak_frame / fps, 3)}
 
     overlay = build_swing_overlay(pose_index, fps, new_peak_frame, clip_start_frame)
-    return {'status': 'ok', 'trajectory': trajectory, 'overlay': overlay, 'traj_yaw_deg': applied_yaw,
+    return {'status': 'ok', 'trajectory': trajectory, 'overlay': overlay,
+            'traj_yaw_deg': meta['yaw_deg'], 'traj_z_yaw_deg': meta['z_yaw_deg'],
+            'z_metric': meta['z_metric'],
             'new_peak_frame': new_peak_frame, 'new_peak_time': round(new_peak_frame / fps, 3)}

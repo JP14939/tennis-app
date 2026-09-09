@@ -75,7 +75,16 @@ ROTATION_SEVERITY_BANDS = [(45.0, 'severe'), (25.0, 'moderate'), (12.0, 'mild')]
 # Re-derive both constants the same way (see this session's z-depth-retry-2
 # plan) if the underlying pose data or database composition changes
 # meaningfully -- these are fit to today's real data, not universal constants.
-Z_ROTATION_BLEND = 0.2
+#
+# DISABLED 2026-09-10 (traj_version 4 -- "metric z on every entry"). Every
+# trajectory's z now comes from MediaPipe world landmarks (metric, ~x/y scale)
+# instead of the raw monocular image-z these constants were fit to -- the
+# z-range magnitudes shift, so blending at 28.6 deg/z-unit would mis-scale the
+# live body_rotation sub-score. rotation_range() falls back to angle-only
+# (identical to its existing len(z_vals)<3 path, the months-stable pre-Aug-2026
+# behaviour). Re-derive Z_TO_DEG_SCALE against metric-z separation ranges on the
+# v4 DB and re-raise the blend as a Phase-4 follow-up.
+Z_ROTATION_BLEND = 0.0
 Z_TO_DEG_SCALE = 28.6
 
 RACKET_SCALE = 0.8  # shoulder-width units — first-pass estimate, not yet calibrated against real usage data

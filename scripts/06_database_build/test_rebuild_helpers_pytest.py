@@ -118,8 +118,13 @@ def test_practice_entry_missing_pose_file(monkeypatch):
 
 def test_too_few_points(monkeypatch):
     monkeypatch.setattr(rh, '_load_pose_bundle', lambda path: (FPS, _pose_index(), {}))
-    monkeypatch.setattr(rh, 'extract_swing_trajectory',
-                        lambda swing, idx, fps, **kw: ((None, None) if kw.get('return_yaw') else None))
+    def _stub(swing, idx, fps, **kw):
+        if kw.get('return_meta'):
+            return None, {'yaw_deg': None, 'z_yaw_deg': None, 'z_metric': False}
+        if kw.get('return_yaw'):
+            return None, None
+        return None
+    monkeypatch.setattr(rh, 'extract_swing_trajectory', _stub)
     lookup = {('forehand', 4): {'poses_path': 'x', 'fps': FPS,
                                 'orig_peak_frame': 200, 'start_frame': 180}}
     res = rh.reextract_for_entry(_entry(), lookup=lookup)
