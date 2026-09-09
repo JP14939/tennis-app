@@ -135,7 +135,7 @@ MIN_TRAJECTORY_POINTS = 5
 
 
 def extract_swing_trajectory(swing, pose_index, fps, *,
-                             world_pose_index=None, yaw_enabled=False):
+                             world_pose_index=None, yaw_enabled=False, return_yaw=False):
     """
     Sample every available pose frame (native ~20fps from extract_poses.py)
     from PRE_SEC before to POST_SEC after the peak (contact) frame, instead
@@ -143,7 +143,11 @@ def extract_swing_trajectory(swing, pose_index, fps, *,
     for DTW comparison rather than compressing it to 3 points.
 
     Returns a list of {'t': seconds relative to contact, 'landmarks': {...}},
-    or None if too few usable frames are found.
+    or None if too few usable frames are found. With return_yaw=True, returns
+    (trajectory_or_None, applied_yaw_deg) -- applied_yaw_deg is the rotation
+    actually baked in (None when yaw was off, abstained, or had too few
+    world-landmark frames). A trajectory carries metric-scale z iff a yaw was
+    applied (else the z is raw monocular image-z from normalise_landmarks).
 
     Pro-side builder. By default (yaw_enabled=False, or no world landmarks in
     the pose file) it does NOT yaw-normalise -- byte-identical to the original.
@@ -163,10 +167,13 @@ def extract_swing_trajectory(swing, pose_index, fps, *,
               for f in sorted(world_pose_index) if lead_lo <= f <= peak]
         yaw_deg, _samples = yaw_normalise_window(wt)
 
-    trajectory, _meta = extract_trajectory_from_index(
+    trajectory, meta = extract_trajectory_from_index(
         pose_index, fps, peak,
         world_pose_index=world_pose_index, yaw_deg=yaw_deg)
-    return trajectory or None
+    trajectory = trajectory or None
+    if return_yaw:
+        return trajectory, meta['yaw_deg']
+    return trajectory
 
 
 def extract_trajectory_from_index(pose_index, fps, contact_frame, *,

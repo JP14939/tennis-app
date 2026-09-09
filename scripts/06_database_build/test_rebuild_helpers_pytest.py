@@ -60,6 +60,7 @@ def test_batch_reextract_anchors_on_start_frame_plus_contact(monkeypatch):
     assert abs(res['trajectory'][0]['t'] + PRE_SEC) < 0.11
     # overlay t is clip-relative (origin = start_frame) -> first sample well positive
     assert res['overlay'][0]['t'] > 0
+    assert res['traj_yaw_deg'] is None  # empty world index -> no yaw applied
     assert entry['trajectory'] == [{'t': 0.0, 'landmarks': {}}]  # not mutated
 
 
@@ -117,7 +118,8 @@ def test_practice_entry_missing_pose_file(monkeypatch):
 
 def test_too_few_points(monkeypatch):
     monkeypatch.setattr(rh, '_load_pose_bundle', lambda path: (FPS, _pose_index(), {}))
-    monkeypatch.setattr(rh, 'extract_swing_trajectory', lambda swing, idx, fps, **kw: None)
+    monkeypatch.setattr(rh, 'extract_swing_trajectory',
+                        lambda swing, idx, fps, **kw: ((None, None) if kw.get('return_yaw') else None))
     lookup = {('forehand', 4): {'poses_path': 'x', 'fps': FPS,
                                 'orig_peak_frame': 200, 'start_frame': 180}}
     res = rh.reextract_for_entry(_entry(), lookup=lookup)

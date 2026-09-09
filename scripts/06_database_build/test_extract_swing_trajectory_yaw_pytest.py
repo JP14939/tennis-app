@@ -65,6 +65,18 @@ def test_default_and_no_world_are_identical():
     assert extract_swing_trajectory(sw, idx, FPS, world_pose_index=widx) == base
 
 
+def test_return_yaw_reports_applied_rotation():
+    idx = build_pose_index(_frames(yaw_deg=25.0))
+    sw = {'peak_frame': PEAK}
+    traj, applied = extract_swing_trajectory(sw, idx, FPS, return_yaw=True)
+    assert traj and applied is None  # no world index -> nothing applied
+    frames = _frames(yaw_deg=30.0, with_world=True)
+    traj, applied = extract_swing_trajectory(
+        {'peak_frame': PEAK}, build_pose_index(frames), FPS,
+        world_pose_index=build_world_pose_index(frames), yaw_enabled=True, return_yaw=True)
+    assert traj and applied is not None and abs(applied - 30.0) < 8.0
+
+
 def test_yaw_enabled_rotates_swing_to_canonical():
     frames = _frames(yaw_deg=30.0, with_world=True)
     idx = build_pose_index(frames)

@@ -59,13 +59,18 @@ CACHE_VERSION = 3   # v3: yaw-normalized user trajectories (yaw_enabled=True) so
 
 
 def _rec_metric_z(rec):
-    """A cache rec carries metric (canonical, yaw-normalized) z only from v3 on."""
-    return rec.get('v', 1) >= 3
+    """A cache rec carries metric (canonical, yaw-normalized) z only from v3 on
+    AND only when yaw was actually applied to the user trajectory (weak estimate
+    -> identity -> z is still raw image-z)."""
+    return rec.get('v', 1) >= 3 and rec.get('user_yaw_deg') is not None
 
 
 def _entry_metric_z(entry):
-    """A pro entry carries metric z once the stride-1 + yaw re-slice has run."""
-    return entry.get('traj_version', 0) >= 3
+    """A pro entry carries metric (canonical, world-landmark) z only when the
+    yaw re-slice actually rotated it -- traj_version>=3 AND a non-null yaw was
+    applied. traj_version>=3 with traj_yaw_deg None means yaw abstained and the
+    z is still raw monocular image-z (do NOT feed it the depth axes)."""
+    return entry.get('traj_version', 0) >= 3 and entry.get('traj_yaw_deg') is not None
 
 # swing-arm chain carries the technique signal; nose/hips are gross position
 LANDMARK_WEIGHTS = {
@@ -263,9 +268,10 @@ def _extract_one(q, db_entries, reviewed, lmk):
     if ct is None and q.get('clip_peak_frame') is not None:
         ct = q['clip_peak_frame'] / fps
     # yaw_enabled=True: the cache is v3, so the user trajectory is yaw-normalized
-    # to a canonical facing (metric-z depth axes need it). Weak estimate -> identity.
-    user_traj, peak = build_user_trajectory(frames, fps, ct, shot_type=q['shot_type'],
-                                            yaw_enabled=True)
+    # to a canonical facing (metric-z depth axes need it). Weak estimate -> identity
+    # (yaw_meta['yaw_deg'] None -> z stays raw image-z, not metric).
+    user_traj, peak, yaw_meta = build_user_trajectory(frames, fps, ct, shot_type=q['shot_type'],
+                                                      yaw_enabled=True, return_meta=True)
     if not user_traj:
         return {**_meta(q), 'error': 'no trajectory'}
     user_angle, _conf, dbg = infer_camera_angle(clip, peak, landmarker=lmk)
@@ -311,6 +317,7 @@ def _extract_one(q, db_entries, reviewed, lmk):
         'self_id': q['exclude_ids'][0] if q['exclude_ids'] else (q['key'].split(':', 1)[1] if q['bucket'] == 'in_db' else None),
         'pool_ids': [c['id'] for c in pool],
         'user_traj': user_traj,
+        'user_yaw_deg': yaw_meta.get('yaw_deg'),
         'racket_frames': racket_frames,
     }
 
