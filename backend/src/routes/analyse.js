@@ -157,15 +157,28 @@ router.post('/analyse', requireAuth, analyseLimiter, upload.single('video'), asy
     cleanup();
     releaseUsageSlot(db, usageRowId);
     console.error(`[analyse] ${err.message}`, err.stderr?.slice(-2000));
+    // The matcher exits non-zero with {error, code?} JSON on stdout. `code` is
+    // set for structured rejections the app handles specially -- currently only
+    // VIEW_NOT_USABLE (behind-the-baseline view gate), which drives a
+    // 'check your camera setup' screen instead of a generic failure.
+    let nonzeroError = 'Analysis failed';
+    let nonzeroCode = null;
+    if (err.kind === 'nonzero_exit') {
+      try {
+        const parsed = JSON.parse(err.stdout);
+        nonzeroError = parsed.error || nonzeroError;
+        nonzeroCode = parsed.code || null;
+      } catch { /* keep defaults */ }
+    }
     const messages = {
       spawn_failed: 'Failed to start analysis process',
       invalid_json: 'Analysis produced invalid output',
       timeout: 'Analysis timed out — try a shorter clip',
-      nonzero_exit: (() => {
-        try { return JSON.parse(err.stdout).error; } catch { return 'Analysis failed'; }
-      })(),
+      nonzero_exit: nonzeroError,
     };
-    return res.status(500).json({ error: messages[err.kind] || 'Analysis failed' });
+    const body = { error: messages[err.kind] || 'Analysis failed' };
+    if (nonzeroCode) body.code = nonzeroCode;
+    return res.status(500).json(body);
   }
 
   try {

@@ -729,31 +729,62 @@ VIEW_GATE_SIDE_ON_ANGLE_DEG = 78.0   # >= this ~= angle_label "Side view" -- no 
 # not this one; the 0c-footage 1a-val pass revisits the absolute number.
 VIEW_GATE_MIN_ANGLE_CONF    = 0.45
 
+# Launch input-domain restriction (2026-09-09): the app only accepts footage shot
+# from behind the baseline with the WHOLE net in frame. A post within this
+# fraction of a frame edge counts as truncated (net running out of shot = camera
+# too close to one tramline / too angled); at least this fraction of the trained
+# keypoint frames must show both posts inside the margins.
+NET_POST_EDGE_MARGIN   = 0.03
+POSTS_INFRAME_MIN_FRAC  = 0.5
+
+# reasons that hard-reject an upload (severity 'block') vs. only warn ('warn').
+# angle_unreliable warns rather than blocks: it fires on "player not clearly
+# visible in the sampled frames", which would false-reject otherwise-fine
+# behind-baseline footage (~12% on the Section 8 item 8 distribution).
+VIEW_GATE_BLOCK_REASONS = {'front_view', 'side_on', 'net_not_found', 'net_truncated'}
+
 # Full-length copy for the results banner / post-pick check.
 VIEW_GATE_MESSAGES = {
     'front_view':       'This looks filmed from the net. Stand behind the baseline fence so the camera sees your back.',
     'side_on':          'This looks filmed side-on. Move around behind the baseline so the camera looks down the court.',
     'angle_unreliable': "We couldn't read the court angle clearly -- check the fence-mount guide and try again.",
+    'net_not_found':    "We couldn't find the net. Film from behind the baseline with the whole net in view.",
+    'net_truncated':    'The net runs out of the frame -- move back behind the baseline so both net posts are visible.',
 }
 # Shorter copy for the live positioning badge (tight UI), same signal.
 VIEW_GATE_LIVE_MESSAGES = {
     'front_view':       'Filmed from the net -- move behind the baseline fence.',
     'side_on':          'Too side-on -- move behind the baseline.',
     'angle_unreliable': "Can't read the court angle -- see the fence-mount guide.",
+    'net_not_found':    "Can't find the net -- get the whole net in shot from behind the baseline.",
+    'net_truncated':    'Net is cut off -- step back so both posts are visible.',
 }
 
 
-def evaluate_view_usable(view_direction, angle_deg, angle_conf):
+def evaluate_view_usable(view_direction, angle_deg, angle_conf, *, net_debug=None):
     """
     Decide whether a camera setup is a usable behind-the-baseline view.
 
-    Returns {'usable': bool, 'reason': str|None, 'severity': 'ok'|'warn',
+    Returns {'usable': bool, 'reason': str|None, 'severity': 'ok'|'warn'|'block',
              'message': str|None} where reason is one of None, 'front_view',
-             'side_on', 'angle_unreliable'. First failing rule wins.
+             'side_on', 'angle_unreliable', 'net_not_found', 'net_truncated'.
+    First failing rule wins.
+
+    net_debug: the infer_camera_angle() debug dict (or a 2-key dict on the live
+    single-frame path -- 'net_detection_method' + 'posts_inframe_frac'). When
+    None the net-geometry rules are skipped, so callers that can't supply it
+    (and the 3-arg unit tests) keep the pre-2026-09-09 behaviour.
+
+    severity 'block' reasons hard-reject an upload (VIEW_GATE_BLOCK_REASONS);
+    'warn' rides along in the result for a frontend banner but still scores.
     """
     reason = None
     if view_direction == 'front':
         reason = 'front_view'
+    elif net_debug is not None and net_debug.get('net_detection_method') != 'keypoint_model':
+        reason = 'net_not_found'
+    elif net_debug is not None and net_debug.get('posts_inframe_frac', 1.0) < POSTS_INFRAME_MIN_FRAC:
+        reason = 'net_truncated'
     elif angle_deg is not None and angle_deg >= VIEW_GATE_SIDE_ON_ANGLE_DEG:
         reason = 'side_on'
     elif (angle_deg is not None and angle_conf is not None
@@ -762,7 +793,8 @@ def evaluate_view_usable(view_direction, angle_deg, angle_conf):
 
     if reason is None:
         return {'usable': True, 'reason': None, 'severity': 'ok', 'message': None}
-    return {'usable': False, 'reason': reason, 'severity': 'warn',
+    severity = 'block' if reason in VIEW_GATE_BLOCK_REASONS else 'warn'
+    return {'usable': False, 'reason': reason, 'severity': severity,
             'message': VIEW_GATE_MESSAGES[reason]}
 
 
@@ -808,11 +840,21 @@ def check_camera_setup_frame(frame, landmarker=None):
         return {
             'ok': False, 'angle': None, 'confidence': 0.0,
             'height_ratio': None, 'elevation_status': 'unknown', 'framing_status': 'unknown',
+            'view_direction': 'unknown', 'view_reason': 'net_not_found', 'view_severity': 'block',
             'message': "Can't find the net — try stepping back or check the fence-mount guide.",
         }
 
     (net_width, net_center_x, net_y, player_x, player_vis, post_height_frac, ankle_y,
      used_keypoints, _height_ratio, stance_width_ratio, shoulder_tilt_deg, _net_roll) = result
+
+    # Single-frame equivalent of _aggregate_frame_angles' posts_inframe_frac:
+    # is the whole net in shot, or is a post at the frame edge?
+    left_x, right_x = net_center_x - net_width / 2, net_center_x + net_width / 2
+    posts_inframe = (left_x > NET_POST_EDGE_MARGIN and right_x < 1 - NET_POST_EDGE_MARGIN)
+    frame_net_debug = {
+        'net_detection_method': 'keypoint_model' if used_keypoints else 'hough_heuristic',
+        'posts_inframe_frac': 1.0 if posts_inframe else 0.0,
+    }
 
     # Same acos + player-offset formula as the finished-video path -- via the
     # shared helper (Section 8 item 3), so this is no longer a divergent copy.
@@ -841,7 +883,7 @@ def check_camera_setup_frame(frame, landmarker=None):
         view_direction = detect_view_direction(frame, landmarker=landmarker)
     except Exception:
         view_direction = 'unknown'
-    view_gate = evaluate_view_usable(view_direction, angle, confidence)
+    view_gate = evaluate_view_usable(view_direction, angle, confidence, net_debug=frame_net_debug)
 
     if confidence < LIVE_MIN_CONFIDENCE:
         return {
@@ -849,6 +891,7 @@ def check_camera_setup_frame(frame, landmarker=None):
             'height_ratio': height_ratio, 'elevation_status': elevation_status,
             'framing_status': framing_status,
             'view_direction': view_direction, 'view_reason': view_gate['reason'],
+            'view_severity': view_gate['severity'] if not view_gate['usable'] else 'warn',
             'message': f'Uncertain ({angle_label(angle)}, low confidence).',
         }
 
@@ -858,6 +901,7 @@ def check_camera_setup_frame(frame, landmarker=None):
             'height_ratio': height_ratio, 'elevation_status': elevation_status,
             'framing_status': framing_status,
             'view_direction': view_direction, 'view_reason': view_gate['reason'],
+            'view_severity': view_gate['severity'],
             'message': VIEW_GATE_LIVE_MESSAGES[view_gate['reason']],
         }
 
@@ -865,7 +909,7 @@ def check_camera_setup_frame(frame, landmarker=None):
         'ok': True, 'angle': angle, 'confidence': confidence,
         'height_ratio': height_ratio, 'elevation_status': elevation_status,
         'framing_status': framing_status,
-        'view_direction': view_direction, 'view_reason': None,
+        'view_direction': view_direction, 'view_reason': None, 'view_severity': 'ok',
         'message': (
             f'{angle_label(angle)}.'
             f'{LIVE_FRAMING_MESSAGES.get(framing_status, "")}'
@@ -1015,8 +1059,19 @@ def _aggregate_frame_angles(measurements, *, kp_base=0.85, hough_base=0.35,
     best = min(measurements, key=lambda m: abs(m[0] - median_width))
     player_vis = best[4]
 
+    # Launch view gate: on the trained-keypoint frames, is the whole net (both
+    # posts) inside the frame, or is a post running off the edge? left/right post
+    # x reconstructed from center +/- width/2 (both already normalised [0,1]).
+    kp_meas = [m for m in measurements if m[7]]
+    posts_inframe = sum(
+        1 for m in kp_meas
+        if (m[1] - m[0] / 2) > NET_POST_EDGE_MARGIN
+        and (m[1] + m[0] / 2) < 1 - NET_POST_EDGE_MARGIN)
+    posts_inframe_frac = round(posts_inframe / len(kp_meas), 2) if kp_meas else 0.0
+
     agg_debug.update({
         'net_keypoint_frames': f'{n_keypoint_frames}/{len(measurements)}',
+        'posts_inframe_frac':  posts_inframe_frac,
         'kp_frac':             round(kp_frac, 2),
         'per_frame_angles':    [round(a, 1) for a, _ in per_frame],
         'angle_spread':        round(angle_spread, 1),

@@ -76,6 +76,7 @@ def check_camera_setup(video_path):
         return {
             'ok': False, 'angle': None, 'confidence': 0.0,
             'height_ratio': None, 'elevation_status': 'unknown', 'framing_status': 'unknown',
+            'view_direction': 'unknown', 'view_reason': 'net_not_found', 'view_severity': 'block',
             'message': "Couldn't find the net in your video — try the fence-mount guide for a clearer shot.",
         }
 
@@ -88,6 +89,7 @@ def check_camera_setup(video_path):
             'ok': False, 'angle': angle, 'confidence': confidence,
             'height_ratio': height_ratio, 'elevation_status': elevation_status,
             'framing_status': framing_status,
+            'view_direction': 'unknown', 'view_reason': 'angle_unreliable', 'view_severity': 'warn',
             'message': f"Camera setup looks uncertain ({angle_label(angle)}, low confidence) — see the fence-mount guide.",
         }
 
@@ -95,13 +97,15 @@ def check_camera_setup(video_path):
     # the analysed upload, surfaced here so the post-pick banner catches a
     # wrong-side setup before the user marks contact and submits.
     view_direction = _detect_view_direction_for_video(video_path)
-    view_gate = evaluate_view_usable(view_direction, angle, confidence)
+    view_gate = evaluate_view_usable(view_direction, angle, confidence,
+                                     net_debug=debug if isinstance(debug, dict) else None)
     if not view_gate['usable']:
         return {
             'ok': False, 'angle': angle, 'confidence': confidence,
             'height_ratio': height_ratio, 'elevation_status': elevation_status,
             'framing_status': framing_status,
             'view_direction': view_direction, 'view_reason': view_gate['reason'],
+            'view_severity': view_gate['severity'],
             'message': view_gate['message'],
         }
 
@@ -109,7 +113,7 @@ def check_camera_setup(video_path):
         'ok': True, 'angle': angle, 'confidence': confidence,
         'height_ratio': height_ratio, 'elevation_status': elevation_status,
         'framing_status': framing_status,
-        'view_direction': view_direction, 'view_reason': None,
+        'view_direction': view_direction, 'view_reason': None, 'view_severity': 'ok',
         'message': (
             f'Net detected OK ({angle_label(angle)}).'
             f'{FRAMING_MESSAGES.get(framing_status, "")}'

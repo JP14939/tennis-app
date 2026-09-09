@@ -338,11 +338,17 @@ export default function ResultsScreen({ navigation, route }) {
   // ── Error ─────────────────────────────────────────────────────────────────
   if (status === 'error') {
     const isDailyLimit = errorCode === 'DAILY_LIMIT';
+    // View gate: the video isn't a usable behind-the-baseline shot. Re-running
+    // the same clip can't help -- send them back to re-record instead.
+    const isViewReject = errorCode === 'VIEW_NOT_USABLE';
+    const title = isDailyLimit ? 'Daily limit reached'
+      : isViewReject ? 'Check your camera setup'
+      : 'Analysis failed';
     return (
       <SafeAreaView style={s.safe}>
         <CourtBackground />
         <View style={s.centerFill}>
-          <Text style={s.loadingTitle}>{isDailyLimit ? 'Daily limit reached' : 'Analysis failed'}</Text>
+          <Text style={s.loadingTitle}>{title}</Text>
           <Text style={s.loadingSub}>{errorMsg}</Text>
           {isDailyLimit ? (
             <TouchableOpacity
@@ -351,14 +357,20 @@ export default function ResultsScreen({ navigation, route }) {
             >
               <Text style={s.retryBtnText}>Upgrade to Premium</Text>
             </TouchableOpacity>
+          ) : isViewReject ? (
+            <TouchableOpacity style={s.retryBtn} onPress={() => navigation.popToTop()}>
+              <Text style={s.retryBtnText}>Record another swing</Text>
+            </TouchableOpacity>
           ) : (
             <TouchableOpacity style={s.retryBtn} onPress={runAnalysis}>
               <Text style={s.retryBtnText}>Try again</Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={s.secondaryBtn} onPress={() => navigation.popToTop()}>
-            <Text style={s.secondaryBtnText}>Back to home</Text>
-          </TouchableOpacity>
+          {!isViewReject && (
+            <TouchableOpacity style={s.secondaryBtn} onPress={() => navigation.popToTop()}>
+              <Text style={s.secondaryBtnText}>Back to home</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </SafeAreaView>
     );

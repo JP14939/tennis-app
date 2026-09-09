@@ -177,8 +177,18 @@ export default function ContactMarkingScreen({ navigation, route }) {
     }, windowMs);
   };
 
+  // The /api/check-setup verdict blocks the analysis when the camera setup
+  // isn't a usable behind-the-baseline shot (filmed from the net, side-on, net
+  // out of / cut off in frame). Re-recording is the only fix.
+  const calibrationBlocked =
+    calibration.status === 'done' && calibration.view_severity === 'block';
+
   const confirmFrame = async () => {
     if (roughTime === null) return;
+    if (calibrationBlocked) {
+      navigation.popToTop();
+      return;
+    }
     // Clamped the same way the seek call sites already are (lines ~80, 88) --
     // scrubbing fineOffset negative near the start of a clip could otherwise
     // submit a negative contactFrame/contactTimeSec downstream.
@@ -398,12 +408,15 @@ export default function ContactMarkingScreen({ navigation, route }) {
               <Text style={s.calibChecking}>Checking camera setup…</Text>
             )}
             {calibration.status === 'done' && calibration.message && (() => {
-              // Elevation warning retired (backend Section 8 item 2) — ok is
-              // now the whole story.
-              const isWarn = calibration.ok === false;
+              // Elevation warning retired (backend Section 8 item 2). A 'block'
+              // severity (wrong-side / net-not-in-frame) is a hard stop; ok ===
+              // false without it is a soft warning; ok === true is a tick.
+              const isBlock = calibrationBlocked;
+              const isWarn = !isBlock && calibration.ok === false;
               return (
-                <Text style={[s.calibMsg, isWarn && s.calibWarn]}>
-                  {isWarn ? '⚠ ' : calibration.ok === true ? '✓ ' : ''}{calibration.message}
+                <Text style={[s.calibMsg, isWarn && s.calibWarn, isBlock && s.calibBlock]}>
+                  {isBlock ? '⛔ ' : isWarn ? '⚠ ' : calibration.ok === true ? '✓ ' : ''}{calibration.message}
+                  {isBlock ? '\nRecord another swing to continue.' : ''}
                 </Text>
               );
             })()}
@@ -498,7 +511,7 @@ export default function ContactMarkingScreen({ navigation, route }) {
                 <Text style={s.btnGhostText}>0.25× slow-mo</Text>
               </TouchableOpacity>
               <TouchableOpacity style={s.btnPrimary2} onPress={() => { playTapSound(); confirmFrame(); }}>
-                <Text style={s.btnPrimaryText}>This is it ✓</Text>
+                <Text style={s.btnPrimaryText}>{calibrationBlocked ? 'Record another swing' : 'This is it ✓'}</Text>
               </TouchableOpacity>
             </View>
 
@@ -571,6 +584,7 @@ const s = StyleSheet.create({
   calibChecking: { color: 'rgba(255,255,255,0.7)', fontSize: 12, marginBottom: 10, fontFamily: fonts.regular },
   calibMsg:      { color: colors.primary, fontSize: 12, marginBottom: 10, lineHeight: 17, fontFamily: fonts.regular },
   calibWarn:     { color: colors.gold },
+  calibBlock:    { color: colors.coral, fontFamily: fonts.semibold },
 
   progressTrack: {
     height: 8, backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 4,

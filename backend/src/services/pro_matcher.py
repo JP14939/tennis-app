@@ -75,7 +75,13 @@ def main():
         # basename before it leaves this process; every other message (the
         # overwhelming majority, which never mention a path) is unaffected.
         message = str(e).replace(args.video, os.path.basename(args.video))
-        print(json.dumps({'error': message}))
+        payload = {'error': message}
+        # ViewGateError (behind-the-baseline gate) carries a .code so the app can
+        # show a 'check your camera setup' screen instead of a generic failure.
+        code = getattr(e, 'code', None)
+        if code:
+            payload['code'] = code
+        print(json.dumps(payload))
         sys.exit(1)
 
 

@@ -150,7 +150,7 @@ def test_angle_from_sideline_symmetry():
 def test_view_gate_front_view_fails():
     r = evaluate_view_usable('front', 30.0, 0.8)
     assert r['usable'] is False and r['reason'] == 'front_view'
-    assert r['severity'] == 'warn' and r['message']
+    assert r['severity'] == 'block' and r['message']
 
 
 def test_view_gate_side_on_fails():
@@ -161,6 +161,8 @@ def test_view_gate_side_on_fails():
 def test_view_gate_low_confidence_fails():
     r = evaluate_view_usable('back', 45.0, VIEW_GATE_MIN_ANGLE_CONF - 0.01)
     assert r['usable'] is False and r['reason'] == 'angle_unreliable'
+    # low confidence but net found: warn, not a hard reject
+    assert r['severity'] == 'warn'
 
 
 def test_view_gate_front_beats_other_rules():
@@ -184,6 +186,41 @@ def test_view_gate_unknown_view_alone_passes():
 def test_view_gate_missing_angle_passes():
     r = evaluate_view_usable('back', None, None)
     assert r['usable'] is True
+
+
+# ---- view gate: net-geometry rules (launch input restriction, 2026-09-09) ----
+
+def test_view_gate_net_debug_none_skips_net_rules():
+    # callers that can't supply net_debug keep the pre-change behaviour
+    r = evaluate_view_usable('back', 45.0, 0.6, net_debug=None)
+    assert r['usable'] is True
+
+
+def test_view_gate_net_not_found_blocks():
+    for method in ('court_lines', 'hough_heuristic', None):
+        r = evaluate_view_usable('back', 45.0, 0.6,
+                                 net_debug={'net_detection_method': method, 'posts_inframe_frac': 1.0})
+        assert r['usable'] is False and r['reason'] == 'net_not_found'
+        assert r['severity'] == 'block' and r['message']
+
+
+def test_view_gate_net_truncated_blocks():
+    r = evaluate_view_usable('back', 45.0, 0.6,
+                             net_debug={'net_detection_method': 'keypoint_model', 'posts_inframe_frac': 0.2})
+    assert r['usable'] is False and r['reason'] == 'net_truncated'
+    assert r['severity'] == 'block'
+
+
+def test_view_gate_whole_net_in_frame_passes():
+    r = evaluate_view_usable('back', 12.0, 0.7,
+                             net_debug={'net_detection_method': 'keypoint_model', 'posts_inframe_frac': 0.8})
+    assert r['usable'] is True and r['reason'] is None
+
+
+def test_view_gate_front_beats_net_rules():
+    r = evaluate_view_usable('front', 45.0, 0.6,
+                             net_debug={'net_detection_method': 'court_lines', 'posts_inframe_frac': 0.0})
+    assert r['reason'] == 'front_view'
 
 
 # ---- Section 8: _angle_from_measurement / _aggregate_frame_angles ----
@@ -239,6 +276,21 @@ def test_aggregate_banner_false_positive_rejected():
     ms = [_meas(0.9, used_kp=False) for _ in range(5)]
     agg = ia._aggregate_frame_angles(ms)
     assert agg['ok'] is False and 'banner' in agg['reason']
+
+
+def test_aggregate_posts_inframe_frac():
+    # 4 keypoint frames: 3 with the whole net comfortably in frame, 1 with the
+    # right post running off the edge (center 0.8 + width/2 0.25 = 1.05).
+    ms = ([_meas(0.5, net_center_x=0.5) for _ in range(3)]
+          + [_meas(0.5, net_center_x=0.8)])
+    agg = ia._aggregate_frame_angles(ms)
+    assert agg['debug']['posts_inframe_frac'] == 0.75
+    # all truncated -> 0.0
+    trunc = ia._aggregate_frame_angles([_meas(0.5, net_center_x=0.8) for _ in range(4)])
+    assert trunc['debug']['posts_inframe_frac'] == 0.0
+    # hough-only frames don't count toward the fraction (0 keypoint frames)
+    hough = ia._aggregate_frame_angles([_meas(0.5, net_center_x=0.5, used_kp=False) for _ in range(5)])
+    assert hough['debug']['posts_inframe_frac'] == 0.0
 
 
 def test_aggregate_median_odd_even():

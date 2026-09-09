@@ -40,6 +40,16 @@ from serve_anchor import serve_contact_anchor_frame, pose_by_frame_from_frames_l
 import phase_breakdown
 import clip_review_log
 
+class ViewGateError(RuntimeError):
+    """Upload rejected by the behind-the-baseline view gate. Carries a `.code`
+    so pro_matcher.py / analyse.js can hand the frontend a structured error
+    (a 'Check your camera setup' screen, not a generic 'analysis failed')."""
+
+    def __init__(self, message, *, code='VIEW_NOT_USABLE'):
+        super().__init__(message)
+        self.code = code
+
+
 # Serves need a wider audio-onset search band than groundstrokes: the anchor
 # (overhead apex) is noisier and contact lands a few frames after it.
 SERVE_AUDIO_WINDOW_SEC = 0.8
@@ -656,11 +666,18 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
     # in the result for the frontend to warn on. Set RALLYMAX_ENFORCE_VIEW_GATE=1
     # (once VIEW_GATE_* is tuned on labelled footage, 1a-val) to hard-reject
     # instead: the RuntimeError surfaces via analyse.js's nonzero_exit branch.
-    view_gate = evaluate_view_usable(user_view_direction, user_angle, angle_conf)
+    # angle_debug is a string (not a dict) when the net could not be located at
+    # all -- surface that to the gate as an explicit "net not found".
+    gate_net_debug = angle_debug if isinstance(angle_debug, dict) else {'net_detection_method': None}
+    view_gate = evaluate_view_usable(user_view_direction, user_angle, angle_conf,
+                                     net_debug=gate_net_debug)
     if not view_gate['usable']:
-        print(f'  View gate: NOT USABLE ({view_gate["reason"]})', file=sys.stderr)
-        if os.environ.get('RALLYMAX_ENFORCE_VIEW_GATE') == '1':
-            raise RuntimeError(view_gate['message'])
+        print(f'  View gate: NOT USABLE ({view_gate["reason"]}, severity={view_gate["severity"]})', file=sys.stderr)
+        # Enforced by default for launch: only clean behind-the-baseline footage
+        # (whole net in frame) is scored. RALLYMAX_ENFORCE_VIEW_GATE=0 restores
+        # fully-advisory behaviour for batch eval over legacy footage.
+        if view_gate['severity'] == 'block' and os.environ.get('RALLYMAX_ENFORCE_VIEW_GATE', '1') != '0':
+            raise ViewGateError(view_gate['message'], code='VIEW_NOT_USABLE')
     else:
         print('  View gate: ok', file=sys.stderr)
 
