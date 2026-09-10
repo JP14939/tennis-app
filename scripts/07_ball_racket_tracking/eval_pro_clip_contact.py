@@ -26,6 +26,17 @@ and prints an aggregate report at the end (also available standalone via
 
 Usage:
   python eval_pro_clip_contact.py [--limit N] [--only ID[,ID...]] [--report-only]
+                                  [--anchor wrist|teacher|auto] [--human-only]
+                                  [--pose-stride N]
+
+  --anchor auto     the actual live no-mark path (serve -> overhead-apex,
+                    groundstroke -> wrist-velocity peak)
+  --anchor teacher  refine from the human mark -- upper bound on refinement alone
+  --human-only      only 'contact_time_corrected' labels (gold); drops the ~170
+                    audio-derived 'label_confirmed' marks
+  --pose-stride     pose sampling stride, default 1 (matches the live app + the
+                    stride-1 pro DB); the cache dir and output CSV are
+                    stride-suffixed so runs don't cross-contaminate
 """
 import argparse
 import csv
@@ -48,8 +59,19 @@ from clip_urls import PRO_CLIPS_DIR  # noqa: E402
 
 PRO_DB_PATH = os.path.join(DATA_DIR, '06_pro_database', 'pro_database.json')
 REVIEW_LOG_PATH = os.path.join(DATA_DIR, '06_pro_database', 'clip_review_log.jsonl')
-POSE_CACHE_DIR = os.path.join(DATA_DIR, '07_ball_racket_tracking', '.eval_pose_cache')
+POSE_CACHE_BASE = os.path.join(DATA_DIR, '07_ball_racket_tracking', '.eval_pose_cache')
 OUT_CSV = os.path.join(DATA_DIR, '07_ball_racket_tracking', 'eval_pro_clip_contact.csv')
+
+# Pose sampling stride. The pro database was rebuilt at stride 1 (2026-09-10,
+# Phase 0a) and the live app extracts every frame, so the eval must too --
+# otherwise the anchor / wrist-kinematics frame math is off by 3x and every
+# error number is quantised to 3-frame steps. The cache dir is stride-suffixed
+# so a stride-3 run and a stride-1 run don't silently share stale poses.
+POSE_STRIDE = 1
+
+
+def _pose_cache_dir():
+    return f'{POSE_CACHE_BASE}_s{POSE_STRIDE}'
 
 # find_contact_frame only looks within +-0.3s of the anchor; a little extra
 # margin so the window has detections at its edges. Restricting YOLO to this
@@ -69,10 +91,23 @@ CSV_FIELDS = [
 ]
 
 
-def teacher_labels():
+def teacher_labels(human_only=False):
     """{entry_id: (teacher_time_sec, verdict)} for entries whose LATEST review
     verdict means a human actually pinned the contact frame. For an entry
-    corrected more than once, the teacher is the most recent 'new' value."""
+    corrected more than once, the teacher is the most recent 'new' value.
+
+    Two verdict classes qualify:
+      - 'contact_time_corrected' -- a human scrubbed to the exact frame in
+        Pro Clip Review and typed the corrected time (note 'a -> b'). Gold
+        standard. ~380 entries.
+      - 'label_confirmed' -- the entry's clip_contact_time_sec (audio-derived
+        in the Phase B.2 fill, ~96% within 50ms of a human mark) was then
+        eyeballed as correct in a quality pass. Slightly noisier. ~170 entries.
+        `human_only=True` excludes these.
+
+    (Checked 2026-09-10: no 'contact_time_corrected' note ends '(audio)' in the
+    current log -- the audio fills live under 'label_confirmed', not as machine
+    corrections, so there's nothing to filter out of the corrected set.)"""
     latest = {}
     corrected = {}
     with open(REVIEW_LOG_PATH) as f:
@@ -97,7 +132,7 @@ def teacher_labels():
             continue
         if verdict == 'contact_time_corrected' and eid in corrected:
             out[eid] = (corrected[eid], verdict)
-        elif verdict == 'label_confirmed':
+        elif verdict == 'label_confirmed' and not human_only:
             t = by_id[eid].get('clip_contact_time_sec')
             if t is not None:
                 out[eid] = (float(t), verdict)
@@ -115,24 +150,29 @@ def _landmarks_by_name(frame):
 
 
 def get_or_extract_poses(clip_path):
-    os.makedirs(POSE_CACHE_DIR, exist_ok=True)
+    cache_dir = _pose_cache_dir()
+    os.makedirs(cache_dir, exist_ok=True)
     key = os.path.splitext(os.path.basename(clip_path))[0]
-    cache_path = os.path.join(POSE_CACHE_DIR, f'{key}_poses.json')
+    cache_path = os.path.join(cache_dir, f'{key}_poses.json')
     if not os.path.exists(cache_path):
         import contextlib
         from extract_poses import extract_poses
         with contextlib.redirect_stdout(sys.stderr):
-            extract_poses(clip_path, cache_path, sample_every=3)
+            extract_poses(clip_path, cache_path, sample_every=POSE_STRIDE)
     with open(cache_path) as f:
         return json.load(f)
 
 
-def predict_one(entry, clip_path, teacher_anchor_frame=None):
+def predict_one(entry, clip_path, teacher_anchor_frame=None, anchor_mode='wrist'):
     """Runs the live contact pipeline on one clip. Returns a dict of the
     fields the CSV needs, or {'error': '...'} on any failure. If
     teacher_anchor_frame is given, the wrist-velocity anchor search is
     bypassed and find_contact_frame refines from that frame instead -- an
-    upper bound on what the refinement alone can do given a perfect anchor."""
+    upper bound on what the refinement alone can do given a perfect anchor.
+
+    anchor_mode: 'wrist' -> find_peak_wrist_frame directly (legacy default);
+    'auto' -> compare_swing.auto_contact_anchor_frame, which routes serves
+    through the serve_anchor overhead-apex signal (the actual live path)."""
     from compare_swing import find_peak_wrist_frame
     import racket_tracker as rt
     from racket_tracker import find_contact_frame, contact_frame_meta
@@ -143,10 +183,14 @@ def predict_one(entry, clip_path, teacher_anchor_frame=None):
     if not any(f['landmarks'] for f in frames):
         return {'error': 'no_pose_detected'}
 
+    fps_for_anchor = pose_data.get('fps') or 30.0
     if teacher_anchor_frame is not None:
         anchor_frame = int(teacher_anchor_frame)
+    elif anchor_mode == 'auto':
+        from compare_swing import auto_contact_anchor_frame
+        anchor_frame = auto_contact_anchor_frame(frames, fps_for_anchor, entry['shot_type'])
     else:
-        anchor_idx = find_peak_wrist_frame(frames, pose_data.get('fps') or 30.0)
+        anchor_idx = find_peak_wrist_frame(frames, fps_for_anchor)
         anchor_frame = frames[anchor_idx]['frame']
 
     detections, fps = rt.track_racket_and_ball(
@@ -203,11 +247,20 @@ def load_done():
         return {row['id']: row for row in csv.DictReader(f)}
 
 
-def run(limit=None, only=None, anchor='wrist'):
+def _out_csv(anchor, human_only):
+    """Distinct CSV per (anchor mode, label set, pose stride) so runs with
+    different settings never share rows on resume."""
+    suffix = {'teacher': '_teacher_anchor', 'auto': '_auto_anchor'}.get(anchor, '')
+    if human_only:
+        suffix += '_human'
+    suffix += f'_s{POSE_STRIDE}'
+    return OUT_CSV.replace('.csv', f'{suffix}.csv')
+
+
+def run(limit=None, only=None, anchor='wrist', human_only=False):
     global OUT_CSV
-    if anchor == 'teacher':
-        OUT_CSV = OUT_CSV.replace('.csv', '_teacher_anchor.csv')
-    labels, by_id = teacher_labels()
+    OUT_CSV = _out_csv(anchor, human_only)
+    labels, by_id = teacher_labels(human_only=human_only)
     if only:
         labels = {k: v for k, v in labels.items() if k in only}
     done = load_done()
@@ -245,7 +298,8 @@ def run(limit=None, only=None, anchor='wrist'):
                     # refine fps first from a cheap probe via the pose cache
                     pd = get_or_extract_poses(clip_path)
                     ta = round(teacher_time * (pd.get('fps') or 60.0))
-                res = predict_one(entry, clip_path, teacher_anchor_frame=ta)
+                res = predict_one(entry, clip_path, teacher_anchor_frame=ta,
+                                  anchor_mode=anchor)
             except Exception as e:  # noqa: BLE001
                 import traceback
                 traceback.print_exc()
@@ -327,13 +381,46 @@ def report():
 
     print('\nBY CAMERA ANGLE (heuristic)')
     bands = [(0, 20), (20, 35), (35, 50), (50, 90)]
+
+    def _band(r):
+        a = _fnum(r['camera_angle'])
+        return next((f'{lo}-{hi}' for lo, hi in bands if a is not None and lo <= a < hi), 'unknown')
+
     byca = defaultdict(list)
     for r in ok:
-        a = _fnum(r['camera_angle'])
-        band = next((f'{lo}-{hi}' for lo, hi in bands if a is not None and lo <= a < hi), 'unknown')
-        byca[band].append(_fnum(r['err_frames_heuristic']))
+        byca[_band(r)].append(_fnum(r['err_frames_heuristic']))
     for k in sorted(byca):
         _summary(byca[k], f'{k:<20}')
+
+    def _method(r):
+        return r['method'].split('(')[0] if r['method'] else '?'
+
+    print('\nBY METHOD x SHOT TYPE (heuristic)')
+    cross = defaultdict(list)
+    for r in ok:
+        cross[(_method(r), r['shot_type'])].append(_fnum(r['err_frames_heuristic']))
+    for k in sorted(cross):
+        _summary(cross[k], f'{k[0]:<20} {k[1]:<9}')
+
+    print('\nBY METHOD x CAMERA ANGLE (heuristic)')
+    cross2 = defaultdict(list)
+    for r in ok:
+        cross2[(_method(r), _band(r))].append(_fnum(r['err_frames_heuristic']))
+    for k in sorted(cross2):
+        _summary(cross2[k], f'{k[0]:<20} {k[1]:<9}')
+
+    # The set find_contact_frame can't help -- no ball/racket evidence in the
+    # window, so it returns the raw anchor. These are pure anchor-quality
+    # failures: only a better anchor (or a different signal) moves them.
+    fb = [r for r in ok if _method(r) == 'wrist_velocity_fallback']
+    print(f'\nwrist_velocity_fallback (no visual evidence): {len(fb)}/{len(ok)} clips '
+          f'({len(fb) / len(ok):.0%})')
+    if fb:
+        _summary([_fnum(r['err_frames_heuristic']) for r in fb], '  fallback clips     ')
+        fbst = defaultdict(int)
+        for r in fb:
+            fbst[r['shot_type']] += 1
+        print('  by shot:', dict(fbst))
 
     print('\n10 WORST (by |heuristic err|)')
     worst = sorted((r for r in ok if _fnum(r['err_frames_heuristic']) is not None),
@@ -347,20 +434,26 @@ def report():
 
 
 def main():
+    global OUT_CSV, POSE_STRIDE
     ap = argparse.ArgumentParser()
     ap.add_argument('--limit', type=int)
     ap.add_argument('--only', help='comma-separated entry ids')
     ap.add_argument('--report-only', action='store_true')
-    ap.add_argument('--anchor', choices=['wrist', 'teacher'], default='wrist')
+    ap.add_argument('--anchor', choices=['wrist', 'teacher', 'auto'], default='wrist')
+    ap.add_argument('--human-only', action='store_true',
+                    help='only contact_time_corrected labels (drop the ~170 '
+                         'audio-derived label_confirmed marks)')
+    ap.add_argument('--pose-stride', type=int, default=POSE_STRIDE,
+                    help='pose sampling stride (default 1 -- matches the live '
+                         'app and the stride-1 pro DB)')
     args = ap.parse_args()
-    global OUT_CSV
-    if args.anchor == 'teacher' and args.report_only:
-        OUT_CSV = OUT_CSV.replace('.csv', '_teacher_anchor.csv')
+    POSE_STRIDE = args.pose_stride
     if args.report_only:
+        OUT_CSV = _out_csv(args.anchor, args.human_only)
         report()
         return
     only = set(args.only.split(',')) if args.only else None
-    run(limit=args.limit, only=only, anchor=args.anchor)
+    run(limit=args.limit, only=only, anchor=args.anchor, human_only=args.human_only)
 
 
 if __name__ == '__main__':
