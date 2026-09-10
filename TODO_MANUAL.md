@@ -15,6 +15,112 @@ gets resolved.
 
 ---
 
+## New from the 2026-09-09/10 session (metric-3D v4 pro-DB rebuild + verifier)
+
+Full story: `HANDOVER.md` "Session 2026-09-09/10". Jack-only items:
+
+- **DO NOT `git push` yet.** Commits `6cfee83`..`4d19e2b` (+ `12cab96`/`13771e7`)
+  are local only. Pushing auto-deploys the user-side `sample_every` 3→1 change,
+  and stride-1 user trajectories against the server's stride-3 pro DB = score
+  drift. Push only *after* the rebuilt `data/06_pro_database/pro_database.json`
+  + `overlay_trajectories.json` are copied to the VPS (folded into the existing
+  pro-DB transfer item under "Backend / data" in `JACK_TODO.md`).
+- **Uncommitted, yours to review/land with the verifier batch:**
+  `scripts/07_ball_racket_tracking/racket_tracker.py` (`RALLYMAX_BALL_MODEL`
+  env knob), `scripts/17_amateur_eval/evaluate_amateur_dataset.py` (per-row
+  provenance stamps + `--fresh`), `scripts/06_database_build/reanchor_pro_serves.py`
+  + its test (`yaw_enabled=True`).
+- **`CURATED_AXES` in `redesign_similarity.py` (`4d19e2b`) is PROVISIONAL** —
+  the 3D depth axes in it are a negative result on real footage; pull them
+  before the rubric drives any user-facing number.
+- *(optional, RED expected)* Film ~6 deliberate square-and-still ~3 s holds
+  (one per camera position) for `calibration_hold_test.py` to fully close the
+  "calibrate camera angle once per session" question. See `JACK_TODO.md`.
+
+## New from the 2026-09-09 session (pre-release check + review prompt)
+
+- **`PRE_RELEASE_CHECK.md` (repo root) is the running list** — distilled from
+  4 videos (ASO + vibe-code security). Security + onboarding-Phase-1 + rating
+  prompt are code-complete (backend 631 tests green, `verify:db` 99/99, web
+  bundle clean; `/code-review` run + 8 fixes applied). **All still uncommitted
+  and tangled with your own WIP** on `analyse.js` / `ResultsScreen.js` /
+  `SignupScreen.js` / `TODO_MANUAL.md` — decide: commit everything together,
+  have Claude hunk-split just the pre-release work, or you drive. The open
+  items there are mostly yours:
+  - **Budget caps + billing alerts** on KIE / Anthropic / AWS / Resend /
+    RevenueCat, and scope the AWS IAM key to S3-only. Both security videos
+    had 5-figure surprise bills from this.
+  - **securityheaders.com scan** of the live host after the next deploy
+    (headers middleware was added this session).
+  - **ASO foundations** (Section B): store name + subtitle keyword research,
+    100-char keyword field, screenshot reorder (lead with pro-overlay +
+    score), then confirm the new rating prompt reads well on-device.
+- **`ios.appStoreUrl` / `android.playStoreUrl` in `app.json`** — not set yet.
+  The in-app native rating sheet (`StoreReview.requestReview()`) works
+  without them, but `StoreReview.storeUrl()` / `hasAction()`'s fallback for
+  older Android needs them. Add once the real store listings exist.
+- **Test the new onboarding flow on a device** (Phase 1 built 2026-09-09,
+  `docs/plans/onboarding_plan.md`). Fresh install → welcome screen → "Analyse
+  my first swing" → full flow **as a guest** → after the analysis runs, a
+  "Your score's ready — create a free account" gate → sign up → the result is
+  revealed and saved to the new account's history. Check: the guest analysis
+  actually runs against the hosted backend (needs the `optionalAuth` change
+  deployed); the 2/24h guest per-IP cap behaves (429 with a "create an
+  account" CTA, not a bare failure); "Skip for now" and
+  already-have-an-account both work; a returning logged-in user never sees the
+  welcome screen. `storage` key to clear for a re-test: `onboarding_complete`.
+- **Decide onboarding Phase 2 scope** — result coach-marks, contact-frame
+  lead-in card, permission pre-prompts, welcome-email drip (Resend is wired),
+  funnel instrumentation. All deferred; none block launch.
+- **Test the "rate the app" prompt on a device** — Dev Page → "Test 'rate
+  the app' prompt" fires it immediately and clears the back-off state.
+  Normal trigger: 2nd+ successful fresh analysis with score ≥ 50, max once
+  per 60 days, 3 lifetime (`frontend/utils/reviewPrompt.js`). iOS suppresses
+  the sheet unless the system feels like showing it — expect to see nothing
+  most of the time; that's normal.
+
+## ~~New from the 2026-09-08 session (ideal-swing reference clips)~~ — DONE 2026-09-10
+
+- ~~**Produce 3 "ideal swing" reference clips**~~ — **DONE 2026-09-10.** Route
+  that worked: **Luma Dream Machine "Modify Video"** (lumalabs.ai directly).
+  Real behind-view swing clip + character start-frame → Luma re-renders the
+  person, keeps the motion. Jack ran Luma (free trial credits); Claude
+  transcoded the sources + removed Luma's two watermarks; Jack cropped around
+  the player + retimed in CapCut; Claude finalised to 720p H.264.
+  `frontend/assets/reference/{forehand,backhand,serve}-ideal.mp4` in place,
+  `referenceClips.js` wired (3 requires uncommented, `CONTACT_SEC` set), web
+  export verified. **Uncommitted.** WIP: `C:\Users\jackp\Documents\rallymax_reference_wip\`.
+  Full narrative: `HANDOVER.md` "Session 2026-09-10 (later)".
+  - **Left for Jack:** refine `CONTACT_SEC` in `referenceClips.js` (currently
+    eyeball estimates `{forehand: 0.43, backhand: 1.0, serve: 0.3}`); device-test
+    the compare screen ("Watch the ideal swing" button + per-tip "See this done
+    right" links); commit alongside the rest of the uncommitted tree.
+  - Prior AI route (Kie.ai, ~$3.38) and the Blender/composite routes are all
+    closed — see `HANDOVER.md` if the history is needed.
+
+## New from the 2026-09-08 session (ML-reliability roadmap, planning only)
+
+Jack reviewed ML reliability across the whole app and built a release roadmap.
+**No code changed.** Release date slipped (no fixed target); every premium
+feature is now in scope for v1. The flat checklist is in `JACK_TODO.md`
+("ML-reliability roadmap"); the full plan + two detailed designs (behind-baseline
+camera gate, similarity-score calibration) are in
+`C:\Users\jackp\.claude\plans\okay-so-i-finished-lovely-adleman.md`; the
+narrative is `HANDOVER.md` "Session 2026-09-08".
+
+**Your items from it (also in `JACK_TODO.md`):**
+1. Record 3-5 whole-match videos from the fence + a few wrong-angle takes + some
+   competent single swings + some deliberately sloppy ones (one session feeds the
+   camera-gate validation set, the similarity-calibration anchors, and the
+   highlights eval set).
+2. Rotate the leaked `ANTHROPIC_API_KEY` in `backend/.env` (unblocks the
+   coaching-tip verifier — still the same key flagged since 2026-08-10, partially
+   rotated then, needs a clean rotation now).
+3. Kick off the `sample_every` 3→1 pro-DB re-extract overnight (Claude will
+   prep the code; you run the long job when CPU is free).
+4. Keep working the Pro Clip Review practice queue — the held-out serves flow
+   into the classifier pool as you go.
+
 ## New from the 2026-09-07 offline sessions (serve anchor Phase 1b, ball-tracking, retrain)
 
 Full detail: `HANDOVER.md` "Session 2026-09-07" (three entries) + `STATUS.md`
@@ -30,21 +136,25 @@ items 10 & 12. All code is merged to master (PR #38). What's left for you:
    then the live app serves the old server-side pro DB (serves anchored on
    the wrist-velocity peak).
 
-2. **Ball-detector retrain — check the gates, then decide.** A clean retrain
-   is running locally (`train_ball_detector.py`, imgsz 480 + multi_scale;
-   fixes a real train/val leak — 76 duplicate images). When it finishes,
-   the 3 gates in `scripts/07_ball_racket_tracking/README_ball_retrain.md`
-   decide whether the new `best.pt` is kept. If kept, it's a manual server
-   transfer (same as above). If the gates fail, `cp -r` the
-   `_BACKUP_20260907_165355` dir back. **A Claude session can run the gates
-   and report — the keep/ship call is yours.**
+2. ~~**Ball-detector retrain — check the gates, then decide.**~~ **DONE
+   2026-09-08 — new `best.pt` KEPT (your call).** Retrain finished (resumed
+   after an overnight stall, 150/150), 3 gates run: at-contact 91.7% / conf
+   0.64 (baseline 50% / 0.41), near-player FH/serve ~94-96%, backhand flat
+   ~0.77, far-ball 79%. No regression, honest non-leaky eval. **Left for
+   you: the manual server transfer of `data/10b_ball_detection/yolo_ball_run_v1/weights/best.pt`**
+   — bundle it with the pro-DB copy in item 1. (If you ever want to undo:
+   `cp -r` the `_BACKUP_20260907_165355` dir back.) Writeup: HANDOVER.md
+   "Session 2026-09-08 (later)".
 
-3. **(Low priority) Wide-court ball labels need a hand pass.** ~8 of the 22
-   `wide_court_ball_labels*.jsonl` positives are wrong or sloppy (box on
-   background / the player's hip / offset) — see
-   `data/10b_ball_detection/wide_court_review_notes.md`. Re-draw them in the
-   Dev Page Ball Label tool if you want far-ball training data in a future
-   retrain. Not urgent: the current detector already gets ~87% on far balls.
+3. **(Low priority) Wide-court ball labels need a hand pass — now the path to
+   a ball-detector v2.** ~8 of the 22 `wide_court_ball_labels*.jsonl`
+   positives are wrong or sloppy (box on background / the player's hip /
+   offset) — see `data/10b_ball_detection/wide_court_review_notes.md`.
+   Re-draw them in the Dev Page Ball Label tool + record more amateur
+   backhand footage, then a Claude session rebuilds the dataset (adding the
+   43 wide-court negatives) and retrains. This is the fix for the two weak
+   spots the 2026-09-08 model still has (backhand, far/wide balls). Not
+   urgent — the kept model is fine for v1; full-frame far-ball is ~79-87%.
 
 Nothing to do for the two-pass ROI tracker or the near-court crop — both
 evaluated NO-GO, code committed but unwired.
@@ -104,6 +214,50 @@ checklist: `JACK_TODO.md` "2-week launch push".
     core-loop verification". Everything else there (Apple enrollment, EAS
     build, RevenueCat native SDK, Resend domain, privacy policy + assets,
     backups, repo-private) is standard store-submission plumbing.
+
+### Later same day (2026-09-07, later still³) — main-loop verification (3 layers)
+
+Full detail: `HANDOVER.md` "Session 2026-09-07 (later still³)". No code changed.
+Verified the core loop at the local Python engine (6/6 cases incl. auto-detect
++ left-handed), local full stack (`POST /api/analyse` on :5000 → 200 + full
+payload, `/api/history` round-trip, free-tier 403 after 2), and the live server
+(HTTP 200, byte-identical score to local). **Works end to end, locally and in
+production.** New flaws for you to weigh — none block the code, all are
+product-quality calls:
+
+11. **Score presentation — the inconsistency is FIXED (2026-09-08), calibration
+    still open.** Was: `ResultsScreen` hero score = `overall_score`
+    (`phase_breakdown.PHASE_SCALE=1.8`) → ~62–70, but the 2nd/3rd match scores
+    right under it = raw `similarity` (`scale=0.4`) → ~25–38 for the *same*
+    quality, so a user saw "62/100" then "other matches: 30, 25".
+    **Jack's call: drop the pro-match framing entirely** — most
+    `pro_database.json` clips were never identified (`player_names.json`
+    partial), so "matched to Forehand Technique #142" read as broken. The
+    "Other close matches" section is **removed** from `ResultsScreen` (kills the
+    `scale=0.4` numbers on screen); the hero `overall_score` is the only 0–100
+    shown; caption → "How closely your <shot> matches pro technique"; Sync
+    Compare pane → "Pro swing"; History/Home/Coach/share/signup copy de-named;
+    `analyse.js` → `--top 1`. Full writeup: `HANDOVER.md` "Session 2026-09-08
+    (later⁵)". **Still open:** `PHASE_SCALE` is uncalibrated against a labelled
+    match-quality set — that's roadmap **1b** (rubric redesign), CPU-blocked.
+    `scale=0.4` now only governs the ≥75 "great swing" gate + the stored
+    `similarity` fallback when phase breakdown fails.
+12. **Serve looks bad to a first user.** A real marked-contact serve scored
+    `similarity` 18/100 and matched only reclassified practice-footage clips
+    (~82 pro serve entries total). Nothing new to fix here that isn't already
+    tracked (serve anchor, more serve footage) — just confirming a serve upload
+    is the worst first impression the app can make right now.
+13. **Camera-angle confidence is ~0.3 on most real clips** (measured 0.05–0.64
+    across 6). Below the 0.5 gate the ±20° filter still leaves a big pool, so
+    DTW runs against loosely-framed clips silently. The phone accelerometer/gyro
+    tilt-capture idea (deferred backlog, "camera elevation calibrated on only 2
+    references") would also help here.
+
+*Non-issues checked and cleared so nobody re-chases them:* `forehand_0039`-style
+ids in a backhand pool (stale id string, `shot_type` field is right);
+`practice_*` top matches (all Pro-Clip-Review-verdict'd, filter working);
+mid-session mojibake in tip text (the verification harness's cp1252 file write,
+not the app — real `/api/analyse` output is clean UTF-8).
 
 ---
 
@@ -267,11 +421,17 @@ plan: `C:\Users\jackp\.claude\plans\okay-where-do-things-woolly-pond.md`.
 
 2. **Test the live audio contact detection on a real phone.** Record a swing
    with the in-app camera (`recordAsync` keeps an audio track), **do not mark
-   the contact frame**, upload. In the backend logs for that analysis, look for
-   `Contact auto-detected via AUDIO onset at X.XXXs (confidence ...)`. Confirm
-   the similarity score / pro match look sane. This is the one bit of Phase B.1
-   that couldn't be verified locally (no phone-recorded clip with audio on
-   disk).
+   the contact frame**, upload. The analysis response JSON should carry
+   `contact_source: "audio_onset"` (added by 1c, 2026-09-08). Anything else
+   (`wrist_peak`, `ball_occlusion_gap`, `ball_racket_proximity`, `serve_apex`,
+   `audio_visual`) means the audio model didn't confidently fire — check
+   `GET /dev/ml-status` → `onset_classifier.model_present` to tell "not
+   deployed" from "deployed but not confident on this clip". (The old
+   instruction to grep backend logs for `Contact auto-detected via AUDIO
+   onset` never worked — stderr-only, discarded on success by
+   `runPythonJson.js`.) Confirm the similarity score / pro match look sane.
+   This is the one bit of Phase B.1 that couldn't be verified locally (no
+   phone-recorded clip with audio on disk).
 
 3. ~~**Decision — run the pro-DB contact-time fill (Phase B.2)?**~~ **DONE
    2026-09-02 evening.** Audio detector ran over the kept clips, 108 confident

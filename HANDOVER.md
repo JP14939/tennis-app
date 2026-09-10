@@ -3502,3 +3502,821 @@ Real launch blockers, none started:
 
 Open question flagged to Jack: run a similarity-score calibration pass on the
 amateur eval set and decide if `scale` moves before real users see numbers.
+
+## Session 2026-09-07 (later still³) — main-loop verification across all three layers
+
+Jack asked to actually verify the core loop this session (the "later still²"
+entry above only ran `compare_swing.py` in isolation once). Verified end-to-end
+at **three layers**; no code changed.
+
+### Results
+
+- **Local Python engine** (`pro_matcher.py` → `compare_swing.compare()`) — 6/6
+  cases exit 0, valid JSON: forehand (marked contact), backhand (marked), serve
+  (marked + `--view-direction-hint back`), a 2nd forehand, forehand **no-mark
+  auto-detect**, forehand **left-handed (`--handedness left`, mirror path)**.
+  Every case produced pose → contact anchor → angle → candidate filter → DTW →
+  3 matches + coaching tips + `overall_score`.
+- **Local full stack** — started the Express backend on :5000, real
+  `multipart POST /api/analyse` with a saved clip. HTTP 200 in ~28–55s, full
+  payload including skeleton + racket overlay trajectories. `POST /api/history`
+  → 201, `GET /api/history` → row present. Free-tier cap fired **403
+  `DAILY_LIMIT` after 2 successful analyses** (works as designed). Response
+  bytes verified clean UTF-8.
+- **Live server** (`https://rallymax.167-233-107-31.sslip.io`) — `/health` OK,
+  signup OK, forehand upload → HTTP 200 in 27s → top match `forehand_2039`
+  sim 38.3 / `overall_score` 61.7 + tips + overlays. **Byte-identical score to
+  the local run** → engine parity. Throwaway account deleted afterward (`DELETE
+  /api/auth/me` → 204). The live candidate pool contained **no `practice_*`
+  entries** where the local pool did → confirms the server is still on the
+  older (pre-2026-09-02) pro DB, as STATUS item 14 says.
+
+**The core loop works end to end, locally and in production.**
+
+### New flaws found (added to STATUS "Right now" + TODO_MANUAL)
+
+1. **Two different score scales are shown on the same `ResultsScreen`.** The
+   hero score (`ResultsScreen.js:370`) is `top.overall_score ?? top.similarity`
+   — `overall_score` is the sum of the 4 phase sub-scores (`phase_breakdown.py`,
+   `PHASE_SCALE=1.8`) → lands **~62–70** for a competent swing. The 2nd/3rd
+   matches (`ResultsScreen.js:581`) render raw `m.similarity` — the
+   `similarity_score()` exp-decay with `scale=0.4` → lands **~25–38** for the
+   *same quality* of match. So a user sees "62/100" as their headline then
+   "other close matches: 30/100, 25/100" directly below. **Implication for the
+   calibration task:** `JACK_TODO.md` frames it as "move `scale=0.4`", but
+   `scale` only governs the runner-up numbers and the ≥75 "great swing" gate at
+   `ResultsScreen.js:269` — the number the user reads as *their score* is
+   `PHASE_SCALE`. Re-scope the task: either calibrate `PHASE_SCALE`, or put the
+   top match and the runner-ups on one scale so they stop contradicting.
+2. **Serve quality is visibly poor on real input.** Marked-contact serve
+   scored `similarity` 18.2/100; top-3 serve matches were all reclassified
+   practice-footage entries, not broadcast pros (~82 serve entries total).
+   Reinforces weak-point #8 — a first user uploading a serve gets a bad-looking
+   result.
+3. **Camera-angle confidence is low on most real clips** (measured 0.05–0.64
+   across the 6 cases, mostly ~0.3). When it's inconclusive the ±20° angle
+   filter still leaves a large pool, so DTW silently runs against
+   loosely-framed clips with no signal to the user. Reinforces weak-point #4.
+4. **Auto contact detection** on a silent clip landed 1.90s vs 2.1s marked
+   (~6 frames early) — consistent with the documented ~9f wrist-peak error;
+   audio-onset correctly skipped (no audio track).
+
+### Non-issues checked and cleared (so a later session doesn't re-chase them)
+
+- `forehand_0039`-style entries appearing in a *backhand* candidate pool: the
+  `id` string and `clip_path` filename are stale from an earlier build, but the
+  `shot_type` field is correct (`backhand`) and both the DTW comparison and the
+  displayed pro clip use it — consistent, just a misleading id.
+- `practice_*` entries as top matches: all were `LABEL_REVIEW`-verdict'd in Pro
+  Clip Review (637 reviewed ids), so `eligible_match_candidates()` correctly
+  admits them. Their clip *filenames* still say `_forehand` where Jack
+  relabelled them `serve`/`backhand` — cosmetic, the served clip is the
+  reviewed one.
+- Mojibake in coaching-tip text seen mid-session was the verification harness
+  writing an intermediate file as cp1252 on Windows — `tip_selector.py` opens
+  the DB with `encoding='utf-8'` and the real `/api/analyse` response is clean
+  UTF-8. No app bug.
+
+Leftover: 3 throwaway upload dirs under gitignored
+`data/runtime/user_clips/upload_17888204*` from the full-stack test (the
+`rm` was blocked by the sandbox classifier — harmless, gitignored).
+
+---
+
+## Session 2026-09-08 — ML-reliability roadmap for release (planning only, no code)
+
+Jack asked to verify ML reliability across the whole app and build a roadmap to
+launch. This session is **planning + documentation only** — nothing was coded.
+Three Explore agents mapped the camera-angle/similarity paths, the shot-classifier
++ contact-detection code, and the verifier/swing-detector/racket/tips code; one
+Plan agent designed the two hardest items. Full plan with appendices:
+`C:\Users\jackp\.claude\plans\okay-so-i-finished-lovely-adleman.md`. The
+followable checklist is also in `JACK_TODO.md` ("ML-reliability roadmap").
+
+### Jack's decisions
+- **Slip the release date.** The old ~2026-09-21 target is dropped — Jack wants
+  every premium feature reliable at launch (App Store update friction), so the
+  date moves to whenever the roadmap + plumbing are genuinely done. The
+  "ML-reliability sprint tail is downstream of highlights, defer past launch"
+  guidance in `STATUS.md`/`JACK_TODO.md` from 2026-09-07 is **superseded** — the
+  highlights feature and its ML are now in scope for v1.
+- **Behind-the-baseline camera view only for v1.** Reduces the camera-angle
+  problem from "measure the angle precisely" to "gate: is this behind-baseline?
+  reject clearly if not."
+- **Invest in a visual contact-frame model** as the no-audio backstop (Phase 1c).
+- **Serve classification (~80% broadcast / ~60% amateur) is acceptable for v1** —
+  no dedicated serve sprint; the held-out practice serves flow into the pool as
+  Jack reviews them.
+- **Build a real highlights eval set** from Jack's own whole-match fence
+  recordings (the existing 86.6%/68.1% numbers are broadcast-TV / YouTube-amateur
+  — neither is the real use case).
+- `sample_every` 3→1 (Jack runs the re-extract overnight); z-depth one more try.
+
+### What the exploration established (facts, not opinions)
+- **No behind-view classifier or gate exists** — only `detect_view_direction()`
+  (`infer_angle.py:633`), a geometry heuristic validated on ~10 clips that just
+  *abstains* on hard cases. `compare_swing.py:594-620` silently falls back to the
+  whole shot-type pool when its angle/view filters yield <5 candidates — an
+  unsupported view produces a meaningless DTW score with no user signal.
+- **`similarity_score` is duplicated** (`compare_swing.py:95`, `phase_breakdown.py`),
+  `scale=0.4` never calibrated, DTW is 2D-only over 9 landmarks. **No labelled
+  match-quality set and no "Jack's clips" set exist** — both are new work.
+- **The 86.6% shot-classifier number is broadcast TV**; 68.1% is YouTube amateur.
+  Neither is phone-on-fence footage. **traj_knn serve recall 11% is not the live
+  serve number** — the geom serve gate owns serves (ensemble serve 80%/60%);
+  traj_knn is 11% only because its pool has 27 serve exemplars vs 233 FH / 153 BH.
+- **`racket_tracker.find_contact_frame` never reaches production** (only via an
+  inert trust gate). Live contact detection = geometric anchor + audio onset
+  only. The "serve window widening in racket_tracker" code comment is **stale —
+  no such widening exists**.
+- **The serve-gate bug is already partially mitigated** — `POINT_BOUNDARY_GAP_SEC`
+  is 12.0 and the default mode is `advisory` (keeps all non-serve shots). The
+  "12/12 forehands discarded" no longer happens on the production path.
+- **Racket keypoints (Pose mAP50 0.485) DO affect users** — the `body_rotation`
+  phase sub-score uses them live — but are NOT in the contact/DTW scoring path.
+- **Ball detector retrain** — finished + gated 2026-09-08, new `best.pt` KEPT
+  (see "Session 2026-09-08 (later)" below). Not on the server yet.
+- **Tip selector**: live path never calls Claude (`use_verifier=False`); the
+  verifier is blocked on the leaked API key; the 3 top-match tip sets are
+  computed independently and can contradict.
+
+### Roadmap shape (see JACK_TODO.md for the checklist)
+- **Phase 0** (now/overnight): `sample_every` 3→1 re-extract; finish + gate the
+  ball retrain; Jack records fence footage (feeds 3 later items); Jack rotates
+  the API key.
+- **Phase 1** (core loop): behind-baseline camera gate + validation harness;
+  similarity-score calibration (4-anchor method, doubles as a DTW-discrimination
+  diagnostic); visual contact-frame model for the no-audio path; z-depth retry.
+- **Phase 2** (premium): highlights eval on real fence footage (gates the rest);
+  `occlusion_gap` verifier fix; swing-detector recall; racket-keypoint retrain;
+  tip cross-match reconciliation + verifier loop.
+- **Phase 3** (pre-release gate): full suite green, data+models to server, one
+  real live upload, store plumbing.
+
+### Not started
+Everything above. No files changed this session except the plan file and these
+docs.
+
+## Session 2026-09-08 (later) — ball-detector retrain finished + gated: KEEP
+
+Picked up JACK_TODO item **0b**. The imgsz-480 / multi_scale retrain from
+2026-09-07 had stalled at epoch 107/150 (`results.csv` frozen at 23:23, no
+process alive — laptop almost certainly slept). **Resumed from `last.pt`
+(`resume=True`)** — the remaining 43 epochs ran in 0.75 h, all 150 complete.
+
+- **Final model** (`data/10b_ball_detection/yolo_ball_run_v1/weights/best.pt`,
+  epoch 126): clean-val **mAP50 0.592**, P 0.642 / R 0.658, mAP50-95 0.193.
+  This is on the **leak-free** val split (262 train / 76 val, 0 image/clip
+  overlap — the old 0.558 was on the leaky split, so not comparable). The
+  extra 43 epochs barely moved it (epoch 105 was already 0.599) — the run
+  just needed a clean finish.
+- Trained in place (`exist_ok=True`), so `get_ball_model()` already loads the
+  new weights locally. Pre-run backup kept: `yolo_ball_run_v1_BACKUP_20260907_165355`.
+
+### The 3 gates (`README_ball_retrain.md`) — run 2026-09-08
+
+No stored baseline JSON existed to diff against (audits are gitignored + get
+overwritten), so compared against the numbers quoted in the README.
+
+| Gate | Bar | Result | Call |
+|---|---|---|---|
+| `audit_finetuned_ball_confidence.py` at-contact | ≥ 93.3% | **91.7%** (55/60), avg conf **0.641** (was 0.557); generic COCO baseline 50.0% / 0.41 | ~flat, 1 clip under; confidence clearly up |
+| `calibrate_ball_inference_scale.py` regime B (near-player crop) @ imgsz 320 | backhand up from ~0.77, FP flat | all **0.923**, FH **0.957**, **BH 0.769**, serve **0.942**, fp 0.121 | backhand unchanged; FH/serve strong |
+| `eval_near_court_ball_detection.py` | near/far up | full-frame A@320: near **0.704**, far **0.792**; cropped near-court regimes B/C much worse (C far ~0-4%) | crop tracker already NO-GO; full-frame far-ball 79% |
+| dataset leakage asserts | pass | pass (0 image + 0 clip overlap) | ✓ |
+
+Regime A2 (near-court, higher res) @ imgsz 480: all 0.932, BH 0.829.
+
+### Decision — KEEP (Jack's call, 2026-09-08)
+
+Strict reading is "revert" (2 gates didn't clear), but the "backup" is the
+older *leaky-trained* v1, and the new model has **higher confidence, an honest
+non-leaky eval, and no real regression** (backhand is flat, not worse; FH/serve
+near-player are ~94-96%). Jack reviewed the numbers and called it: **keep the
+new `best.pt`, ball tracking is "good enough" for v1, close the retrain item.**
+
+**Still not deployed** — `data/` isn't touched by CD, so the new `best.pt` is a
+manual server transfer (tracked in TODO_MANUAL / JACK_TODO alongside the pro-DB
+copy). Remaining known-weak: **backhand (~77%)** and **far/wide-court balls** —
+both blocked on cleaning the ~8-of-22 sloppy `wide_court_ball_labels*.jsonl`
+positives (held back 2026-09-07) + more amateur backhand footage. Logged as a
+future-retrain item, not launch-blocking.
+
+Files changed: docs only. Model weights already in place from the training run.
+
+## Session 2026-09-08 (later²) — Roadmap 1c: visual (no-audio) contact-frame backstop
+
+Plan: `C:\Users\jackp\.claude\plans\hashed-imagining-stardust.md`. Implements
+roadmap item **1c** (`JACK_TODO.md` "ML-reliability roadmap"). Three parts.
+
+**Part A — `find_contact_frame` wired into the live no-audio path.**
+`compare_swing.compare()`'s auto-detect chain previously reached
+`racket_tracker.find_contact_frame` only through the inert Phase C.4 block
+(gated on `contact_frame_ml_training_log.stats()['trusted']`, which is False and
+also carried a latent `TypeError` — `compute_contact_evidence` was called with a
+`shot_type=` kwarg it doesn't accept). Replaced that block with a direct,
+un-gated visual refinement: when there's no confident audio onset, call
+`contact_evidence.compute_contact_evidence(...)` (already does
+`track_racket_and_ball` + `find_contact_frame` + `contact_frame_meta` +
+`wrist_kinematics`) and, if `student_method != 'wrist_velocity_fallback'`, use
+`student_frame / fps` directly as the contact time. The twice-rejected Phase C
+learned-offset model (`predict_contact_offset`) is **no longer referenced by the
+live path** — `contact_frame_model.pkl` must not ship. Kept: the audio+visual
+agreement shortcut (visual pick within 2f of a sub-threshold audio pick → take
+the audio time), the try/except-and-carry-on guard, and the detached
+`log_user_contact_frame_cli.py` training logger (now data-only, not a gate).
+Consequence: the ~5s racket/ball YOLO pass now runs on every auto-detect upload
+that isn't resolved by confident audio (previously it never ran in prod).
+
+New `contact_evidence.compute_contact_evidence(..., search_window_sec=None)` —
+threaded through to `find_contact_frame` / `contact_frame_meta`. Serves pass
+`SERVE_CONTACT_REFINE_WINDOW_SEC = 0.45` (vs the 0.3s default) — the stale
+"serve window widening in racket_tracker" comment finally made real, at the
+call site rather than in `racket_tracker`.
+
+**Part B — serve overhead-apex bimodal tail.** `serve_anchor.py`: the raw
+`_argmax_earliest` tie-break lands on the *leading edge* of a wide apex plateau
+on distant/foreshortened poses (one error mode near contact, one early). New
+`_apex_plateau_frame()` finds the contiguous run within `APEX_PLATEAU_TOL = 0.04`
+(torso-normalised reach units) of the max and returns the measurable frame
+nearest that run's centre — a sharp apex (plateau width 1-2f) is unchanged; a
+flat plateau is recentred off the early edge. `find_serve_apex_frame` now uses
+it for both the `_above_head` and `_overhead_reach` passes. Options 2 (toss-arm
+gate) and 3 (re-sweep `APEX_TO_CONTACT_LEAD_SEC`) from the plan are held pending
+the eval numbers.
+
+**Part C — audio-onset model observability.** `onset_classifier.pkl` (2.5 KB,
+gitignored, hand-rsync'd to the server) had no way to confirm it's actually
+deployed — the "Contact auto-detected via AUDIO onset" line is stderr-only and
+`runPythonJson.js` discards stderr on a successful exit. Added:
+(1) `result['contact_source']` in `compare_swing.compare()` — one of `user` /
+`audio_onset` / `audio_visual` / `ball_occlusion_gap` / `ball_racket_proximity` /
+`serve_apex` / `wrist_peak`. A no-mark upload returning `audio_onset` proves the
+model is live; (2) an `onset_classifier` section in
+`ml_status_report.py` → surfaces `model_present` via the existing
+`GET /dev/ml-status`. `JACK_TODO.md` / `TODO_MANUAL.md` confirmation steps
+updated to use these instead of the log grep that never worked.
+
+**Eval harness fix (prereq for measuring B).** `eval_pro_clip_contact.py` gained
+`--anchor auto` — routes each clip through `compare_swing.auto_contact_anchor_frame`
+(so serves exercise the overhead-apex path) instead of `find_peak_wrist_frame`
+directly. Writes a separate `_auto_anchor.csv`. `wrist` stays the default.
+
+**Tests.** New `test_find_contact_frame_window_pytest.py` (restores the lost
+window/precedence coverage — pure, no cv2). `test_serve_anchor_pytest.py`:
+`test_plateau_returns_earliest_frame` → `test_plateau_returns_centre_frame` +
+two more plateau cases. `test_contact_student_pytest.py`: serve-window
+pass-through case. All 105 in `07_ball_racket_tracking/` + `00_utils/` green.
+`eval_pro_clip_contact.py --anchor auto` baseline running at write time (~2.5h
+on CPU); FH/BH rows must stay unchanged, serve median |err| must improve.
+Re-run after Phase 0a (clear `.eval_pose_cache/` first). **Not committed.**
+
+Files: `scripts/08_comparison_engine/compare_swing.py`,
+`scripts/00_utils/serve_anchor.py`, `scripts/00_utils/ml_status_report.py`,
+`scripts/07_ball_racket_tracking/{contact_evidence,eval_pro_clip_contact}.py`,
+3 test files, `JACK_TODO.md`, `TODO_MANUAL.md`.
+
+
+## Session 2026-09-08 (later³) — Roadmap 1b: the swing score can't be fixed by rescaling — rubric redesign started
+
+**The question 1b was supposed to answer:** the `ResultsScreen` hero score
+(`overall_score`, `PHASE_SCALE=1.8`) and the #2/#3 match scores (`similarity`,
+`scale=0.4`) are on different uncalibrated scales — pick one, calibrate it so a
+DB clip ≈ 100, a competent amateur ≈ 50, a fresh ATP swing ≈ high-80s.
+
+**What the harness found (`scripts/17_amateur_eval/calibrate_similarity.py`, new).**
+Three buckets from data already on disk — in-DB pro clips, held-out pro clips
+(own entry excluded from the pool), 45 real labelled amateur clips
+(`data/08_coaching_ai/amateur_swing_labels.json`). Best-match raw DTW distance,
+median: **in-DB pro 0.15, held-out pro 0.45, amateur 0.48.** Held-out pro ≈
+amateur — **no `scale` can produce Jack's target anchors**; at any scale where
+amateur = 50, held-out pro ≈ 52. An in-DB clip re-run scores ~81 not 100 (the
+user-side `extract_user_poses` pipeline ≠ the pro-DB build pipeline; ~0.09
+same-clip noise floor).
+
+**Round 2 — metric redesign attempts (`redesign_similarity.py`, new).** Cached
+all 84 eval trajectories, benched ~10 DTW variants: Sakoe-Chiba band, warp
+penalty, swing-arm landmark weighting, biomechanical-feature DTW, k-nearest-5,
+tight angle windows. **Best separation +12%, still fully overlapping.**
+Feature-DTW was *worse* (amateurs closer to pros than pros to each other).
+Root cause is structural: nearest-neighbour distance against a 413-pro DB is
+governed by DB density, not query quality.
+
+**Jack's call:** reframe the number as match-tightness short-term; build a
+**rule-based technique score** — grade a swing on independent biomechanical
+axes against the pro DB's own distribution ("pros define the good range", no
+new quality labels).
+
+**Round 3–4 — the rubric works.** `redesign_similarity.py axes` (per-axis
+pro-likeness, 100 = pro-DB median) + `rubric` (curated weighted combo). Added
+**view-conditioning** — score each swing vs its own camera view's pro
+distribution, since sign-dependent axes (racket-behind-body, wrist lateral)
+are meaningless pooled across front/back views. Combined held-out-pro vs
+amateur gap: **+3 (DTW) → +13 (rubric)**. Backhand **+32** (clean), serve
+**+23** (view-conditioning rescued 5 axes that were noise), forehand **+10**
+(still weakest). Single-swing noise still high (in-DB pros score 45–70, not
+~90). Curated axes: contact wrist height, contact elbow angle, wrist-path
+looseness ratio, tempo (backswing/through split), follow-through height,
+backhand contact wrist lateral, serve tempo + wrist lateral + rotation range.
+
+**Also fixed:** `scripts/00_utils/enrich_pro_racket_body.py` had a real bug —
+it resolved `entry['clip_path']` (relative to `data/04_clips`) as an absolute
+path, so every clip read as missing and it would have written all-null. Fixed
++ added resume/flush + a richer `racket_body_features()` (mean / extension
+range / racket-path looseness) in `track_racket_in_clip.py`. **`racket_body_distance`
+is on 0/648 pro entries** — meaning `phase_breakdown.score_body_rotation()`'s
+racket half is also silently dead in production; the enrich run revives it.
+
+**Queued on CPU (blocked by net-model training):** (1)
+`python 00_utils/enrich_pro_racket_body.py` (~35 min); (2)
+`python 17_amateur_eval/redesign_similarity.py cache` (grows held-out 18→58,
+~30 min, checkpointed); (3) re-run `axes`/`rubric`, re-curate `CURATED_AXES`,
+decide build-B2 vs accept-low-confidence-forehand/serve. **Runbook:
+`scripts/17_amateur_eval/RESUME_swing_score_redesign.md`.** Full plan:
+`~/.claude/plans/rosy-noodling-reef.md`.
+
+**Nothing production / frontend / backend touched. Not committed.** Files:
+`scripts/17_amateur_eval/{calibrate_similarity,redesign_similarity}.py` (new)
++ `RESUME_swing_score_redesign.md`, `scripts/00_utils/enrich_pro_racket_body.py`,
+`scripts/07_ball_racket_tracking/track_racket_in_clip.py`, `STATUS.md`,
+`JACK_TODO.md`.
+
+---
+
+## Session 2026-09-08 (later⁴) — Roadmap 1a: behind-the-baseline camera gate (advisory) + live-calibration alignment
+
+**Goal:** v1 supports only the behind-the-baseline camera view, but today an
+unsupported view (filmed from the net, or wildly side-on) is scored silently
+against the whole pro pool — `compare_swing.py` computes `user_angle` /
+`angle_conf` / `user_view_direction` and branches on none of them. Jack's call:
+**advisory warning first** (1a-val threshold tuning isn't done), signal =
+**view_direction + angle**, and align the live "Record now" calibration so it
+warns *before* the user records rather than after they see their result.
+
+**Shared verdict — `scripts/05_angle_detection/infer_angle.py`:**
+`evaluate_view_usable(view_direction, angle_deg, angle_conf) -> {usable, reason,
+severity, message}`. First failing rule wins:
+- `view_direction == 'front'` → `front_view`
+- `angle_deg >= VIEW_GATE_SIDE_ON_ANGLE_DEG` (78°, ≈ angle_label "Side view") → `side_on`
+- `angle_conf < VIEW_GATE_MIN_ANGLE_CONF` (0.25; real clips sit ~0.3) → `angle_unreliable`
+- else usable. `view_direction == 'unknown'` alone does **not** fail (detection is
+  unreliable; the record-time picker hint is the tie-breaker).
+Copy lives in `VIEW_GATE_MESSAGES` (full) / `VIEW_GATE_LIVE_MESSAGES` (badge).
+
+**Wiring:**
+- `compare_swing.compare()` — calls the gate after `user_view_direction` resolves,
+  adds `result['view_gate']`, prints the verdict to stderr. **DTW still runs.**
+  Hard reject only when `RALLYMAX_ENFORCE_VIEW_GATE=1` (env) — then it raises and
+  `analyse.js`'s `nonzero_exit` branch surfaces the message. Default off.
+- `check_camera_setup_frame()` (live badge path) + `check_camera_setup.py` (post-pick
+  video path) — same gate; `ok:False` + reason message when not usable, so the
+  badge goes red / the banner warns via the existing frontend branching with **no
+  frontend change to those screens**. `calibration_server.py` untouched (forwards
+  the dict). `check_camera_setup.py` samples one mid-video frame for
+  `detect_view_direction` (new `cv2` import + `_detect_view_direction_for_video`).
+- `frontend/screens/ResultsScreen.js` — amber warning banner when
+  `result.view_gate.usable === false`, above the score card; results still render.
+- `backend/src/routes/analyse.js` — comment only (points at the env switch).
+
+**Tests:** 7 new pure-function cases in `test_infer_angle_pytest.py` (16 pass).
+Full `pytest` 316 pass; `backend` `npm test` 620 pass.
+
+**Open / not done here:**
+- **1a-val** — hand-label ~60 pro + ~40 amateur + Jack's 0c clips, tune `VIEW_GATE_*`
+  to <5% false-reject, then set `RALLYMAX_ENFORCE_VIEW_GATE=1` on the server.
+- **On-device** — the outstanding `TODO_MANUAL.md` live-calibration click-through
+  (badge red from the net / green from behind the baseline; warning banner on a
+  deliberately wrong-angle upload), plus confirm the hosted `calibration_server`
+  is up on :5055 with `data/10_net_detection/yolo_pose_run_v4/weights/best.pt`
+  present (past crash-loop cause).
+
+**Files:** `scripts/05_angle_detection/infer_angle.py`,
+`scripts/05_angle_detection/test_infer_angle_pytest.py`,
+`scripts/08_comparison_engine/compare_swing.py`,
+`scripts/00_utils/check_camera_setup.py`, `backend/src/routes/analyse.js`,
+`frontend/screens/ResultsScreen.js`, `STATUS.md`, `JACK_TODO.md`. Not committed.
+
+---
+
+## Session 2026-09-08 (later⁵) — score presentation: drop the pro identity, remove the contradicting #2/#3 numbers
+
+**Problem (JACK_TODO "Score presentation + calibration", problem 1):** `ResultsScreen`
+showed the hero score as `overall_score` (`phase_breakdown.PHASE_SCALE=1.8`, ~62–70
+for a decent swing) and then an "Other close matches" list right below with raw
+`similarity` (`compare_swing.similarity_score`, `scale=0.4`, ~25–38 for the same
+quality) — two different uncalibrated scales, visibly contradicting each other.
+
+**Jack's call:** don't reconcile the two numbers — **remove the pro-match framing
+entirely.** Most `pro_database.json` clips were never identified
+(`player_names.json` is partial), so `formatProId` fell back to "Forehand
+Technique #142", which reads as broken. The result is a **technique score graded
+against the pro database as a whole**, not a match to one named player.
+
+**Changes (frontend, all user-facing spots):**
+- `ResultsScreen.js` — "Other close matches" section **deleted** (this removes the
+  `scale=0.4` numbers from the UI). `formatProId` replaced with
+  `proMatchCaption(shotType)` → score-card caption "How closely your <shot>
+  matches pro technique". Share-card caption → "Pro technique match". Sync Compare
+  `labelA` → "Pro swing". Dead `otherMatches` / `scoreColor` import / `otherCard`
+  styles removed.
+- `HistoryScreen.js` — row no longer prints `formatProId` (shot type is already in
+  the card header); score label "Match score" → "Technique score"; delete-confirm
+  text de-named; `labelA` → "Pro swing"; `formatProId` + `proId` style removed.
+- `CoachScreen.js` / `HomeScreen.js` — `formatProId` / `item.pro_id` row lines
+  removed.
+- `FirstSwingCard.js`, `SignupScreen.js`, `HistoryScreen.js` empty state — "matched
+  to a pro" marketing copy → "scored against pro technique".
+- `VersusResultsScreen` untouched (1v1 "reference video" is a clip the user
+  themselves picked).
+
+**Backend:** `analyse.js` now passes `--top 1` (was `--top 3`) — nothing consumes
+`matches[1..]` any more, and it skips 2× `get_coaching_tips` per analysis in
+`compare_swing.py`. `pro_id` / `player_name` still ride along in the payload
+(needed for `pro_clip_url` resolution, history storage, dev tools) — just not
+displayed.
+
+**Not done:** `PHASE_SCALE` is still uncalibrated against a labelled match-quality
+set (JACK_TODO problem 2) — that's roadmap **1b**, still CPU-blocked. `scale=0.4`
+now only governs the ≥75 "great swing" gate and the `similarity` fallback stored
+when phase breakdown fails.
+
+**Tests:** `backend` `npm test` 620 pass. Frontend has no runner; all 7 touched
+files babel-parse clean. Not committed. Files: `frontend/screens/{ResultsScreen,
+HistoryScreen,CoachScreen,HomeScreen,SignupScreen}.js`,
+`frontend/components/{FirstSwingCard,ResultShareCard}.js` (caption prop only),
+`backend/src/routes/analyse.js`, `STATUS.md`, `JACK_TODO.md`.
+
+## Session 2026-09-09 — camera-angle: normalization abandoned, view gate ENFORCED for launch
+
+**Context.** Two attempts this week to make a user's swing geometrically
+comparable to pros regardless of camera angle, both **validated against 6
+known-angle clips Jack filmed** (`data/05_angle_detection/yaw_calib/`, one self-fed
+forehand from ~0/18/30/30/45/88°) and both **failed**:
+- **Pose-based yaw** (`viewpoint_normalization.py`, committed `dcc6500`/`2355594`/
+  `61bd098`, flag `RALLYMAX_YAW_NORM` OFF, inert): reads body-facing azimuth from
+  MediaPipe `pose_world_landmarks` lead-in, rotates the swing to canonical facing.
+  Spearman(azimuth, camera_angle) = **-0.09** (target 0.8). Monocular 3D depth too
+  noisy at ~10 m; self-fed footage has no stable square lead-in. Kept committed
+  and inert — do NOT promote.
+- **Net-width un-foreshortening** (Option B): `acos(net_width / FULL_NET_FRACTION)`
+  → un-stretch the trajectory. Net apparent width 0.56/0.50/0.53/0.51/0.46 for
+  0/18/30/30/45° — no monotonic signal. Zoom-confounded (whole net fills only
+  0.555 of frame head-on, not 0.80), far post leaves frame on angled shots,
+  model abstains at side-on. `FULL_NET_FRACTION` stays 0.80.
+
+Full write-up: `~/.claude/plans/purrfect-jingling-rose.md`.
+
+**Jack's call:** stop trying to *correct* camera angle. **Restrict the input
+domain** — only accept clean behind-the-baseline footage with the whole net in
+frame. In that band residual foreshortening (<6% at 20°) is below the pipeline
+noise floor. This turns roadmap **1a** from advisory to enforced.
+
+**Changes:**
+- `infer_angle.py` — `_aggregate_frame_angles` adds `posts_inframe_frac` to debug
+  (fraction of trained-keypoint frames with both net posts inside
+  `NET_POST_EDGE_MARGIN`=0.03 of the frame edge; left/right x reconstructed from
+  `net_center_x ± net_width/2`). `evaluate_view_usable(..., net_debug=None)` gains
+  two block reasons: `net_not_found` (`net_detection_method != 'keypoint_model'`)
+  and `net_truncated` (`posts_inframe_frac < POSTS_INFRAME_MIN_FRAC`=0.5). Return
+  now carries `severity` ∈ `ok|warn|block`; `VIEW_GATE_BLOCK_REASONS` =
+  {front_view, side_on, net_not_found, net_truncated}. `angle_unreliable` (conf
+  <0.45, net found) is `warn` — false-rejects otherwise-fine footage.
+- `compare_swing.py` — new `ViewGateError(RuntimeError)` with `.code`. Gate is
+  enforced **by default**: `severity=='block'` raises `ViewGateError(code=
+  'VIEW_NOT_USABLE')` unless `RALLYMAX_ENFORCE_VIEW_GATE=0` (advisory, for batch
+  eval over legacy footage). Passes `net_debug=angle_debug` (or a
+  `{'net_detection_method': None}` stub when the net wasn't found and `angle_debug`
+  is a string).
+- `check_camera_setup.py` + `check_camera_setup_frame()` — pass `net_debug`, add
+  `view_severity` to every return.
+- `pro_matcher.py` — error payload gains `code` from `getattr(e, 'code', None)`.
+- `analyse.js` — `nonzero_exit` branch parses `{error, code}` and forwards `code`
+  in the 500 body.
+- `ResultsScreen.js` — `errorCode === 'VIEW_NOT_USABLE'` → "Check your camera
+  setup" title + "Record another swing" (→ `popToTop`), no "Try again".
+- `ContactMarkingScreen.js` — `calibrationBlocked` (`view_severity === 'block'`)
+  → ⛔ red message in the rough phase, confirm button becomes "Record another
+  swing" and `confirmFrame` short-circuits to `popToTop`.
+
+**Verified:** `infer_camera_angle` on the 6 clips → 5901/02/05/06 `severity=ok`,
+5907 + 5909 `block` (net_not_found). `compare_swing.py IMG_5907.MOV` raises
+`ViewGateError`; `RALLYMAX_ENFORCE_VIEW_GATE=0` lets it score.
+
+**Tests:** `test_infer_angle_pytest.py` +8 cases (29 pass). Full `pytest` 348
+pass. New `backend/src/routes/analyse.viewGate.test.js`. Not committed yet.
+
+## Session 2026-09-09/10 — metric-3D v4 pro-DB rebuild (stride-1 + world-z on every entry) + shot-contact verifier investigation
+
+Two threads across several parallel sessions. Commits `6cfee83` → `4d19e2b` +
+`12cab96`/`13771e7`, **local, NOT pushed** (user-side stride-1 must not reach the
+server before the rebuilt pro DB is transferred there).
+
+### Thread 1 — the pro-DB rebuild
+
+**`sample_every` 3 → 1 (roadmap 0a done).** `extract_poses` default + its 3
+callers (`process_new_videos`, `ingest_practice_footage`, `test_new_footage`) +
+`compare_swing.extract_user_poses` (dropped the `idx % 3` gate) all keep every
+frame now, and `extract_poses` always emits MediaPipe `pose_world_landmarks`. New
+`scripts/02_pose_extraction/reextract_pro_poses.py` re-extracted all 13 pro
+source videos (9 broadcast compilations + 4 practice) at stride-1 + world
+landmarks — **~4.75 h, 13/13, 0 failures**; pose files ~6× bigger
+(`backhand_poses.json` 114 MB → 713 MB, ~3 GB total). Writes a
+`.stride1_reextract_complete` sentinel; old files → `_backup_pre_stride1_<ts>/`.
+
+**Pro-side yaw wiring.** `trajectory_extraction.extract_swing_trajectory` gained
+keyword-only `world_pose_index` / `yaw_enabled` (default off = byte-identical) —
+reads camera azimuth from the swing lead-in, rotates to canonical facing (same
+machinery the user side already had behind `RALLYMAX_YAW_NORM`).
+`rebuild_helpers._load_pose_bundle` returns `(fps, pose_index, world_pose_index)`,
+lru-cached; `reextract_for_entry` threads it through.
+
+**v3 → v4 re-slice.** New `scripts/06_database_build/reslice_all_trajectories.py`
+re-slices every one of the 648 entries' `trajectory` + `overlay` around its
+existing `clip_contact_time_sec` (video-free / MediaPipe-free — preserves
+`camera_angle` / `racket_body_*` / `view_direction` / practice-holdout metadata).
+v3 first: density 24 → 73 pts/entry (3.1×). Then **v4** (`be1e1c4`): the z channel
+is **decoupled from x/y** — x/y stays image (or hard-yaw-rotated), z is always
+metric world-landmark-derived, rotated by a "soft yaw" (drops only the deadband
+check) or left unrotated-but-metric. Schema `traj_version` 4, per-entry
+`traj_yaw_deg` / `traj_z_yaw_deg`. Result: **648/648 v4, 388 z-rotated / 260
+unrotated-metric, `verify:db` 99/99**, DB-wide abs-median z 0.45 (was ~1.5 on the
+un-rotated half). Backup `pro_database_backup_pre_stride1_reslice_20260910_003017.json`.
+Serve re-anchor (`reanchor_pro_serves.py`, now `yaw_enabled=True`) moved 1 serve.
+
+**The one live change: `phase_breakdown.Z_ROTATION_BLEND = 0.0`.**
+`Z_TO_DEG_SCALE`=28.6 was fit to image-z; every entry's z scale shifted with v4,
+so the blend would mis-scale the live `body_rotation` sub-score. Reverts it to
+angle-only (months-stable). Reversible — Phase 4 = re-derive on metric z.
+
+**Orchestrator** `scripts/17_amateur_eval/run_metric3d_rebuild.py` — waits for
+the sentinel, then reslice → reanchor → verify:db → amateur-eval →
+`redesign_similarity` cache/axes/rubric, tee'd to
+`data/17_amateur_eval/metric3d_rebuild_<ts>.log`. Stops before any `CURATED_AXES`
+promotion.
+
+**Result — DTW:** `redesign_similarity eval` v0 separation **+7% → +11%**
+(held-out pro median held at 0.443, amateur moved out 0.477 → 0.498).
+
+**Result — depth axes: NEGATIVE on real footage.** Bench (broadcast/YouTube):
+`contact_depth_ahead` sep FH +30 / BH +17 / serve +18; serve depth axes cleared
+the ≥15-sample floor for the first time (back-n 0 → 18), backhand firmed up
+(n 19 → 48, +0 → +17). `redesign_similarity rubric` combined pro-vs-amateur gap
++7.8 → **+20.0** with a mechanically re-curated `CURATED_AXES` (`4d19e2b`, keep
+sep ≥ +10, weight sep/10 — **flagged PROVISIONAL**). **But** on Jack's 6
+known-angle fence clips, `contact_depth_ahead` ranged **[−0.19, +4.27] for the
+same self-fed forehand at the same 0° camera position** — pose noise dominates,
+no technique signal (same broadcast-vs-phone domain gap as the shot classifier).
+**Decision: 3D depth as a scoring signal is done (negative result).** Pull the
+depth axes from `CURATED_AXES` before the rubric drives anything real; roadmap
+1b's foundation is the strong 2D axes (`tempo_peak_frac` +62,
+`racket_body_range` +51, `backswing_depth` +37, contact wrist position,
+follow-through). The metric-z *scale* fix (unit conversion) is real and kept; the
+*scoring* use is not.
+
+**"Calibrate camera angle once per session" (Jack, 2026-09-10) — tested RED.**
+New `scripts/05_angle_detection/calibration_hold_test.py` (`12cab96`/`13771e7`):
+camera→net angle is a session constant, so read it once from a deliberate
+~2-3 s square-and-still hold, average `facing_azimuth` over 30-60 frames to beat
+the depth noise, reuse for every swing. Run on the 6 existing yaw_calib clips
+(self-fed, a lenient proxy): **within-hold facing IQR median 59°** (facing
+bounces ±30° while standing still — a deliberate hold doesn't fix *that*), head-on
+clip reads −57°, Spearman(|az|,|true|) +0.31, net-model also RED (−0.43).
+**Third independent confirmation** (per-clip pose-yaw, net-width, now this) that
+pose/net camera-angle normalization fails at fence distance. A
+deliberate-square-hold film from Jack would close it 100% but RED is expected.
+Fall back to the view gate + rubric front/back bucketing.
+
+### Thread 2 — shot-contact verifier investigation (uncommitted)
+
+The rebuild's amateur-eval gate flagged the verifier at 54.4% vs a "64.5%
+baseline". **Investigated (2 Explore passes + a ball-model A/B): nothing
+regressed.**
+- `data/17_amateur_eval/results.jsonl` is an append-only, gitignored checkpoint
+  grown 116 → 248 rows over ~a month, spanning the `b91abf5` batch merge
+  (2026-09-07) that introduced the ML verifier + ball-tracker rework. The "64.5%"
+  rows ran under materially older code and a lighter `skip`-label mix.
+- The verifier reads a **frozen-since-August** `data/17_amateur_eval/poses/`
+  cache (`sample_every=3`, hardcoded), never calls `extract_user_poses`, never
+  reads the pro DB. `git diff 4486290..HEAD` on `scripts/16_shot_verification/` +
+  `scripts/07_ball_racket_tracking/` = one README line.
+- Regenerating the frozen pose cache with current MediaPipe: **0 pt change**.
+- Old ball model (2026-09-06 backup) vs current: current is **better** (54.4% vs
+  50.0%) — the 2026-09-08 retrain helps the verifier.
+- The classifier (49.1%) is flat everywhere — the documented rule-based ceiling.
+- **Neither the verifier nor the shot classifier runs on a real upload.**
+  `analyse.js` → `pro_matcher.py` → `compare_swing.compare()` only. They're
+  offline tools (rally highlights, pro-DB ingest, trust-log training).
+
+**The real issue is absolute.** Verifier precision ~51% because `occlusion_gap`
+(151/248 clips, ~49% agreement) keeps nearly every clip as "real" (recall 89%).
+`_find_gap_contact` treats any ≥2-frame gap between ball detections as contact
+evidence, and `filter_verified_swings` keeps any `occlusion_gap`/`proximity`
+verdict regardless of confidence — so a better ball detector produces more
+spurious "gaps" on non-shots. This is JACK_TODO **2b**.
+
+**Eval hygiene shipped (Track 1, uncommitted):**
+- `evaluate_amateur_dataset.py` — every result row stamped with `git_sha` +
+  ball-model hash + `HARNESS_VERSION`; new `--fresh` flag (backup-then-clear);
+  `print_report` warns when rows span multiple versions. Kills the
+  stale-mixed-checkpoint failure class for every future eval in the repo.
+- `racket_tracker.py` — `RALLYMAX_BALL_MODEL` env override on `BALL_MODEL_PATH`.
+- Clean stamped baseline: **`data/17_amateur_eval/results_baseline_2b27847.jsonl`**
+  (54.4% verifier / 49.1% classifier). Frozen-Aug cache → `_poses_backup_frozen_aug_<ts>/`.
+
+**Track 2 (the `occlusion_gap` re-calibration) is next session** —
+anchor-proximity constraint + confidence gate + threshold sweep, ~1-2 days. Plan:
+`~/.claude/plans/rustling-meandering-petal.md`. Not launch-blocking.
+
+**Uncommitted after this session:** verifier eval-hygiene files (`racket_tracker.py`,
+`evaluate_amateur_dataset.py`, `reanchor_pro_serves.py` + its test) — land with
+the Track 2 batch.
+
+## Session 2026-09-09/10 — pre-release check: security hardening + guest onboarding (Option B) + rating prompt
+
+A separate thread from the ML work above, driven by four external videos (ASO +
+"vibe-code security"). Full running checklist: **`PRE_RELEASE_CHECK.md`** (repo
+root, new). Onboarding design: **`docs/plans/onboarding_plan.md`** (new).
+**Everything below is uncommitted** and tangled in the working tree with Jack's
+own in-flight WIP on `analyse.js` / `ResultsScreen.js` / `SignupScreen.js` /
+`TODO_MANUAL.md` — committing needs a hunk-split or a combined commit, Jack's
+call (not yet made).
+
+**Security (backend was already heavily hardened — most of A1/A2/A5/A6/A7 pre-done):**
+- IP-keyed rate-limit backstop on `/analyse` + `/compare-videos` (`analyseIpLimiter`
+  80/10min, `compareIpLimiter` 40/10min) behind the existing per-user limiters —
+  closes the account-rotation gap (`PRE_RELEASE_CHECK.md` A1).
+- New `analysis_usage.daily_cap` integrity check; `FREE_TIER_DAILY_ANALYSIS_LIMIT`
+  moved out of two route files into `domain/invariants.js`. `verify:db` 98→99.
+- New `middleware/securityHeaders.js` (nosniff / X-Frame-Options DENY /
+  Referrer-Policy no-referrer / CORP cross-origin / CSP on the served
+  reset-password.html only) — hand-rolled, no `helmet` dep.
+- `multer` 2.2.0 → 2.3.0 (4 high-severity upload-path DoS advisories). Removed
+  unused deps `pg` / `redis` / `axios`.
+- IDOR / broken-authz sweep of every `:id` route — all enforce ownership, no change.
+- Deferred (need Jack, all `[infra]`): budget caps + alerts on KIE / Anthropic /
+  AWS / Resend / RevenueCat and scoping the AWS IAM key to S3-only (**the single
+  most important open pre-launch item**); securityheaders.com scan post-deploy;
+  `js-yaml` (dev-only) + 35 Expo-toolchain `npm audit` advisories (do NOT
+  `audit fix --force` on SDK 54).
+
+**Onboarding — Phase 1, "gate at the reveal" (Option B):**
+- `/analyse` `requireAuth` → `optionalAuth`. A logged-out user can run **one**
+  analysis so the flow can show the score before asking for a signup. `isGuest`
+  skips the free-tier reservation, handedness lookup, and contact-frame logger.
+- Guest cap: **2 / 24h per IP**, consumed via `tryConsume()` *inside* the handler
+  after every validation gate (so a bad file pick costs nothing), 429 carries
+  `code: 'GUEST_LIMIT'`. Residual gap (a capped free user drops their token for
+  2 more runs/IP) documented, not closed — not worth engineering against on one box.
+- Frontend: new `OnboardingScreen` (one screen — payoff line + 3 steps + CTA),
+  `utils/onboarding.js` (`onboarding_complete` gate), `App.js` `RootNavigator`
+  picks the initial route (Onboarding only when not-complete AND not-authed).
+- `ResultsScreen`: **fixed a latent bug — `runAnalysis()` never sent the auth
+  header**, so every authed analysis was going through unauthenticated. Plus a
+  guest "reveal gate" (score held behind "create a free account"), and an effect
+  that saves the held result once `isAuthenticated` flips.
+- `Signup`/`Login` take a `returnTo` param (shared `utils/navigateAfterAuth.js`)
+  so signup mid-flow pops back to the result, not Home.
+- Not built (Phase 2, deferred): result coach-marks, contact-frame lead-in card,
+  permission pre-prompts, welcome-email drip, funnel instrumentation.
+
+**Rating prompt (ASO — `PRE_RELEASE_CHECK.md` B3):** `utils/reviewPrompt.js` +
+`expo-store-review@~9.0.9`. `recordHappyEvent()` fires immediately on a saved
+fresh analysis; `considerReviewPrompt()` (2.2s later) shows the native sheet only
+if gated conditions pass (authed, score ≥ 50, 2nd+ event, ≥ 60d apart, ≤ 3
+lifetime, OS has the final say). Dev Page has a "Test 'rate the app' prompt" button.
+
+**Review pass:** `/code-review` (Standards + Spec parallel sub-agents) + a
+correctness pass over the uncommitted diff → 8 fixes applied (guest cap moved
+inline + 3→2, `GUEST_LIMIT` code, stale comments, dead `saveStatus === 'guest'`
+banner removed, `ipRateLimit` + `navigateAfterAuth` helpers extracted,
+`recordHappyEvent` split out). Backend suite **631 green**, `verify:db` 99/99,
+web bundle builds clean.
+
+**Manual follow-ups → `TODO_MANUAL.md`** (2026-09-09 section): device-test the
+onboarding + rating prompt (guest analysis needs the `optionalAuth` change
+*deployed*); add `ios.appStoreUrl` / `android.playStoreUrl` to `app.json` once
+listings exist; ASO Section B (store name, keyword research, screenshots);
+onboarding Phase 2 scope.
+
+## Session 2026-09-10 (later) — ideal-swing reference clips DONE (Luma Modify route) + pre-release roadmap consolidation
+
+**Reference clips shipped.** The display-only side-by-side "ideal swing" clips
+(FH/BH/serve) — dormant frontend scaffold since 2026-09-08 — are produced and
+wired in. **Uncommitted** (the file + assets dir were never committed).
+
+- **Route that worked:** Luma Dream Machine **"Modify Video"** (lumalabs.ai
+  directly — *not* the third-party reseller apps, which are dark-pattern
+  paywalls). Feed a real behind-view swing clip + a character start-frame; Luma
+  re-renders replacing the person while keeping the real motion. Jack ran Luma
+  himself (3000 free trial credits, 540p). All earlier routes had failed:
+  Mixamo (no tennis anims), monocular mocap (a groundstroke travels along the
+  camera axis — unmeasurable), hand-keyed IK mannequin (stiff), CapCut
+  compositing (flickery).
+- **Source clips** (behind-view, from `data/04_clips/`, verified frame-by-frame
+  — the DB `view_direction`/`shot_type` fields are unreliable): forehand
+  `forehand_0209`, backhand `backhand_0246`, serve `serve_0176`. Claude
+  transcoded them to clean H.264 for Luma upload via a new
+  `rallymax_reference_wip/blender/transcode.py` (Blender VSE + its bundled
+  ffmpeg — there is no standalone ffmpeg on this machine and cv2's H.264 writer
+  is broken).
+- **Post (Claude, `rallymax_reference_wip/blender/make_clean.py` + `make_src.py`
+  + `finalize.py`):** Luma stamps two watermarks — its own "Luma AI" logo
+  (which *drifts* top-left → top-right partway through each clip) and the
+  garbled "Court Level Tennis" YouTube mark bottom-right. Removed both. Then
+  **Jack cropped around the player in CapCut** (his call over Claude's blur
+  approach — a tighter crop removes the top watermark strip too) and did light
+  retiming. Claude took the CapCut outputs (2560×1440), trimmed the letterbox
+  bars, downscaled to 720p H.264.
+- **Delivered:** `frontend/assets/reference/{forehand,backhand,serve}-ideal.mp4`
+  (587 KB / 1.4 MB / 928 KB; content ARs 1.38 / 1.27 / 1.15 — `SyncCompareScreen`
+  renders CONTAIN so per-clip AR mismatch is fine). Kit isn't perfectly matched
+  (FH/serve white shorts, BH green) — Jack accepted it; the clips never play
+  side-by-side with each other. **No synthetic ball** — Luma's ball reads OK
+  through contact on all three.
+- **Wiring:** `frontend/config/referenceClips.js` — 3 `require()`s uncommented,
+  `CONTACT_SEC = {forehand: 0.43, backhand: 1.0, serve: 0.3}` (Claude eyeball
+  estimates; **Jack to refine that one line** with measured values). No other
+  code change — `ResultsScreen` / `TipsSection` already consume the hook.
+  `npx expo export --platform web` succeeds, all 3 mp4s bundle with content
+  hashes. WIP + scripts stay in `C:\Users\jackp\Documents\rallymax_reference_wip\`.
+
+**Pre-release roadmap consolidation.** Jack asked "what's left / can we start app
+testing?". A consolidated read of `PRE_RELEASE_CHECK.md` + `JACK_TODO.md` +
+`STATUS.md` + `okay-so-i-finished-lovely-adleman.md` + git state is in
+**`C:\Users\jackp\.claude\plans\snazzy-jumping-rain.md`**. Headlines:
+
+- **`master` is 22 commits ahead of `origin/master`, not pushed** — and must
+  stay unpushed until **JACK_TODO 3b** (server `data/` transfer: rebuilt
+  `pro_database.json` + overlays + `onset_classifier.pkl` + ball `best.pt`, then
+  `clusterCourts.js` on the box). Pushing first auto-deploys the user-side
+  stride-1 change against the server's stride-3 pro DB → score drift. **This is
+  the #1 critical-path item; app testing against live is testing stale ML until
+  it's done.**
+- **~41 modified + ~28 untracked files uncommitted**, tangling 5 threads
+  (security, onboarding, rating prompt, v4 follow-ups, reference clips). Commit
+  strategy is Jack's call.
+- **Roadmap 1b + 1c are both blocked on a Jack decision, not Claude work:**
+  - **1c** — the serve accuracy eval was already run (2026-09-08): before/after
+    the apex-recentring change is **identical** (no regression, no improvement;
+    gate passes trivially). Real serve error = low-camera-angle occlusion-gap
+    blowups, outside 1c scope. Decision: (a) ship 1c as safe-but-neutral + file
+    the occlusion-gap problem separately, or (b) tune `APEX_PLATEAU_TOL` first.
+    Also: only the `serve_anchor.py` + `racket_tracker.py` changes are in the
+    working tree — the claimed `compare()` no-audio wiring is **not there**
+    (lost in the uncommitted churn, needs redoing before 1c ships).
+    `scripts/07_ball_racket_tracking/RESUME_1c_contact_eval.md`.
+  - **1b** — rubric bench hit **+20** pro-vs-amateur gap on the v4 DB but it's
+    PROVISIONAL: forehand axis still weak (+5.8, not backhand-grade),
+    `contact_depth_ahead` (a depth axis that's **noise** on Jack's fence
+    footage) is still weighted in `CURATED_AXES`, and it's **bench-only, not
+    wired into production**. Pulling the depth axes + re-running needs the v4
+    traj-cache rebuilt (CPU). Bigger call: ship forehand `confidence: 'low'` or
+    build new forehand axes first.
+    `scripts/17_amateur_eval/RESUME_swing_score_redesign.md`.
+
+---
+
+## Session 2026-09-10 (later²) — working tree committed (three-session split)
+
+The ~40-file uncommitted tangle on `master` was committed, split across the
+three Claude sessions live in the repo at the time:
+
+- **tennis-app-ea** committed roadmap 1c contact detection — `2791e7e` (serve
+  apex-plateau anchor + onset-classifier observability) + `f28f3b5` (contact
+  eval harness, stride-1). 8 files.
+- **tennis-app-0f** kept roadmap 1b (`scripts/17_amateur_eval/redesign_similarity.py`,
+  `evaluate_amateur_dataset.py`, and the not-yet-created `compare_swing.py` /
+  `phase_breakdown.py` / `history.js` / `PhaseBreakdown.js` edits) **uncommitted**
+  — that slice lands on its own branch later.
+- **this session** committed everything else, as:
+  1. `net-detection: v6 group-split + v10 keypoint retrain + testset v1` — the
+     `scripts/10_net_detection/` training/eval tooling (offline).
+  2. `pro racket enrichment` — portable+resumable `enrich_pro_racket_body.py`,
+     richer `racket_body_features()` (feeds 0f's rubric, no score change yet).
+  3. `serve reanchor: yaw-parity` — `reanchor_pro_serves.py` `yaw_enabled=True`;
+     `RALLYMAX_BALL_MODEL` env override in `racket_tracker.py`.
+  4. `pre-release backend: security hardening + guest analysis path` — IP-keyed
+     rate-limit backstop, `securityHeaders.js`, `analysis_usage.daily_cap`
+     invariant, multer 2.2→2.3, drop `pg`/`redis`/`axios`, `/analyse`
+     `optionalAuth` + 2/24h guest IP cap, `--top 1`. Suite 631 green,
+     `verify:db` 99/99.
+  5. `score presentation: drop pro-identity framing` — History/Coach/Home cards.
+  6. `reference clips` — bundled FH/BH/serve ideal-swing mp4s (~2.8 MB) +
+     `referenceClips.js` + per-tip "See this done right" + SyncCompare
+     `focusNote`/`initialT`.
+  7. `ASO: native review prompt` — `expo-store-review`, `reviewPrompt.js`, dev
+     test button.
+  8. `onboarding Phase 1: guest "gate at the reveal"` — `OnboardingScreen`,
+     `App.js` `RootNavigator`, `navigateAfterAuth.js`, the `ResultsScreen`
+     reveal-gate + **the latent missing-`Authorization`-header fix on
+     `runAnalysis()`**, plus the `ResultsScreen` wiring for commits 5–7 and the
+     roadmap-1a view-gate banner.
+  9. `docs` — this entry + STATUS/JACK_TODO/TODO_MANUAL.
+
+**Not pushed** — `master` is ~34 commits ahead of `origin/master` and stays that
+way until JACK_TODO 3b (the server `data/` transfer). A push auto-deploys and
+would run stride-1/v4 user trajectories against the server's stride-3/v3 pro DB
+→ wrong scores (no crash, no data loss, ~10 pts of drift, reversible). Nothing
+external depends on it today (no users). `stash@{1}` `jack-wip` is dead — base
+is 125 commits behind HEAD, its payload is already in the tree via later merges,
+a test-apply conflicts in ~15 files. Safe to `git stash drop stash@{1}`.
