@@ -1,4 +1,5 @@
 import './utils/installFetchShim'; // must run before any api/* fetch — see file
+import { useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -24,6 +25,7 @@ import LoginScreen from './screens/LoginScreen';
 import SignupScreen from './screens/SignupScreen';
 import ForgotPasswordScreen from './screens/ForgotPasswordScreen';
 import ContactMarkingScreen from './screens/ContactMarkingScreen';
+import OnboardingScreen from './screens/OnboardingScreen';
 import ResultsScreen from './screens/ResultsScreen';
 import VersusPickScreen from './screens/VersusPickScreen';
 import VersusResultsScreen from './screens/VersusResultsScreen';
@@ -48,7 +50,8 @@ import DevSwingReviewScreen from './screens/DevSwingReviewScreen';
 import DevTipReviewScreen from './screens/DevTipReviewScreen';
 import DevProClipReviewScreen from './screens/DevProClipReviewScreen';
 import DevBallLabelScreen from './screens/DevBallLabelScreen';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { isOnboardingComplete } from './utils/onboarding';
 
 const DARK   = '#0d0d0d';
 const GREEN  = '#4ade80';
@@ -71,31 +74,39 @@ function MainTabs() {
   );
 }
 
-export default function App() {
-  const [fontsLoaded] = useFonts({
-    Manrope_400Regular, Manrope_500Medium, Manrope_600SemiBold, Manrope_700Bold, Manrope_800ExtraBold,
-    InstrumentSerif_400Regular, InstrumentSerif_400Regular_Italic,
-  });
+// Inside AuthProvider so it can skip onboarding for an already-signed-in
+// returning user. Holds the first render until both the stored session and the
+// onboarding flag have resolved, so the initial route is decided once and
+// correctly rather than flashing the wrong screen.
+function RootNavigator() {
+  const { loading, isAuthenticated } = useAuth();
+  const [onboardingDone, setOnboardingDone] = useState(null); // null = still checking
 
-  if (!fontsLoaded) {
+  useEffect(() => {
+    isOnboardingComplete().then(setOnboardingDone).catch(() => setOnboardingDone(true));
+  }, []);
+
+  if (loading || onboardingDone === null) {
     return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
   }
 
+  const initialRouteName = (!onboardingDone && !isAuthenticated) ? 'Onboarding' : 'MainTabs';
+
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <AuthProvider>
-        <NavigationContainer>
-          <StatusBar style="dark" />
-          <Stack.Navigator
-            screenOptions={{
-              headerStyle: { backgroundColor: DARK },
-              headerTintColor: GREEN,
-              headerTitleStyle: { color: '#fff', fontWeight: '700', fontSize: 16 },
-              headerShadowVisible: false,
-              headerBackTitleVisible: false,
-            }}
-          >
-            <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false }} />
+    <NavigationContainer>
+      <StatusBar style="dark" />
+      <Stack.Navigator
+        initialRouteName={initialRouteName}
+        screenOptions={{
+          headerStyle: { backgroundColor: DARK },
+          headerTintColor: GREEN,
+          headerTitleStyle: { color: '#fff', fontWeight: '700', fontSize: 16 },
+          headerShadowVisible: false,
+          headerBackTitleVisible: false,
+        }}
+      >
+        <Stack.Screen name="Onboarding" component={OnboardingScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="MainTabs" component={MainTabs} options={{ headerShown: false }} />
             <Stack.Screen name="Upload" component={ContactMarkingScreen} options={{ headerShown: false }} />
             <Stack.Screen name="Results" component={ResultsScreen} options={{ headerShown: false }} />
             <Stack.Screen name="LessonDetail" component={LessonDetailScreen} options={{ headerShown: false }} />
@@ -140,8 +151,25 @@ export default function App() {
             <Stack.Screen name="DevProClipReview" component={DevProClipReviewScreen} options={{ title: 'Pro Clip Review' }} />
             <Stack.Screen name="DevBallLabel" component={DevBallLabelScreen} options={{ title: 'Ball Label' }} />
             <Stack.Screen name="DevDrillsEditor" component={DevDrillsEditorScreen} options={{ title: 'Drills & Lessons Editor' }} />
-          </Stack.Navigator>
-        </NavigationContainer>
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
+}
+
+export default function App() {
+  const [fontsLoaded] = useFonts({
+    Manrope_400Regular, Manrope_500Medium, Manrope_600SemiBold, Manrope_700Bold, Manrope_800ExtraBold,
+    InstrumentSerif_400Regular, InstrumentSerif_400Regular_Italic,
+  });
+
+  if (!fontsLoaded) {
+    return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
+  }
+
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <AuthProvider>
+        <RootNavigator />
       </AuthProvider>
     </GestureHandlerRootView>
   );

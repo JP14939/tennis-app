@@ -9,7 +9,7 @@ import { SHOT_TYPES } from '../config/shotTypes';
 import { useAuth } from '../context/AuthContext';
 import { saveHistory, flagNotShot, confirmRealShot, correctShotType, flagMatch } from '../api/history';
 import { getNotes, addNote } from '../api/coach';
-import { colors, fonts, radius, spacing, scoreColor } from '../theme';
+import { colors, fonts, radius, spacing } from '../theme';
 import CourtBackground from '../components/CourtBackground';
 import ResultShareCard from '../components/ResultShareCard';
 import { captureAndShare } from '../utils/shareCard';
@@ -22,6 +22,8 @@ import TipsSection, { Collapsible, useRotate } from '../components/TipsSection';
 import FriendPickerModal from '../components/FriendPickerModal';
 import { shareSwing } from '../api/friends';
 import { logDrillPractice } from '../api/drills';
+import { useReferenceClip } from '../config/referenceClips';
+import { recordHappyEvent, considerReviewPrompt } from '../utils/reviewPrompt';
 
 // Coach notes attached to one phase (or general, phaseKey=null) -- shown
 // inline wherever they're relevant, with an "Add note" composer when the
@@ -91,19 +93,13 @@ const n = StyleSheet.create({
   saveText: { color: colors.primary, fontSize: 12.5, fontFamily: fonts.bold },
 });
 
-function formatProId(proId, playerName) {
-  // "forehand_0142" -> "Forehand Technique #142", or "<Name>'s Forehand"
-  // once that clip has been labeled (data/06_pro_database/player_names.json).
-  // Guard matches HistoryScreen.js/CoachScreen.js's -- a match object
-  // missing pro_id (partial/legacy backend response) used to crash this
-  // whole screen on .split() instead of degrading gracefully.
-  if (!proId) return 'Analysis';
-  const [shot, num] = proId.split('_');
-  if (!shot || !num) return proId;
-  const label = shot.charAt(0).toUpperCase() + shot.slice(1);
-  if (playerName) return `${playerName}'s ${label}`;
-  return `${label} Technique #${parseInt(num, 10)}`;
-}
+// The result is graded against the pro-swing database as a whole, not shown as
+// a match to one named player -- most database clips aren't identified, and a
+// "matched to Forehand Technique #142" caption read as broken. The score card
+// / share card caption describes the number; the compared clip is still a real
+// pro swing, just labelled generically ("Pro swing") in Sync Compare.
+const proMatchCaption = (shotType) =>
+  `How closely your ${shotType || 'swing'} matches pro technique`;
 
 async function buildFormData(videoUri, shotType, contactTimeSec, viewDirectionHint) {
   const formData = new FormData();
@@ -137,8 +133,10 @@ export default function ResultsScreen({ navigation, route }) {
   const [errorMsg, setErrorMsg] = useState('');
   const [errorCode, setErrorCode] = useState(null);
   const [result, setResult] = useState(savedResult ?? null);
-  // idle | saving | saved | limit | guest | error — purely informational,
-  // never blocks the analysis result itself from displaying.
+  // idle | saving | saved | limit | error — purely informational, never blocks
+  // the result from displaying. ('guest' is also set transiently by
+  // saveToHistory for a logged-out caller, but that caller is held at the
+  // reveal gate and never renders the body, so it has no banner.)
   const [saveStatus, setSaveStatus] = useState('idle');
   const shareCardRef = useRef(null);
   const [shareModalVisible, setShareModalVisible] = useState(false);
@@ -151,7 +149,13 @@ export default function ResultsScreen({ navigation, route }) {
   // out of this screen mid-analysis still let the eventual response's
   // setResult/setStatus/etc. land on the unmounted screen.
   const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  // Delayed "rate the app?" prompt (see maybePromptForReview below) -- held in
+  // a ref so leaving the screen before it fires cancels it.
+  const reviewTimerRef = useRef(null);
+  useEffect(() => () => {
+    mountedRef.current = false;
+    if (reviewTimerRef.current) clearTimeout(reviewTimerRef.current);
+  }, []);
 
   // A fresh analysis (route params has no analysisId yet) only gets one
   // once saveToHistory() below actually saves it -- captured here so the
@@ -165,6 +169,11 @@ export default function ResultsScreen({ navigation, route }) {
   const [matchFlagged, setMatchFlagged] = useState(matchFlaggedInitial);
   const [displayShotType, setDisplayShotType] = useState(shotType);
   const [showTypePicker, setShowTypePicker] = useState(false);
+
+  // Bundled clean-swing clip for this shot type -- null until the asset is
+  // added and wired in config/referenceClips.js, which keeps the "Watch the
+  // ideal swing" button and per-tip "See this done right" links hidden.
+  const referenceClip = useReferenceClip(displayShotType);
 
   // Closed by default -- unlike TipsSection's tips (valuable, actionable),
   // the phase breakdown is a deep-dive most users don't need on first look;
@@ -244,8 +253,14 @@ export default function ResultsScreen({ navigation, route }) {
     setErrorCode(null);
     try {
       const formData = await buildFormData(videoUri, shotType, contactTimeSec, viewDirectionHint);
+      // Send the token when we have one so the analysis counts against the
+      // user's own free-tier allowance and saves to their history. A guest
+      // (onboarding flow, pre-signup) sends no header and the backend runs it
+      // on the strict guest per-IP allowance instead -- see
+      // docs/plans/onboarding_plan.md.
       const response = await fetch(`${API_BASE}/api/analyse`, {
         method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         body: formData,
       });
       const data = await response.json();
@@ -266,17 +281,38 @@ export default function ResultsScreen({ navigation, route }) {
       // swing whose overall_score and similarity disagreed could play the
       // wrong sound relative to what the user sees on screen.
       const topMatch = data.matches?.[0];
-      if ((topMatch?.overall_score ?? topMatch?.similarity ?? 0) >= 75) {
+      const topScore = topMatch?.overall_score ?? topMatch?.similarity ?? 0;
+      if (topScore >= 75) {
         playAchievementSound();
       } else {
         playCompleteSound();
       }
       await saveToHistory(data);
+      maybePromptForReview(topScore);
     } catch (err) {
       if (!mountedRef.current) return;
       setErrorMsg(err.message || 'Something went wrong');
       setStatus('error');
     }
+  };
+
+  // The "happy moment" for an ASO rating ask: a fresh analysis just finished
+  // and saved. Gated hard inside considerReviewPrompt() (not first-ever, not
+  // more than every 60 days, max 3 lifetime, OS has the final say). Here:
+  //   - authenticated only -- a guest hasn't committed to the app yet.
+  //   - recordHappyEvent() fires IMMEDIATELY so the count tracks completed
+  //     analyses even for a user who leaves the screen before the delay.
+  //   - the prompt itself waits ~2.2s (score count-up finishes; the native
+  //     sheet doesn't fight it for attention) and only fires for score >= 50,
+  //     since a disappointing result isn't a happy moment to ask on.
+  const maybePromptForReview = (topScore) => {
+    if (!isAuthenticated) return;
+    recordHappyEvent();
+    if (topScore < 50) return;
+    if (reviewTimerRef.current) clearTimeout(reviewTimerRef.current);
+    reviewTimerRef.current = setTimeout(() => {
+      if (mountedRef.current) considerReviewPrompt();
+    }, 2200);
   };
 
   const saveToHistory = async (data) => {
@@ -301,6 +337,24 @@ export default function ResultsScreen({ navigation, route }) {
       setSaveStatus(err.code === 'HISTORY_LIMIT' ? 'limit' : 'error');
     }
   };
+
+  // Guest → signup handoff: a logged-out user analysed a swing (held behind
+  // the reveal gate below), then created an account and popped back here.
+  // Now authenticated with an unsaved fresh result -> save it to their new
+  // history so it's not lost. No-op on every normal path (authed users hit
+  // saveToHistory inside runAnalysis; an already-saved result has an id).
+  const didGuestSaveRef = useRef(false);
+  useEffect(() => {
+    // Only the guest→signup case: a fresh analysis (no savedResult param, no
+    // analysisId) that this screen ran while logged out. The savedResult
+    // effect below owns every other "save an unsaved result" path.
+    if (isAuthenticated && result && !savedResult && !routeAnalysisId
+        && !savedAnalysisId && !didGuestSaveRef.current) {
+      didGuestSaveRef.current = true;
+      saveToHistory(result);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, result]);
 
   useEffect(() => {
     if (savedResult) {
@@ -338,10 +392,17 @@ export default function ResultsScreen({ navigation, route }) {
   // ── Error ─────────────────────────────────────────────────────────────────
   if (status === 'error') {
     const isDailyLimit = errorCode === 'DAILY_LIMIT';
+    // A guest used up the 2 free analyses the onboarding flow allows before
+    // signup -- retrying can't help, an account can.
+    const isGuestLimit = errorCode === 'GUEST_LIMIT';
     // View gate: the video isn't a usable behind-the-baseline shot. Re-running
     // the same clip can't help -- send them back to re-record instead.
     const isViewReject = errorCode === 'VIEW_NOT_USABLE';
+    // Any other failure for a logged-out user: still surface the account path
+    // (their history isn't being saved either way), alongside "try again".
+    const showGuestSignup = !isAuthenticated && (isGuestLimit || !isViewReject);
     const title = isDailyLimit ? 'Daily limit reached'
+      : isGuestLimit ? 'Create a free account'
       : isViewReject ? 'Check your camera setup'
       : 'Analysis failed';
     return (
@@ -357,6 +418,13 @@ export default function ResultsScreen({ navigation, route }) {
             >
               <Text style={s.retryBtnText}>Upgrade to Premium</Text>
             </TouchableOpacity>
+          ) : isGuestLimit ? (
+            <TouchableOpacity
+              style={s.retryBtn}
+              onPress={() => navigation.navigate('Signup', { returnTo: { screen: 'Upload', params: { shotType } } })}
+            >
+              <Text style={s.retryBtnText}>Create free account</Text>
+            </TouchableOpacity>
           ) : isViewReject ? (
             <TouchableOpacity style={s.retryBtn} onPress={() => navigation.popToTop()}>
               <Text style={s.retryBtnText}>Record another swing</Text>
@@ -366,7 +434,15 @@ export default function ResultsScreen({ navigation, route }) {
               <Text style={s.retryBtnText}>Try again</Text>
             </TouchableOpacity>
           )}
-          {!isViewReject && (
+          {showGuestSignup && !isGuestLimit && (
+            <TouchableOpacity
+              style={s.secondaryBtn}
+              onPress={() => navigation.navigate('Signup', { returnTo: { screen: 'Upload', params: { shotType } } })}
+            >
+              <Text style={s.secondaryBtnText}>Create a free account</Text>
+            </TouchableOpacity>
+          )}
+          {!isViewReject && !isGuestLimit && (
             <TouchableOpacity style={s.secondaryBtn} onPress={() => navigation.popToTop()}>
               <Text style={s.secondaryBtnText}>Back to home</Text>
             </TouchableOpacity>
@@ -376,9 +452,38 @@ export default function ResultsScreen({ navigation, route }) {
     );
   }
 
+  // ── Guest reveal gate ─────────────────────────────────────────────────────
+  // The onboarding flow lets a logged-out user run their first analysis; the
+  // backend has already produced the real result, but we hold it here behind
+  // a free-account signup (docs/plans/onboarding_plan.md, "gate at the
+  // reveal"). `returnTo` has no params: Signup/Login just pop back to THIS
+  // still-mounted Results instance, which kept `result` in state. Becoming
+  // authenticated then (a) skips this branch and (b) fires the
+  // [isAuthenticated, result] effect above, which saves the held result to
+  // the new account's history.
+  if (!isAuthenticated && result) {
+    const returnTo = { screen: 'Results' };
+    return (
+      <SafeAreaView style={s.safe}>
+        <CourtBackground />
+        <View style={s.centerFill}>
+          <Text style={s.loadingTitle}>Your score's ready</Text>
+          <Text style={s.loadingSub}>
+            Create a free account to see your result and keep your swing history.
+          </Text>
+          <TouchableOpacity style={s.retryBtn} onPress={() => navigation.navigate('Signup', { returnTo })}>
+            <Text style={s.retryBtnText}>Create free account</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={s.secondaryBtn} onPress={() => navigation.navigate('Login', { returnTo })}>
+            <Text style={s.secondaryBtnText}>I already have an account</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   // ── Results ───────────────────────────────────────────────────────────────
   const top = result.matches?.[0];
-  const otherMatches = result.matches?.slice(1) ?? [];
   const score = top?.overall_score ?? top?.similarity ?? 0;
   const phases = top?.phases;
 
@@ -406,10 +511,19 @@ export default function ResultsScreen({ navigation, route }) {
           )}
         </View>
 
+        {result.view_gate && !result.view_gate.usable && (
+          <View style={s.viewGateBanner}>
+            <Text style={s.viewGateBannerText}>
+              ⚠ {result.view_gate.message}
+              {'\n'}Your score may be less accurate — film from behind the baseline for the best match.
+            </Text>
+          </View>
+        )}
+
         {top ? (
           <>
             {/* Score */}
-            <ScoreCard score={score} caption={`Matched to ${formatProId(top.pro_id, top.player_name)}`} />
+            <ScoreCard score={score} caption={proMatchCaption(displayShotType)} />
 
             {top.pro_clip_url && result.user_clip_url && (
               <TouchableOpacity
@@ -425,7 +539,7 @@ export default function ResultsScreen({ navigation, route }) {
                   racketPathB: result.racket_overlay_trajectory ?? null,
                   ballPathA: top.pro_ball_overlay_trajectory ?? null,
                   ballPathB: result.ball_overlay_trajectory ?? null,
-                  labelA: formatProId(top.pro_id, top.player_name),
+                  labelA: 'Pro swing',
                   labelB: 'You',
                   analysisId,
                   canAddNotes,
@@ -433,6 +547,28 @@ export default function ResultsScreen({ navigation, route }) {
                 })}
               >
                 <Text style={s.compareBtnText}>Compare side-by-side →</Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Display-only: the user's clip next to a clean reference swing
+                for this shot type -- for watching the difference, not scoring
+                (that's the pro-match button above). Hidden until a reference
+                clip is wired in config/referenceClips.js. */}
+            {referenceClip && result.user_clip_url && (
+              <TouchableOpacity
+                style={s.compareBtn}
+                onPress={() => navigation.navigate('SyncCompare', {
+                  videoAUrl: referenceClip.uri,
+                  videoBUrl: `${API_BASE}${result.user_clip_url}`,
+                  contactASec: referenceClip.contactSec,
+                  contactBSec: result.contact_time_sec ?? 0,
+                  labelA: 'Ideal swing',
+                  labelB: 'You',
+                  analysisId,
+                  canAddNotes,
+                })}
+              >
+                <Text style={s.compareBtnText}>Watch the ideal swing ▸</Text>
               </TouchableOpacity>
             )}
 
@@ -464,11 +600,8 @@ export default function ResultsScreen({ navigation, route }) {
                 <Text style={s.saveBannerText}>✓ Saved to your history</Text>
               </View>
             )}
-            {saveStatus === 'guest' && (
-              <TouchableOpacity style={s.saveBannerAction} onPress={() => navigation.navigate('Login')}>
-                <Text style={s.saveBannerActionText}>Log in to save this result →</Text>
-              </TouchableOpacity>
-            )}
+            {/* No saveStatus === 'guest' banner: a guest is intercepted by the
+                reveal gate above and never reaches this results body. */}
             {saveStatus === 'limit' && (
               <TouchableOpacity
                 style={s.saveBannerAction}
@@ -581,19 +714,15 @@ export default function ResultsScreen({ navigation, route }) {
             )}
 
             {/* Coaching tips */}
-            {top.tips?.length > 0 && <TipsSection tips={top.tips} />}
-
-            {/* Other matches */}
-            {otherMatches.length > 0 && (
-              <>
-                <Text style={s.sectionTitle}>Other close matches</Text>
-                {otherMatches.map((m) => (
-                  <View key={m.pro_id} style={s.otherCard}>
-                    <Text style={s.otherName}>{formatProId(m.pro_id, m.player_name)}</Text>
-                    <Text style={[s.otherScore, { color: scoreColor(m.similarity) }]}>{m.similarity}/100</Text>
-                  </View>
-                ))}
-              </>
+            {top.tips?.length > 0 && (
+              <TipsSection
+                tips={top.tips}
+                referenceClip={referenceClip}
+                userClipUrl={result.user_clip_url}
+                userContactSec={result.contact_time_sec ?? 0}
+                analysisId={analysisId}
+                canAddNotes={canAddNotes}
+              />
             )}
           </>
         ) : (
@@ -617,7 +746,7 @@ export default function ResultsScreen({ navigation, route }) {
             ref={shareCardRef}
             score={score}
             shotType={displayShotType}
-            caption={`Matched to ${formatProId(top.pro_id, top.player_name)}`}
+            caption="Pro technique match"
           />
         </View>
       )}
@@ -644,7 +773,7 @@ export default function ResultsScreen({ navigation, route }) {
                     key={shareModalKey}
                     score={score}
                     shotType={displayShotType}
-                    caption={`Matched to ${formatProId(top.pro_id, top.player_name)}`}
+                    caption="Pro technique match"
                     animate
                   />
                 </View>
@@ -762,6 +891,11 @@ const s = StyleSheet.create({
   saveBannerActionText: { color: colors.amberText, fontSize: 12.5, fontFamily: fonts.bold, textAlign: 'center' },
 
   verifyWrap: { marginBottom: 26 },
+  viewGateBanner: {
+    backgroundColor: colors.amberBg,
+    borderRadius: radius.sm, padding: 12, marginBottom: 18,
+  },
+  viewGateBannerText: { color: colors.amberText, fontSize: 12.5, fontFamily: fonts.bold, lineHeight: 18 },
   flaggedBanner: {
     flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start',
     backgroundColor: colors.coralSoft ?? '#fbe2df', borderRadius: radius.pill,
@@ -811,14 +945,6 @@ const s = StyleSheet.create({
   // now lives in components/PhaseBreakdown.js with its own copies.
   phaseTrack: { height: 5, backgroundColor: colors.border, borderRadius: 3, overflow: 'hidden' },
   phaseFill: { height: 5, borderRadius: 3 },
-
-  otherCard: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    backgroundColor: colors.surface,
-    borderRadius: radius.sm, padding: 14, marginBottom: 8,
-  },
-  otherName: { color: colors.mutedDark, fontSize: 13.5, fontFamily: fonts.regular },
-  otherScore: { fontSize: 13.5, fontFamily: fonts.bold },
 
   primaryBtn: { backgroundColor: colors.primary, borderRadius: radius.pill, paddingVertical: 15, alignItems: 'center', marginTop: 16 },
   primaryBtnText: { color: colors.white, fontSize: 14.5, fontFamily: fonts.bold },

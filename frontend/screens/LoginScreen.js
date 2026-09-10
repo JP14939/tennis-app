@@ -5,10 +5,14 @@ import {
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { playTapSound } from '../utils/sounds';
+import { navigateAfterAuth } from '../utils/navigateAfterAuth';
 import { colors, fonts, radius, spacing } from '../theme';
 
-export default function LoginScreen({ navigation }) {
+export default function LoginScreen({ navigation, route }) {
   const { login } = useAuth();
+  // See SignupScreen -- set by the onboarding guest-reveal gate so a returning
+  // user who logs in mid-onboarding lands back on their result, not Home.
+  const returnTo = route?.params?.returnTo;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -23,7 +27,7 @@ export default function LoginScreen({ navigation }) {
     setLoading(true);
     try {
       await login(email, password);
-      navigation.navigate('MainTabs', { screen: 'Home' });
+      navigateAfterAuth(navigation, returnTo);
     } catch (err) {
       setError(err.message || 'Something went wrong');
     } finally {
@@ -90,7 +94,7 @@ export default function LoginScreen({ navigation }) {
 
           <View style={s.footer}>
             <Text style={s.footerText}>Don't have an account? </Text>
-            <TouchableOpacity onPress={() => navigation.navigate('Signup')}>
+            <TouchableOpacity onPress={() => navigation.navigate('Signup', returnTo ? { returnTo } : undefined)}>
               <Text style={s.footerLink}>Sign up free</Text>
             </TouchableOpacity>
           </View>

@@ -5,10 +5,15 @@ import {
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { playTapSound } from '../utils/sounds';
+import { navigateAfterAuth } from '../utils/navigateAfterAuth';
 import { colors, fonts, radius, spacing } from '../theme';
 
-export default function SignupScreen({ navigation }) {
+export default function SignupScreen({ navigation, route }) {
   const { signup } = useAuth();
+  // Set by the onboarding guest-reveal gate (ResultsScreen): where to send the
+  // user after signup instead of Home, so their just-analysed swing is waiting
+  // for them.
+  const returnTo = route?.params?.returnTo;
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -28,7 +33,7 @@ export default function SignupScreen({ navigation }) {
     setLoading(true);
     try {
       await signup(email, password, name);
-      navigation.navigate('MainTabs', { screen: 'Home' });
+      navigateAfterAuth(navigation, returnTo);
     } catch (err) {
       setError(err.message || 'Something went wrong');
     } finally {
@@ -44,11 +49,11 @@ export default function SignupScreen({ navigation }) {
           <View style={s.header}>
             <Image source={require('../assets/branding/logo-rallymax.png')} style={s.logo} resizeMode="contain" />
             <Text style={s.title}>Create account</Text>
-            <Text style={s.sub}>Start analysing your swing for free</Text>
+            <Text style={s.sub}>{returnTo ? 'One step to see your score' : 'Start analysing your swing for free'}</Text>
           </View>
 
           <View style={s.perks}>
-            {['2 free swing analyses per day', 'Matched to pro players', 'Personalised coaching tips'].map(p => (
+            {['2 free swing analyses per day', 'Scored against pro technique', 'Personalised coaching tips'].map(p => (
               <View key={p} style={s.perk}>
                 <Text style={s.perkCheck}>✓</Text>
                 <Text style={s.perkText}>{p}</Text>
@@ -114,7 +119,7 @@ export default function SignupScreen({ navigation }) {
 
           <View style={s.footer}>
             <Text style={s.footerText}>Already have an account? </Text>
-            <TouchableOpacity onPress={() => navigation.navigate('Login')}>
+            <TouchableOpacity onPress={() => navigation.navigate('Login', returnTo ? { returnTo } : undefined)}>
               <Text style={s.footerLink}>Log in</Text>
             </TouchableOpacity>
           </View>
