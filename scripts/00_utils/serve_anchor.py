@@ -41,6 +41,15 @@ STRUCT_MIN_VIS = 0.4
 
 # how far around a rough prior anchor to hunt for the apex (offline side).
 APEX_SEARCH_RADIUS_SEC = 0.6
+# Overhead reach (torso-normalised) within this much of the frame-wise maximum
+# counts as "on the apex plateau". On distant / foreshortened poses the wrist y
+# barely moves across the top of the service arc, so the raw argmax (with an
+# earliest-frame tie-break) lands on the wide LEADING edge of that plateau --
+# well before contact. Picking the plateau's centre instead removes that early
+# error mode without disturbing a sharp, well-resolved apex (whose plateau is
+# 1-2 frames wide). Swept against eval_pro_clip_contact.py's human-marked
+# serves.
+APEX_PLATEAU_TOL = 0.04
 # Forward lead from the overhead apex onto contact. Swept against
 # eval_pro_clip_contact.py's 60 human-marked serves 2026-09-06: median
 # (apex_frame - teacher_frame) came out at -1f, so the apex IS contact for the
@@ -121,6 +130,29 @@ def _argmax_earliest(scored):
     return min(f for f, v in usable if v >= top - 1e-9)
 
 
+def _apex_plateau_frame(scored, tol=APEX_PLATEAU_TOL):
+    """scored: list of (frame_number, value|None), in frame order. Finds the
+    contiguous run of measurable frames (around the global argmax) whose value
+    stays within `tol` of the maximum -- the apex "plateau" -- and returns the
+    measurable frame closest to that run's centre. On a sharp apex the run is
+    1-2 frames and this reduces to the argmax; on a flat plateau it moves the
+    pick off the early leading edge toward where contact actually is. None if
+    nothing is measurable."""
+    usable = [(f, v) for f, v in scored if v is not None]
+    if not usable:
+        return None
+    usable.sort()
+    top = max(v for _, v in usable)
+    star = min(i for i, (_, v) in enumerate(usable) if v >= top - 1e-9)
+    lo = hi = star
+    while lo - 1 >= 0 and usable[lo - 1][1] >= top - tol:
+        lo -= 1
+    while hi + 1 < len(usable) and usable[hi + 1][1] >= top - tol:
+        hi += 1
+    mid_frame = (usable[lo][0] + usable[hi][0]) / 2
+    return min((f for f, _ in usable[lo:hi + 1]), key=lambda f: abs(f - mid_frame))
+
+
 def find_serve_apex_frame(pose_by_frame, fps, center_frame=None,
                           radius_sec=APEX_SEARCH_RADIUS_SEC):
     """Frame number of maximum overhead extension.
@@ -143,15 +175,16 @@ def find_serve_apex_frame(pose_by_frame, fps, center_frame=None,
         if not frames:
             return None
 
-    # NB: restricting the search to the longest sustained-overhead run was
-    # tried (2026-09-06) to tame the bimodal apex error on ~half of broadcast
-    # serves -- it measured WORSE (|err| median 19f -> 34f, bias -21f): on
-    # distant broadcast poses the wrist y barely changes near the top, so the
-    # run's argmax lands on a wide early plateau. Plain global argmax wins.
-    apex = _argmax_earliest([(f, _above_head(pose_by_frame[f])) for f in frames])
+    # NB: restricting the search to the longest sustained-overhead RUN was
+    # tried (2026-09-06) and measured WORSE (|err| median 19f -> 34f, bias
+    # -21f): the run's own argmax still lands on the wide early plateau. The
+    # current approach keeps the global argmax but recentres it within the
+    # plateau (_apex_plateau_frame) -- targets the same early-error mode
+    # without the run restriction's downside.
+    apex = _apex_plateau_frame([(f, _above_head(pose_by_frame[f])) for f in frames])
     if apex is not None:
         return apex
-    return _argmax_earliest([(f, _overhead_reach(pose_by_frame[f])) for f in frames])
+    return _apex_plateau_frame([(f, _overhead_reach(pose_by_frame[f])) for f in frames])
 
 
 def serve_contact_anchor_frame(pose_by_frame, fps, center_frame=None,

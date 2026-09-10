@@ -48,11 +48,32 @@ def test_contact_anchor_is_apex_plus_forward_lead():
     assert serve_contact_anchor_frame(_serve_rw_track(), FPS) == 20 + lead
 
 
-def test_plateau_returns_earliest_frame():
+def test_plateau_returns_centre_frame():
+    """A flat apex plateau: the pick should land in the plateau's centre, not
+    on its early leading edge (that early edge is the bimodal-error mode this
+    targets -- on distant poses the wrist y barely moves across the top of the
+    arc while contact happens mid-plateau)."""
     pbf = _serve_rw_track()
-    for f in (20, 21, 22):
+    for f in (18, 19, 20, 21, 22):
         pbf[f] = _frame(rw_y=0.02, lw_y=0.55)  # identical max reach
     assert find_serve_apex_frame(pbf, FPS) == 20
+
+
+def test_near_plateau_within_tolerance_recentred():
+    """Frames close to (within APEX_PLATEAU_TOL of) the max also count as
+    plateau -- not just exact ties."""
+    pbf = _serve_rw_track()
+    # nose y 0.35, torso ~0.30 -> reach = (0.35 - rw_y)/0.30. rw_y 0.02 -> ~1.1;
+    # a 0.005 y bump is ~0.017 reach, well inside APEX_PLATEAU_TOL (0.04).
+    for f, y in ((19, 0.025), (20, 0.020), (21, 0.023), (22, 0.021)):
+        pbf[f] = _frame(rw_y=y, lw_y=0.55)
+    apex = find_serve_apex_frame(pbf, FPS)
+    assert 20 <= apex <= 21  # centre of the [19..22] plateau, not frame 19
+
+
+def test_sharp_apex_unaffected_by_plateau_logic():
+    """A well-resolved single-frame apex is returned unchanged."""
+    assert find_serve_apex_frame(_serve_rw_track(), FPS) == 20
 
 
 def test_uses_whichever_wrist_is_highest():

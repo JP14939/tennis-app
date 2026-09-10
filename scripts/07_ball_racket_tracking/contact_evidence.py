@@ -76,12 +76,17 @@ def wrist_kinematics(frames, anchor_idx, fps):
     }
 
 
-def compute_contact_evidence(video_path, frames, fps, anchor_frame, anchor_list_idx):
+def compute_contact_evidence(video_path, frames, fps, anchor_frame, anchor_list_idx,
+                             search_window_sec=None):
     """Run the live visual contact pipeline on a clip window.
 
     `frames`: name->dict-landmark list (see module docstring).
     `anchor_frame`: the wrist-velocity-peak frame NUMBER (the rough anchor).
     `anchor_list_idx`: that frame's index within `frames` (for wrist_kinematics).
+    `search_window_sec`: passed through to find_contact_frame -- how far from the
+    anchor the refinement may look (None -> find_contact_frame's own default of
+    0.3s). Serves want a wider window: the overhead-apex anchor sits a few
+    frames from contact.
 
     Returns a dict {student_frame, student_confidence, student_method,
     student_meta} -- the shape features_from_record() / log_example() consume --
@@ -93,8 +98,9 @@ def compute_contact_evidence(video_path, frames, fps, anchor_frame, anchor_list_
     if not dets:
         return None
 
-    frame, conf, method = find_contact_frame(dets, anchor_frame, fps)
-    meta = contact_frame_meta(dets, anchor_frame, fps)
+    fc_kwargs = {} if search_window_sec is None else {'search_window_sec': search_window_sec}
+    frame, conf, method = find_contact_frame(dets, anchor_frame, fps, **fc_kwargs)
+    meta = contact_frame_meta(dets, anchor_frame, fps, **fc_kwargs)
     meta.update(wrist_kinematics(frames, anchor_list_idx, fps))
     meta['anchor_frame'] = anchor_frame
     return {

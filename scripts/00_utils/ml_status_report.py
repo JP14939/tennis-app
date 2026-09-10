@@ -34,6 +34,15 @@ _CF_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..',
 CONTACT_FRAME_MODEL_PATH = os.path.join(_CF_DIR, 'contact_frame_model.pkl')
 CONTACT_FRAME_META_PATH = os.path.join(_CF_DIR, 'contact_frame_model_meta.json')
 
+# The audio-onset contact classifier (audio_contact.detect_contact) -- the
+# first-line auto-detect refinement for uploads that have an audio track. It's
+# not a teacher-student loop (no trust log), but it IS a gitignored model file
+# that has to be rsync'd to the server by hand, and its silent absence
+# downgrades every no-mark upload to the ~9-frame wrist-peak heuristic. This
+# reporter is the only place its server-side presence is visible.
+ONSET_MODEL_PATH = os.path.join(_CF_DIR, 'onset_classifier.pkl')
+ONSET_META_PATH = os.path.join(_CF_DIR, 'onset_classifier_meta.json')
+
 
 def shot_contact_status():
     records = contact.read_log()
@@ -186,6 +195,22 @@ def contact_frame_ml_status():
     }
 
 
+def onset_classifier_status():
+    """Presence + CV metrics for the audio-onset contact classifier
+    (data/07_ball_racket_tracking/onset_classifier.pkl). `model_present` is the
+    signal that matters on the server: false means every no-mark upload is
+    silently falling back to the wrist-velocity peak. No trust log -- audio
+    onset is only ever used when its own per-call confidence gate passes."""
+    model_meta = None
+    if os.path.exists(ONSET_META_PATH):
+        with open(ONSET_META_PATH) as f:
+            model_meta = json.load(f)
+    return {
+        'model_present': os.path.exists(ONSET_MODEL_PATH),
+        'model_meta': model_meta,
+    }
+
+
 def main():
     print(json.dumps({
         'shot_contact': shot_contact_status(),
@@ -194,6 +219,7 @@ def main():
         'tip_selector': tip_selector_status(),
         'contact_frame': contact_frame_status(),
         'contact_frame_ml': contact_frame_ml_status(),
+        'onset_classifier': onset_classifier_status(),
     }))
 
 

@@ -56,6 +56,23 @@ def test_compute_contact_evidence_row_shape(monkeypatch):
     assert 'anchor_frame' in row['student_meta']
 
 
+def test_compute_contact_evidence_passes_serve_window_through(monkeypatch):
+    """A wider search_window_sec (serves) must reach find_contact_frame -- a
+    proximity frame ~0.4s from the anchor is out of the 0.3s default window but
+    inside a 0.45s one."""
+    dets = [{'frame': f, 'racket_box': [0, 0, 10, 10], 'racket_conf': 0.8,
+             'ball_box': [1, 1, 3, 3] if f == 28 else None,
+             'ball_conf': 0.7 if f == 28 else None} for f in range(6, 40)]
+    monkeypatch.setattr(contact_evidence.rt, 'track_racket_and_ball',
+                        lambda *a, **k: (dets, 30.0))
+    default = contact_evidence.compute_contact_evidence('x.mp4', _frames(20), 30.0, 15, 5)
+    wide = contact_evidence.compute_contact_evidence('x.mp4', _frames(20), 30.0, 15, 5,
+                                                     search_window_sec=0.45)
+    assert default['student_method'] == 'wrist_velocity_fallback'
+    assert wide['student_method'] == 'ball_racket_proximity'
+    assert wide['student_frame'] == 28
+
+
 def test_predict_contact_offset_no_model(monkeypatch, tmp_path):
     monkeypatch.setattr(tcm, 'MODEL_PATH', str(tmp_path / 'nope.pkl'))
     monkeypatch.setattr(tcm, '_model', None)
