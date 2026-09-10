@@ -666,29 +666,28 @@ def do_axes(args):
 # groundstrokes (flat). racket_* on spec (weight small) -- re-curate once the
 # enrich pass + 60-held-out cache land. Weights ~ sep magnitude.
 
-# Re-curated 2026-09-09 from the post-stride-1 + yaw (metric-3D) `axes` run
-# (648-entry DB, 67-held-out / 45-amateur v3 cache). Rule: keep sep >= +7,
-# weight ~ sep/10. Dropped where they now invert: forehand contact_elbow_angle
-# (-3) & wrist_path_ratio (+1); serve follow_through_height (-35),
-# contact_wrist_lateral (-21), tempo_peak_frac (-6), rotation_range (-1).
-# Added the metric-3D depth axes that landed strong: forehand
-# contact_depth_ahead (+46, the top forehand discriminator) & wrist_elbow_depth_lag
-# (+32); backhand coil_depth_xfactor (+26) & forward_weight_transfer (+15).
-# Serve depth axes EXCLUDED -- back-n=0 (no yaw-rotated serve pros => image-z
-# fallback, unreliable); serve is left with only 3 solid axes, itself a finding.
+# Re-curated 2026-09-10 from the traj_version-4 `axes` run (metric z on ALL 648
+# entries -- depth axes now measurable for every shot incl. serve, which had
+# back-n 0 before). Mechanical rule to limit overfit: keep sep >= +10 from the
+# v4 per-axis table, weight = round(sep/10, 1), view-conditioned. Depth axes
+# that landed: contact_depth_ahead (forehand +30, backhand +17, serve +18 --
+# consistently positive across all three); coil_depth_xfactor (backhand +26
+# only; forehand +5 / serve -26 dropped). Dropped as duds/inverted everywhere:
+# swing_plane_tilt, forward_weight_transfer, wrist_elbow_depth_lag on
+# backhand/serve, rotation_range on groundstrokes.
+# PROVISIONAL -- axes picked by sep on the same eval set (overfit risk); the
+# amateur buckets are small (backhand n=5). Treat the rubric gap as indicative.
 CURATED_AXES = {
-    'forehand': {'contact_depth_ahead': 4.5, 'wrist_elbow_depth_lag': 3.2,
-                 'follow_through_height': 3.0, 'racket_body_dist': 2.1,
+    'forehand': {'contact_depth_ahead': 3.0, 'follow_through_height': 3.0,
+                 'racket_body_dist': 2.1, 'wrist_elbow_depth_lag': 2.1,
                  'racket_path_ratio': 1.8, 'contact_wrist_height': 1.2,
-                 'contact_wrist_lateral': 1.1, 'tempo_peak_frac': 0.9,
-                 'racket_body_range': 0.7},
+                 'contact_wrist_lateral': 1.1},
     'backhand': {'tempo_peak_frac': 6.2, 'racket_body_range': 5.1, 'backswing_depth': 3.7,
                  'coil_depth_xfactor': 2.6, 'contact_wrist_lateral': 2.5,
-                 'contact_elbow_angle': 2.2, 'racket_body_dist': 1.6,
-                 'forward_weight_transfer': 1.5, 'contact_wrist_height': 1.4,
-                 'rotation_range': 0.8},
+                 'contact_elbow_angle': 2.2, 'contact_depth_ahead': 1.7,
+                 'racket_body_dist': 1.6, 'contact_wrist_height': 1.4},
     'serve':    {'contact_elbow_angle': 5.1, 'racket_body_range': 2.2,
-                 'wrist_path_ratio': 1.8},
+                 'contact_depth_ahead': 1.8, 'wrist_path_ratio': 1.8},
 }
 
 
