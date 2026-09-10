@@ -758,7 +758,7 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
                 pro_cap.release()
                 output[0]['pro_racket_overlay_trajectory'] = build_racket_overlay_trajectory(pro_racket_frames, pro_fps)
                 pro_contact_sec = top_entry.get('clip_contact_time_sec')
-                pro_contact_frame = int(round(pro_contact_sec * pro_fps)) if pro_contact_sec else None
+                pro_contact_frame = int(round(pro_contact_sec * pro_fps)) if pro_contact_sec is not None else None
                 pro_ball = build_ball_overlay_trajectory(
                     pro_clip_path, pro_fps, contact_frame=pro_contact_frame)
                 if pro_ball is not None:

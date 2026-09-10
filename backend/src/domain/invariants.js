@@ -210,7 +210,20 @@ function isIsoDateTime(value) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return false;
   const year = parsed.getUTCFullYear();
-  return year >= MIN_PLAUSIBLE_YEAR && year <= MAX_PLAUSIBLE_YEAR;
+  if (year < MIN_PLAUSIBLE_YEAR || year > MAX_PLAUSIBLE_YEAR) return false;
+
+  // `new Date(...)` silently rolls calendar-invalid dates over instead of
+  // rejecting them (e.g. "2026-04-31" parses as May 1st), so re-derive the
+  // date from the literal string and confirm it's a real calendar date.
+  const dateMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!dateMatch) return false;
+  const y = Number(dateMatch[1]);
+  const m = Number(dateMatch[2]);
+  const d = Number(dateMatch[3]);
+  const reconstructed = new Date(Date.UTC(y, m - 1, d));
+  return reconstructed.getUTCFullYear() === y
+    && reconstructed.getUTCMonth() === m - 1
+    && reconstructed.getUTCDate() === d;
 }
 
 // Row ids as they arrive from a URL param or a JSON body. AUTOINCREMENT ids
