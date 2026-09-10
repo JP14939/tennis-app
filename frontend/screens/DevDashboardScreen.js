@@ -1,6 +1,9 @@
+import * as StoreReview from 'expo-store-review';
 import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView } from 'react-native';
 import { colors, fonts, radius, spacing } from '../theme';
 import { playTapSound } from '../utils/sounds';
+import Alert from '../utils/alert';
+import { resetReviewPromptState } from '../utils/reviewPrompt';
 import RequireAdmin from '../components/RequireAdmin';
 
 // Hidden hub (Profile -> Settings -> Dev Page, admin-only -- see
@@ -63,6 +66,25 @@ const TOOLS = [
   },
 ];
 
+// Not a navigation target -- fires the native App Store / Play rating sheet
+// directly and clears utils/reviewPrompt.js's back-off state, so the
+// "happy moment" prompt can be checked on-device without doing two real
+// analyses and waiting out the 60-day cooldown.
+async function testReviewPrompt() {
+  playTapSound();
+  await resetReviewPromptState();
+  try {
+    if (!(await StoreReview.isAvailableAsync())) {
+      Alert.alert('Store review unavailable', 'This build/platform cannot show the native rating sheet (expected on web and the simulator without a store login).');
+      return;
+    }
+    await StoreReview.requestReview();
+    Alert.alert('Requested', 'Native rating sheet requested. The OS may still suppress it (rate-limited to a few times a year on iOS).');
+  } catch (err) {
+    Alert.alert('Failed', err?.message || 'requestReview() threw.');
+  }
+}
+
 export default function DevDashboardScreen({ navigation }) {
   return (
     <RequireAdmin navigation={navigation}>
@@ -82,6 +104,11 @@ export default function DevDashboardScreen({ navigation }) {
               <Text style={s.cardSub}>{tool.sub}</Text>
             </TouchableOpacity>
           ))}
+
+          <TouchableOpacity style={s.card} activeOpacity={0.8} onPress={testReviewPrompt}>
+            <Text style={s.cardLabel}>Test "rate the app" prompt</Text>
+            <Text style={s.cardSub}>Clears the review-prompt back-off state and fires the native rating sheet right now (utils/reviewPrompt.js)</Text>
+          </TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
     </RequireAdmin>
