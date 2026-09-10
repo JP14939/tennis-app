@@ -78,6 +78,29 @@ describe('POST /highlights/jobs/:id/reel premium gate', () => {
     expect(res.body.error).toMatch(/rallyIds cannot be empty/);
   });
 
+  // Regression test: a duplicate id (e.g. a double-tap in the picker UI, or
+  // a buggy client) used to survive the integer-array check and pass
+  // straight through to both the SQL query and the persisted rally_ids,
+  // stitching the same clip into the reel twice instead of once.
+  test('duplicate rallyIds are deduped, not stitched into the reel twice', async () => {
+    const { id: userId, token } = makeUser('reel_dupeids@test.com', 'premium');
+    const jobId = db.prepare(`INSERT INTO highlight_jobs (user_id, video_path, status) VALUES (?, 'x', 'done')`)
+      .run(userId).lastInsertRowid;
+    const clipId = db.prepare(`
+      INSERT INTO rally_clips (job_id, user_id, clip_path, start_sec, end_sec, duration_sec, swing_count)
+      VALUES (?, ?, 'clip.mp4', 0, 5, 5, 1)
+    `).run(jobId, userId).lastInsertRowid;
+
+    const res = await request(app)
+      .post(`/api/highlights/jobs/${jobId}/reel`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ rallyIds: [clipId, clipId] });
+    expect(res.status).toBe(202);
+
+    const reelJob = db.prepare(`SELECT rally_ids FROM reel_jobs WHERE id = ?`).get(res.body.reelJobId);
+    expect(JSON.parse(reelJob.rally_ids)).toEqual([clipId]);
+  });
+
   test('omitting rallyIds entirely still uses the top-N default', async () => {
     const { id: userId, token } = makeUser('reel_omitids@test.com', 'premium');
     const jobId = db.prepare(`INSERT INTO highlight_jobs (user_id, video_path, status) VALUES (?, 'x', 'done')`)

@@ -134,6 +134,9 @@ describe('isIsoDateTime', () => {
     ['   ', 'whitespace'],
     ['1899-01-01', 'implausibly early'],
     ['3000-01-01', 'implausibly late — would sort to the top of every list forever'],
+    ['2026-04-31', 'April has 30 days -- JS Date silently rolls this to May 1st'],
+    ['2026-02-30', 'February never has 30 days -- JS Date silently rolls this to March 2nd'],
+    ['2026-13-01', 'month 13 does not exist -- JS Date silently rolls this into next year'],
   ])('rejects %p (%s)', (v) => expect(isIsoDateTime(v)).toBe(false));
 
   test('rejects junk', () => expectRejectsJunk(isIsoDateTime));

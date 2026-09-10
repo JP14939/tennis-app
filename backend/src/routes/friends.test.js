@@ -67,6 +67,22 @@ describe('POST /friends/:userId/matches', () => {
     expect(res.status).toBe(400);
   });
 
+  // Regression test: a tied set score (e.g. {setsWon: 2, setsLost: 2}) used
+  // to be accepted -- a tennis match can't end in a tie, and computeRecord()
+  // adds a tied match to neither wins nor losses, so the match logged
+  // successfully but silently didn't move either player's record.
+  test('rejects a tied setsWon/setsLost with 400', async () => {
+    const a = makeUser('match-g@test.com');
+    const b = makeUser('match-h@test.com');
+    makeFriends(a.id, b.id);
+
+    const res = await request(app)
+      .post(`/api/friends/${b.id}/matches`)
+      .set('Authorization', `Bearer ${a.token}`)
+      .send({ playedAt: '2026-08-23', setsWon: 2, setsLost: 2 });
+    expect(res.status).toBe(400);
+  });
+
   test('accepts a valid match log', async () => {
     const a = makeUser('match-e@test.com');
     const b = makeUser('match-f@test.com');
