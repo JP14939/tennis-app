@@ -10,11 +10,31 @@ const {
   isLatitude, isLongitude, isRadiusKm, isText, isOptionalText, isIsoDateTime,
 } = require('../domain/invariants');
 const { validate, optional } = require('../validation/validateBody');
+const { rateLimit } = require('../middleware/rateLimit');
 
 const router = express.Router();
 
 const DEFAULT_RADIUS_KM = 20;
 const MAX_RADIUS_KM = 100;
+
+// GET /courts had no cap at all, unlike every other route in this app that
+// can trigger outbound third-party work (analyse.js/compareVideos.js/
+// calibration.js all rate-limit their ML subprocess routes for the same
+// resource-exhaustion reasoning -- see analyse.js's own comment). This route
+// is worse in one specific way: on a cache miss it calls the real Overpass
+// API (seedCourtsNearOnce below), and the miss cache is keyed on a coarse
+// ~1.1km coordinate bucket -- so a caller who varies lat/lng by more than
+// that each request (trivially done anywhere with no local courts yet, e.g.
+// open ocean) defeats wasRecentlySeededEmpty/inFlightSeeds entirely and
+// forces a fresh live Overpass call on every single request. The file's own
+// comment above already flags that "repeated hits risk Overpass
+// rate-limiting/banning this backend's shared IP, which would degrade court
+// search for every user" -- that risk was only mitigated for the
+// same-coordinate case, not this one. Keyed by user id like the other
+// authenticated limiters; generous relative to real usage (FindGamesScreen
+// only calls this once per screen focus, not on every map pan).
+const listCourtsLimiter = rateLimit({ windowMs: 5 * 60 * 1000, max: 30, keyPrefix: 'courts-list', keyGenerator: (req) => req.user?.id ?? req.ip });
+
 // Independent confirmations a user-dropped pin needs before it's trusted
 // enough to show as a normal (verified) court to everyone.
 const CONFIRMATION_THRESHOLD = 2;
@@ -142,7 +162,7 @@ function queryNearbyCourts(lat, lng, radiusKm, userId) {
     .map(({ exactDistanceKm, ...c }) => c);
 }
 
-router.get('/courts', requireAuth, async (req, res) => {
+router.get('/courts', requireAuth, listCourtsLimiter, async (req, res) => {
   const lat = parseFloat(req.query.lat);
   const lng = parseFloat(req.query.lng);
   const parsedRadiusKm = parseFloat(req.query.radiusKm);
