@@ -416,6 +416,10 @@ export default function SyncCompareScreen({ route, navigation }) {
     labelA = 'Reference', labelB = 'You',
     analysisId = null, canAddNotes = false,
     phaseMarkers = DEFAULT_PHASE_MARKERS,
+    // Display-only "ideal swing" mode: a one-line caption (usually the tip the
+    // user tapped through from) shown over the videos, and where to park the
+    // scrubber on load so the relevant moment is already in view.
+    focusNote = null, initialT = 0,
   } = route.params ?? {};
 
   // Taller than a plain video aspect ratio (closer to a real portrait phone
@@ -492,7 +496,7 @@ export default function SyncCompareScreen({ route, navigation }) {
   const [tool, setTool] = useState('pen');
   const [annColor, setAnnColor] = useState(ANNOTATION_COLORS[0]);
 
-  const [t, setT] = useState(0); // seconds relative to contact, shared by both videos
+  const [t, setT] = useState(initialT); // seconds relative to contact, shared by both videos
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [scrollEnabled, setScrollEnabled] = useState(true);
@@ -502,7 +506,7 @@ export default function SyncCompareScreen({ route, navigation }) {
   // Mirrors of state that the PanResponders below need to read at gesture
   // time. See the `latest` ref comment for why reading the state directly
   // from inside those handlers does not work.
-  const tRef = useRef(0);
+  const tRef = useRef(initialT);
   const isPlayingRef = useRef(false);
 
   const setPlaying = useCallback((next) => {
@@ -678,7 +682,7 @@ export default function SyncCompareScreen({ route, navigation }) {
     // togglePlay() race the new source exactly like the un-gated version did.
     videoAReadyRef.current = false;
     videoBReadyRef.current = false;
-    seekBoth(0);
+    seekBoth(initialT);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uriA, uriB]);
 
@@ -976,6 +980,7 @@ export default function SyncCompareScreen({ route, navigation }) {
               onLayout={onZoomTrackLayout} panHandlers={zoomResponder.panHandlers}
             />
 
+            {focusNote && <Text style={s.focusNoteOverlay}>{focusNote}</Text>}
             <Text style={s.tHintOverlay}>{tHintText}</Text>
             {scrubber}
             <Text style={s.phaseLegendOverlay}>{phaseLegendText}</Text>
@@ -1150,6 +1155,10 @@ const s = StyleSheet.create({
   zoomRowOverlay: { marginBottom: 8 },
   zoomLabelOverlay: { color: 'rgba(255,255,255,0.8)', fontSize: 11.5, fontFamily: fonts.bold, marginBottom: 6 },
   tHintOverlay: { color: 'rgba(255,255,255,0.8)', fontSize: 11.5, textAlign: 'center' },
+  focusNoteOverlay: {
+    color: '#fff', fontSize: 12.5, fontFamily: fonts.bold, textAlign: 'center',
+    lineHeight: 17, marginBottom: 8, paddingHorizontal: 8,
+  },
   phaseLegendOverlay: { color: 'rgba(255,255,255,0.6)', fontSize: 10, textAlign: 'center', marginTop: 4 },
   bottomRowOverlay: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, marginTop: 12 },
   playBtnOverlay: {

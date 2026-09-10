@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Animated } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { colors, fonts, radius, easing, durations } from '../theme';
+import { API_BASE } from '../config/api';
+import { focusSeekTForTip } from '../config/referenceClips';
 import TipDiagram from './TipDiagram';
 import { ChevronDownIcon } from './icons';
 
@@ -63,9 +66,10 @@ export function useRotate(open) {
   return rotateAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] });
 }
 
-export function TipRow({ tip }) {
+export function TipRow({ tip, compare }) {
   const [open, setOpen] = useState(false);
   const rotate = useRotate(open);
+  const navigation = useNavigation();
 
   const severityPill = tip.severity && (
     <View style={[t.severityPill, { borderColor: severityColor(tip.severity) }]}>
@@ -73,11 +77,37 @@ export function TipRow({ tip }) {
     </View>
   );
 
+  // "See this done right" -- opens the side-by-side viewer with the user's
+  // clip next to the clean reference swing for this shot, parked at the
+  // moment this fault shows and captioned with the tip text. Only when a
+  // reference clip is wired for this shot type and we have the user's clip.
+  const canShowIdeal = !!(compare?.referenceClip && compare.userClipUrl && tip.id);
+  const openIdeal = () => navigation.navigate('SyncCompare', {
+    videoAUrl: compare.referenceClip.uri,
+    videoBUrl: `${API_BASE}${compare.userClipUrl}`,
+    contactASec: compare.referenceClip.contactSec,
+    contactBSec: compare.userContactSec ?? 0,
+    labelA: 'Ideal swing',
+    labelB: 'You',
+    focusNote: tip.tip_text,
+    initialT: focusSeekTForTip(tip),
+    analysisId: compare.analysisId ?? null,
+    canAddNotes: compare.canAddNotes ?? false,
+  });
+  const seeIdealLink = canShowIdeal && (
+    <TouchableOpacity onPress={openIdeal} style={t.seeIdeal} activeOpacity={0.7}>
+      <Text style={t.seeIdealText}>See this done right ▸</Text>
+    </TouchableOpacity>
+  );
+
   if (!tip.drill) {
     return (
-      <View style={t.row}>
-        <Text style={t.fixText}><Text style={t.fixLabel}>Fix: </Text>{tip.tip_text ?? tip}</Text>
-        {severityPill}
+      <View style={t.rowWrap}>
+        <View style={t.row}>
+          <Text style={t.fixText}><Text style={t.fixLabel}>Fix: </Text>{tip.tip_text ?? tip}</Text>
+          {severityPill}
+        </View>
+        {seeIdealLink}
       </View>
     );
   }
@@ -91,6 +121,7 @@ export function TipRow({ tip }) {
           <ChevronDownIcon size={12} color={colors.mutedDark} />
         </Animated.View>
       </TouchableOpacity>
+      {seeIdealLink}
       <Collapsible open={open}>
         <View style={t.drillPanel}>
           <TipDiagram tipId={tip.id} />
@@ -112,12 +143,18 @@ const t = StyleSheet.create({
     borderWidth: 1, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 2,
   },
   severityPillText: { fontSize: 9.5, fontFamily: fonts.bold, textTransform: 'uppercase' },
+  seeIdeal: { paddingHorizontal: 14, paddingBottom: 12, marginTop: -2 },
+  seeIdealText: { color: colors.primary, fontSize: 12, fontFamily: fonts.bold },
   drillPanel: { backgroundColor: colors.primarySoft, padding: 14 },
   drillText: { color: colors.limeText, fontSize: 13, lineHeight: 19.5, fontFamily: fonts.regular },
   drillLabel: { fontFamily: fonts.bold },
 });
 
-export default function TipsSection({ tips }) {
+export default function TipsSection({
+  tips, referenceClip = null, userClipUrl = null, userContactSec = 0,
+  analysisId = null, canAddNotes = false,
+}) {
+  const compare = { referenceClip, userClipUrl, userContactSec, analysisId, canAddNotes };
   // Starts open -- this is valuable, actionable content, and a collapsed
   // accordion with a subtle chevron was easy to miss entirely (reported
   // as "no tips show up" when the data was there the whole time). Still
@@ -135,7 +172,7 @@ export default function TipsSection({ tips }) {
       </TouchableOpacity>
       <Collapsible open={open}>
         <View style={ts.reveal}>
-          {tips.map((tip, i) => <TipRow key={i} tip={tip} />)}
+          {tips.map((tip, i) => <TipRow key={i} tip={tip} compare={compare} />)}
         </View>
       </Collapsible>
     </>
