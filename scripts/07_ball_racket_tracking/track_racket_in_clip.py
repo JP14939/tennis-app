@@ -225,6 +225,51 @@ def avg_racket_body_distance(frame_results, min_valid_frames=3):
     return round(sum(dists) / len(dists), 4)
 
 
+def racket_body_features(frame_results, min_valid_frames=3):
+    """Richer racket-mechanics summary than avg_racket_body_distance alone:
+      {mean, range, path_ratio}
+    - mean       : same as avg_racket_body_distance (kept in sync)
+    - range      : max-min of the per-frame normalised racket->hip distance
+                   (how much the racket extends away from the body through the
+                   swing -- pros extend more)
+    - path_ratio : total racket-handle path length / net start->end
+                   displacement, in raw frame-normalised coords (scale-free);
+                   a loopy / uncontrolled racket path runs high
+    Any component is None when its inputs aren't available. Returns None
+    entirely if fewer than min_valid_frames have a confident racket+pose.
+    """
+    widths = [r['shoulder_width'] for r in frame_results if r['shoulder_width'] is not None]
+    scale = statistics.median(widths) if widths else None
+    if not scale or scale < 0.01:
+        return None
+
+    dists, handles = [], []
+    for r in frame_results:
+        if r['racket_handle'] is not None:
+            handles.append(r['racket_handle'])
+        if r['racket_handle'] is None or r['hip_mid'] is None:
+            continue
+        hx, hy = r['racket_handle']
+        px, py = r['hip_mid']
+        dists.append(math.sqrt((hx - px) ** 2 + (hy - py) ** 2) / scale)
+
+    if len(dists) < min_valid_frames:
+        return None
+
+    path_ratio = None
+    if len(handles) >= 4:
+        total = sum(math.hypot(handles[i][0] - handles[i - 1][0], handles[i][1] - handles[i - 1][1])
+                    for i in range(1, len(handles)))
+        net = math.hypot(handles[-1][0] - handles[0][0], handles[-1][1] - handles[0][1])
+        path_ratio = round(total / net, 3) if net > 0.03 else None
+
+    return {
+        'mean': round(sum(dists) / len(dists), 4),
+        'range': round(max(dists) - min(dists), 4),
+        'path_ratio': path_ratio,
+    }
+
+
 if __name__ == '__main__':
     import json
     video_path = sys.argv[1]
