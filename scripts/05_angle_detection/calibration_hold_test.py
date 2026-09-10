@@ -96,7 +96,17 @@ def _ensure_manifest():
     sys.exit(0)
 
 
-def _poses(video_abs, name):
+def _poses(video_abs, name, pose_cache=None):
+    """Load a pre-extracted pose cache if the manifest names one (relative to
+    data/05_angle_detection/), else extract fresh at stride 1. The cache path
+    is how the existing yaw_calib recordings get reused without a slow
+    re-extract."""
+    if pose_cache:
+        p = pose_cache if os.path.isabs(pose_cache) else os.path.join(
+            DATA_DIR, '05_angle_detection', pose_cache)
+        if os.path.exists(p):
+            return json.load(open(p))
+        print(f'  pose_cache {p} missing -- falling back to extraction')
     os.makedirs(POSE_DIR, exist_ok=True)
     pose_path = os.path.join(POSE_DIR, f'{name}.json')
     if not (os.path.exists(pose_path) and os.path.getmtime(pose_path) >= os.path.getmtime(video_abs)):
@@ -114,8 +124,14 @@ def _wrist_xy(lm_list, name):
 
 def _still_span(frames):
     """The longest run of consecutive detected frames whose frame-to-frame
-    wrist movement stays below STILL_SPEED. Returns a set of frame numbers."""
+    wrist movement stays below STILL_SPEED (scaled by the detection stride --
+    the yaw_calib caches are stride-3). Returns a set of frame numbers."""
     det = [f for f in frames if f.get('landmarks')]
+    if len(det) < 2:
+        return set()
+    gaps = [b['frame'] - a['frame'] for a, b in zip(det, det[1:]) if b['frame'] > a['frame']]
+    stride = statistics.median(gaps) if gaps else 1
+    thr = STILL_SPEED * max(1, stride)
     best, cur = [], []
     prev = None
     for f in det:
@@ -125,7 +141,7 @@ def _still_span(frames):
             for a, b in ((lw, prev[0]), (rw, prev[1])):
                 if a and b:
                     moved = max(moved, math.hypot(a[0] - b[0], a[1] - b[1]))
-        if prev is None or moved <= STILL_SPEED:
+        if prev is None or moved <= thr:
             cur.append(f['frame'])
         else:
             if len(cur) > len(best):
@@ -223,11 +239,11 @@ def main():
 
     for e in manifest:
         vid = e['video'] if os.path.isabs(e['video']) else os.path.join(CALIB_DIR, e['video'])
-        name = os.path.splitext(os.path.basename(vid))[0]
-        if not os.path.exists(vid):
+        name = e.get('name') or os.path.splitext(os.path.basename(vid))[0]
+        if not e.get('pose_cache') and not os.path.exists(vid):
             print(f'{name}: MISSING {vid} -- skipping')
             continue
-        pose = _poses(vid, name)
+        pose = _poses(vid, name, e.get('pose_cache'))
         fps = pose['fps']
         hold = _still_span(pose['frames'])
         world_idx = build_world_pose_index([f for f in pose['frames'] if f['frame'] in hold])
