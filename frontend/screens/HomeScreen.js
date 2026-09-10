@@ -54,7 +54,7 @@ function RecentRow({ item }) {
       <ScoreRing score={score} />
       <View style={r.body}>
         <Text style={r.title}>{item.shot_type.charAt(0).toUpperCase() + item.shot_type.slice(1)}</Text>
-        <Text style={r.date}>{formatDate(item.created_at)} · {item.pro_id ?? 'Technique'}</Text>
+        <Text style={r.date}>{formatDate(item.created_at)}</Text>
       </View>
       <ChevronRightIcon size={7} color={colors.muted} />
     </View>

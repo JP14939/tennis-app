@@ -12,15 +12,6 @@ import { playTapSound, playAchievementSound } from '../utils/sounds';
 import { parseServerDate } from '../utils/formatDate';
 import { TennisBallIcon, BackChevronIcon } from '../components/icons';
 
-function formatProId(proId, playerName) {
-  if (!proId) return 'Analysis';
-  const [shot, num] = proId.split('_');
-  if (!shot || !num) return proId;
-  const label = shot.charAt(0).toUpperCase() + shot.slice(1);
-  if (playerName) return `${playerName}'s ${label}`;
-  return `${label} Technique #${parseInt(num, 10)}`;
-}
-
 function formatDate(isoString) {
   const d = parseServerDate(isoString);
   return d ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
@@ -57,7 +48,6 @@ const AnalysisCard = memo(function AnalysisCard({ item, onPress }) {
         <Text style={h.date}>{formatDate(item.created_at)}</Text>
       </View>
       <Text style={[h.score, { color: scoreColor(score) }]}>{score}/100</Text>
-      <Text style={h.proId}>{formatProId(item.pro_id, item.result?.matches?.[0]?.player_name)}</Text>
     </TouchableOpacity>
   );
 });
@@ -122,7 +112,6 @@ const h = StyleSheet.create({
   shotLabel: { color: colors.ink, fontSize: 13.5, fontFamily: fonts.bold },
   date: { color: colors.muted, fontSize: 11.5, fontFamily: fonts.regular },
   score: { fontSize: 18, fontFamily: fonts.extrabold },
-  proId: { color: colors.muted, fontSize: 11.5, marginTop: 2, fontFamily: fonts.regular },
 });
 
 // ── Main screen ────────────────────────────────────────────────────────────

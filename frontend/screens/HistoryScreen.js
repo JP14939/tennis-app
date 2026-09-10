@@ -90,12 +90,11 @@ const AnalysisCard = memo(function AnalysisCard({ item, onPress, onLongPress, on
       )}
 
       <View style={c.scoreRow}>
-        <Text style={c.scoreLabel}>Match score</Text>
+        <Text style={c.scoreLabel}>Technique score</Text>
         <Text style={c.scoreNum}>{score}<Text style={c.scoreSlash}>/100</Text></Text>
       </View>
       <ScoreBar value={score} />
 
-      <Text style={c.proId}>{formatProId(item.pro_id, top?.player_name)}</Text>
       {item.tip && <Text style={c.tip} numberOfLines={2}>{item.tip}</Text>}
 
       {/* Real human ground truth for scripts/16_shot_verification/'s
@@ -184,7 +183,6 @@ const c = StyleSheet.create({
   scoreLabel: { color: colors.muted, fontSize: 12, fontFamily: fonts.regular },
   scoreNum:   { color: colors.ink, fontSize: 19, fontFamily: fonts.extrabold },
   scoreSlash: { color: colors.divider, fontSize: 12, fontFamily: fonts.regular },
-  proId:      { color: colors.muted, fontSize: 11, marginBottom: 6, fontFamily: fonts.regular },
   tip:        { color: colors.mutedDark, fontSize: 12.5, lineHeight: 18, fontFamily: fonts.regular },
   cardFlagged: { opacity: 0.85 },
   flaggedBanner: {
@@ -586,7 +584,8 @@ export default function HistoryScreen({ navigation, route }) {
   }, [token, navigation]);
 
   const handleDelete = useCallback((item) => {
-    Alert.alert('Delete this analysis?', `${formatProId(item.pro_id, item.result?.matches?.[0]?.player_name)} — this can't be undone.`, [
+    const label = item.shot_type ? `${item.shot_type.charAt(0).toUpperCase()}${item.shot_type.slice(1)} analysis` : 'This analysis';
+    Alert.alert('Delete this analysis?', `${label} — this can't be undone.`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
@@ -759,7 +758,7 @@ export default function HistoryScreen({ navigation, route }) {
       {analyses.length === 0 && !showUpload && (
         <View style={s.empty}>
           <Text style={s.emptyTitle}>No analyses yet</Text>
-          <Text style={s.emptySub}>Upload a swing video to get matched to a pro and receive personalised coaching tips.</Text>
+          <Text style={s.emptySub}>Upload a swing video to score your technique against the pros and get personalised coaching tips.</Text>
           <TouchableOpacity style={s.emptyBtn} onPress={() => setShowUpload(true)}>
             <Text style={s.emptyBtnText}>Upload your first swing →</Text>
           </TouchableOpacity>
@@ -830,21 +829,12 @@ async function navigateToWatchCompare(navigation, token, item) {
     racketPathB: result.racket_overlay_trajectory ?? null,
     ballPathA: top.pro_ball_overlay_trajectory ?? null,
     ballPathB: result.ball_overlay_trajectory ?? null,
-    labelA: formatProId(top.pro_id, top.player_name),
+    labelA: 'Pro swing',
     labelB: 'You',
     analysisId: item.id,
     canAddNotes: false,
     phaseMarkers: top.phase_markers ?? undefined,
   });
-}
-
-function formatProId(proId, playerName) {
-  if (!proId) return 'Analysis';
-  const [shot, num] = proId.split('_');
-  if (!shot || !num) return proId;
-  const label = shot.charAt(0).toUpperCase() + shot.slice(1);
-  if (playerName) return `${playerName}'s ${label}`;
-  return `${label} Technique #${parseInt(num, 10)}`;
 }
 
 const s = StyleSheet.create({

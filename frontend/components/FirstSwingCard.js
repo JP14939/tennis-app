@@ -3,8 +3,8 @@ import { colors, fonts, radius } from '../theme';
 import { TennisBallIcon, LeaderboardIcon, DrillsIcon } from './icons';
 
 const ROWS = [
-  { Icon: TennisBallIcon, text: 'Your closest pro match, from 631 tour swings' },
-  { Icon: LeaderboardIcon, text: 'A similarity score out of 100' },
+  { Icon: TennisBallIcon, text: 'Your technique scored against 600+ tour swings' },
+  { Icon: LeaderboardIcon, text: 'A score out of 100' },
   { Icon: DrillsIcon, text: 'Specific fixes, ranked by what’s costing you most' },
 ];
 
