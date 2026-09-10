@@ -211,6 +211,13 @@ router.post('/friends/:userId/matches', requireAuth, (req, res) => {
   ]);
   if (bad) return res.status(400).json(bad);
 
+  // A tied set score can't happen in real tennis, and computeRecord() adds a
+  // tied match to neither wins nor losses -- letting one through means the
+  // match logs successfully but silently doesn't move either player's record.
+  if (setsWon === setsLost) {
+    return res.status(400).json({ error: 'setsWon and setsLost cannot be equal', field: 'setsLost' });
+  }
+
   const info = db.prepare(
     `INSERT INTO friend_matches (logged_by, opponent_id, played_at, sets_won, sets_lost, score_detail)
      VALUES (?, ?, ?, ?, ?, ?)`
