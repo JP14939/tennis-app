@@ -413,6 +413,22 @@ describe('structural violations', () => {
     expect(violationNames()).toEqual(['rally_clips.job_owner']);
   });
 
+  test('catches a free-tier user with more analyses recorded for one day than the cap allows', () => {
+    const user = makeUser('overcap@test.com');
+    // reserveDailyUsageSlot() would refuse the 3rd insert for today; a
+    // since-fixed race or a direct sqlite edit could still produce this.
+    for (let i = 0; i < 3; i++) db.prepare('INSERT INTO analysis_usage (user_id) VALUES (?)').run(user);
+    expect(violationNames()).toEqual(['analysis_usage.daily_cap']);
+  });
+
+  test('allows a user at exactly the daily cap, and one over the cap but spread across two days', () => {
+    const user = makeUser('atcap@test.com');
+    db.prepare('INSERT INTO analysis_usage (user_id) VALUES (?)').run(user);
+    db.prepare('INSERT INTO analysis_usage (user_id) VALUES (?)').run(user);
+    db.prepare("INSERT INTO analysis_usage (user_id, created_at) VALUES (?, datetime('now', '-1 day'))").run(user);
+    expect(violationNames()).toEqual([]);
+  });
+
   test('catches two practice steps claiming the same position in a lesson', () => {
     const item = db.prepare(
       "INSERT INTO drill_items (kind, shot_type, title, explanation) VALUES ('lesson', 'forehand', 'L', 'E')"

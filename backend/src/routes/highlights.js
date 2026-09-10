@@ -15,6 +15,7 @@ const { reserveDailyUsageSlot, releaseUsageSlot, LIMIT_EXCEEDED } = require('../
 const { finalizeAnalysisResult, USER_CLIPS_DIR } = require('../services/finalizeAnalysisResult');
 const {
   OUTCOME_TAGS, MAX_LENGTHS, isOutcomeTag, isBoundaryNote, isText,
+  FREE_TIER_DAILY_ANALYSIS_LIMIT,
 } = require('../domain/invariants');
 const { validate, optional, oneOfMessage } = require('../validation/validateBody');
 const { rateLimit } = require('../middleware/rateLimit');
@@ -38,11 +39,11 @@ const DETECTOR = path.join(__dirname, '..', 'services', 'rally_detector.py');
 // rally clip is analyzed through the identical pipeline, not a second one.
 const MATCHER = path.join(__dirname, '..', 'services', 'pro_matcher.py');
 const ANALYSIS_TIMEOUT_MS = 2 * 60 * 1000; // matches analyse.js's own ceiling for the same subprocess
-// Duplicated from analyse.js rather than shared -- see that file's own
-// comment on why a daily cap exists at all (free-tier resource exhaustion).
-// This is the same expensive MediaPipe subprocess, so it draws on the same
+// Shared with analyse.js via domain/invariants.js -- see that file's comment
+// on why a daily cap exists at all (free-tier resource exhaustion). This is
+// the same expensive MediaPipe subprocess, so it draws on the same
 // analysis_usage accounting rather than getting a free pass.
-const FREE_DAILY_LIMIT = 2;
+const FREE_DAILY_LIMIT = FREE_TIER_DAILY_ANALYSIS_LIMIT;
 const analyzeShotLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 30, keyPrefix: 'analyse-shot', keyGenerator: (req) => req.user?.id ?? req.ip });
 const STITCHER = path.join(__dirname, '..', '..', '..', 'scripts', '11_highlight_clipping', 'stitch_clips.py');
 // Stitching re-copies every frame of every clip via OpenCV (no ffmpeg on

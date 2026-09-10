@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const db = require('../db');
-const requireAuth = require('../middleware/requireAuth');
+const optionalAuth = require('../middleware/optionalAuth');
 const { currentTier } = require('../utils/tier');
 const { PYTHON, DATA_DIR, SCRIPTS_DIR } = require('../config/paths');
 const { SHOT_TYPES } = require('../config/shotTypes');
@@ -12,8 +12,8 @@ const { finalizeAnalysisResult, USER_CLIPS_DIR } = require('../services/finalize
 const { reserveDailyUsageSlot, releaseUsageSlot, LIMIT_EXCEEDED } = require('../utils/usageLimit');
 const { runPythonJson } = require('../utils/runPythonJson');
 const { safeVideoExt, videoFileFilter } = require('../utils/videoUpload');
-const { isTimestampSec } = require('../domain/invariants');
-const { rateLimit } = require('../middleware/rateLimit');
+const { isTimestampSec, FREE_TIER_DAILY_ANALYSIS_LIMIT } = require('../domain/invariants');
+const { rateLimit, ipRateLimit, tryConsume } = require('../middleware/rateLimit');
 
 const router = express.Router();
 
@@ -30,6 +30,29 @@ const router = express.Router();
 // rotating accounts behind the same connection the way an IP-keyed limit
 // could be; generous enough that no real usage pattern should ever hit it.
 const analyseLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 30, keyPrefix: 'analyse', keyGenerator: (req) => req.user?.id ?? req.ip });
+// Second, coarser layer keyed by IP. The per-user limit above bounds any one
+// account; this bounds a single attacker cycling through many accounts (each
+// signup gets its own fresh per-user allowance and its own FREE_DAILY_LIMIT)
+// from one connection -- the residual gap called out in PRE_RELEASE_CHECK.md
+// A1. Deliberately generous: a household or club on one NAT'd IP with several
+// real players should never reach it, but it still caps the spawn count from
+// any single origin well below what the single hosted box can be flooded with.
+const analyseIpLimiter = ipRateLimit('analyse-ip', 80);
+
+// Guests (no account) can run an analysis so the onboarding flow can show the
+// score BEFORE asking for a signup (see docs/plans/onboarding_plan.md, "gate
+// at the reveal"). A guest run still spawns MediaPipe on the single box and
+// isn't covered by the per-account FREE_TIER_DAILY_ANALYSIS_LIMIT, so it gets
+// its own hard, low per-IP ceiling -- consumed inline in the handler (not as
+// middleware) so it's only spent once a request has cleared every validation
+// gate and is actually about to spawn Python; a fat-fingered file pick costs
+// nothing. This does NOT fully close the "capped free user drops their token
+// for a couple more runs" gap (2 free + 2 guest per IP), but the guest ceiling
+// is low, IP-keyed, and only reachable by someone deliberately rotating IPs
+// for a handful of extra spawns -- not worth engineering against on a
+// single-box deploy.
+const GUEST_ANALYSE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const GUEST_ANALYSE_MAX = 2;
 
 const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads');
 const MATCHER = path.join(__dirname, '..', 'services', 'pro_matcher.py');
@@ -41,7 +64,9 @@ const MATCHER = path.join(__dirname, '..', 'services', 'pro_matcher.py');
 // a step that gives them nothing back, so it's fully decoupled instead.
 const CONTACT_FRAME_LOGGER = path.join(SCRIPTS_DIR, '07_ball_racket_tracking', 'log_user_contact_frame_cli.py');
 const ANALYSIS_TIMEOUT_MS = 2 * 60 * 1000; // pose extraction on a short clip should finish well within this
-const FREE_DAILY_LIMIT = 2;
+// Shared with routes/highlights.js and integrityChecks.js -- see the comment
+// on FREE_TIER_DAILY_ANALYSIS_LIMIT in domain/invariants.js.
+const FREE_DAILY_LIMIT = FREE_TIER_DAILY_ANALYSIS_LIMIT;
 
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 fs.mkdirSync(USER_CLIPS_DIR, { recursive: true });
@@ -57,7 +82,8 @@ const upload = multer({
   limits: { fileSize: 200 * 1024 * 1024 }, // 200MB
 });
 
-router.post('/analyse', requireAuth, analyseLimiter, upload.single('video'), async (req, res) => {
+router.post('/analyse', optionalAuth, analyseIpLimiter, analyseLimiter, upload.single('video'), async (req, res) => {
+  const isGuest = !req.user;
   const cleanup = () => {
     if (req.file) fs.unlink(req.file.path, () => {});
   };
@@ -91,11 +117,21 @@ router.post('/analyse', requireAuth, analyseLimiter, upload.single('video'), asy
     }
   }
 
-  // Premium accounts are unlimited -- only free-tier accounts are capped.
-  // /analyse requires auth (requireAuth above) specifically so this can't be
-  // bypassed by dropping the Authorization header: an earlier optionalAuth
-  // version let a capped free user do exactly that and get unlimited
-  // analyses as an "anonymous" caller, since req.user was simply absent.
+  // Guests: consume one of the 2/24h-per-IP slots now that the request has
+  // cleared every validation gate above and is genuinely about to spawn
+  // Python. `code: 'GUEST_LIMIT'` lets the client show a "create an account"
+  // screen instead of a generic failure. See GUEST_ANALYSE_MAX's comment for
+  // the residual "drop the token for a couple more runs" gap.
+  if (isGuest && !tryConsume(`analyse-guest:${req.ip}`, GUEST_ANALYSE_WINDOW_MS, GUEST_ANALYSE_MAX)) {
+    cleanup();
+    return res.status(429).json({
+      error: 'Create a free account to keep analysing — guests get 2 per day.',
+      code: 'GUEST_LIMIT',
+    });
+  }
+
+  // Premium accounts are unlimited; free-tier accounts are capped per day;
+  // guests don't touch analysis_usage at all (no user row to key it to).
   //
   // The count-check and the usage INSERT used to happen up to
   // ANALYSIS_TIMEOUT_MS (2 minutes) apart -- check here, insert only after
@@ -107,7 +143,7 @@ router.post('/analyse', requireAuth, analyseLimiter, upload.single('video'), asy
   // async work starts. If the analysis later fails, the reservation is
   // released so a failed attempt still doesn't count against the user --
   // same behavior as before, just race-free.
-  const isFreeUser = currentTier(req.user.id) === 'free';
+  const isFreeUser = !isGuest && currentTier(req.user.id) === 'free';
   let usageRowId = null;
   if (isFreeUser) {
     const reserved = reserveDailyUsageSlot(db, req.user.id, FREE_DAILY_LIMIT);
@@ -124,15 +160,25 @@ router.post('/analyse', requireAuth, analyseLimiter, upload.single('video'), asy
   // Left-handed players' swings are the mirror image of the (all right-handed)
   // pro database -- compare_swing.py flips the uploaded trajectory before the
   // DTW match when told to. Read server-side rather than trusting the client.
-  const handed = db.prepare('SELECT handed FROM users WHERE id = ?').get(req.user.id)?.handed;
+  const handed = isGuest ? undefined : db.prepare('SELECT handed FROM users WHERE id = ?').get(req.user.id)?.handed;
 
-  const args = [MATCHER, req.file.path, shotType, '--top', '3'];
+  // --top 1: results only ever show the single best match now (the pro
+  // identity / "other close matches" list was removed -- most pro-DB clips
+  // aren't identified, so a "matched to Forehand Technique #142" caption read
+  // as broken). Asking for fewer also skips 2x per-match coaching-tip
+  // selection in compare_swing.py.
+  const args = [MATCHER, req.file.path, shotType, '--top', '1'];
   if (parsedContactTime !== undefined) {
     args.push('--contact-time', String(parsedContactTime));
   }
   if (viewDirectionHint === 'front' || viewDirectionHint === 'back') {
     args.push('--view-direction-hint', viewDirectionHint);
   }
+  // The matcher returns `result.view_gate` (roadmap 1a behind-the-baseline
+  // check) and the frontend warns on it; the match still runs. To promote it
+  // to a hard reject, set RALLYMAX_ENFORCE_VIEW_GATE=1 in backend/.env on the
+  // server -- compare_swing.py then raises and the error surfaces via the
+  // nonzero_exit branch below.
   if (handed === 'left') {
     args.push('--handedness', 'left');
   }
@@ -212,7 +258,9 @@ router.post('/analyse', requireAuth, analyseLimiter, upload.single('video'), asy
     // exception that takes the whole process down), and also wrongly
     // released a usage slot for an analysis that had already succeeded.
     try {
-      if (persistedOk && contactTime !== undefined && contactTime !== '') {
+      // Skipped for guests -- this is training data keyed to a real user's
+      // manual contact mark; an anonymous one adds noise, not signal.
+      if (!isGuest && persistedOk && contactTime !== undefined && contactTime !== '') {
         const bgProc = spawn(PYTHON, [CONTACT_FRAME_LOGGER, originalPath, String(parseFloat(contactTime))], {
           detached: true, stdio: 'ignore',
         });

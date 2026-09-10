@@ -188,6 +188,18 @@ function isSetCount(value) {
   return Number.isInteger(value) && value >= 0 && value <= MAX_SETS_IN_A_MATCH;
 }
 
+// How many analyses a free-tier account may run per calendar day. Enforced at
+// the door by reserveDailyUsageSlot() (utils/usageLimit.js), which counts a
+// user's analysis_usage rows for today before inserting another -- and proved
+// at rest by integrityChecks.js, since a past race (fixed) or a direct sqlite
+// edit could leave a free user with more rows for one day than this allows.
+// Lives here, not in a route file, because two routes cap against it
+// (routes/analyse.js and routes/highlights.js) and a third check reads it --
+// a bare `const FREE_DAILY_LIMIT = 2` copied into each is exactly the drift
+// this module exists to prevent. Premium accounts are uncapped and never get
+// an analysis_usage row at all.
+const FREE_TIER_DAILY_ANALYSIS_LIMIT = 2;
+
 // An offset into a video, in seconds. Non-negative by definition, and capped
 // at 4 hours -- longer than any real uploaded match, so anything above it is
 // a unit mix-up (milliseconds) or garbage rather than a genuine timestamp.
@@ -279,6 +291,7 @@ module.exports = {
   AVAILABILITY_STATUSES,
   MAX_LENGTHS,
   MAX_SETS_IN_A_MATCH,
+  FREE_TIER_DAILY_ANALYSIS_LIMIT,
   MAX_VIDEO_SECONDS,
   MIN_PLAUSIBLE_YEAR,
   MAX_PLAUSIBLE_YEAR,

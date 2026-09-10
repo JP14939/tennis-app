@@ -57,4 +57,19 @@ describe('POST /analyse rate limiting', () => {
     const res = await postInvalidAnalyse(token);
     expect(res.status).toBe(400);
   });
+
+  test('the coarser IP-keyed layer caps a single origin cycling through many accounts', async () => {
+    // analyseIpLimiter's max is 80 per window, keyed by req.ip. Three fresh
+    // accounts each stay well under the per-user max of 30, so nothing in the
+    // per-user layer stops them -- but 81 requests from the one test-client IP
+    // trips the IP layer. This is the account-rotation gap from
+    // PRE_RELEASE_CHECK.md A1.
+    const tokens = [0, 1, 2].map((n) => makeUser(`analyse-ip-rotate-${n}@test.com`).token);
+    let lastStatus;
+    for (let i = 0; i < 81; i++) {
+      // eslint-disable-next-line no-await-in-loop
+      lastStatus = (await postInvalidAnalyse(tokens[i % 3])).status;
+    }
+    expect(lastStatus).toBe(429);
+  });
 });

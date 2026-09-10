@@ -27,6 +27,7 @@ const leaderboardRouter = require('./routes/leaderboard');
 const devRouter = require('./routes/dev');
 const drillsRouter = require('./routes/drills');
 const { UnsupportedFileTypeError } = require('./utils/videoUpload');
+const { securityHeaders } = require('./middleware/securityHeaders');
 
 const app = express();
 // Hosted behind Caddy (docker-compose.yml) -- without this, req.ip is always
@@ -35,6 +36,9 @@ const app = express();
 // limited individually. `1` trusts exactly one hop, matching the one reverse
 // proxy in front of this container.
 app.set('trust proxy', 1);
+// Response security headers on everything, including error responses -- see
+// middleware/securityHeaders.js for what's set and why.
+app.use(securityHeaders);
 app.use(cors());
 // JSON API responses (esp. GET /api/history, which grows with account size)
 // went from loopback-fast to real internet round-trips once the hosted

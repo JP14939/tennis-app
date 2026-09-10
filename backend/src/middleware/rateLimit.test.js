@@ -1,7 +1,7 @@
 // Regression test for the security-review fix: routes/auth.js had no
 // request cap at all before this -- unlimited login attempts, unlimited
 // free-account creation, unlimited forgot-password requests.
-const { rateLimit } = require('./rateLimit');
+const { rateLimit, ipRateLimit, tryConsume } = require('./rateLimit');
 
 function makeReqRes(ip) {
   const req = { ip };
@@ -58,6 +58,17 @@ describe('rateLimit', () => {
     expect(next).toHaveBeenCalledTimes(2);
   });
 
+  test('a custom message/code is returned in the 429 body', () => {
+    const limiter = rateLimit({ windowMs: 60_000, max: 1, keyPrefix: 'test-custom-body', message: 'nope', code: 'GUEST_LIMIT' });
+    const next = jest.fn();
+    const a = makeReqRes('7.7.7.7');
+    limiter(a.req, a.res, next);
+    const b = makeReqRes('7.7.7.7');
+    limiter(b.req, b.res, next);
+    expect(b.statusCode).toBe(429);
+    expect(b.body).toEqual({ error: 'nope', code: 'GUEST_LIMIT' });
+  });
+
   test('does not allow a 2x burst spanning a window boundary', () => {
     jest.useFakeTimers();
     try {
@@ -92,5 +103,36 @@ describe('rateLimit', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+});
+
+describe('tryConsume (used directly by analyse.js for the guest cap)', () => {
+  test('returns true up to max, then false, recording nothing on a rejected call', () => {
+    const key = `tryconsume-basic:${Date.now()}`;
+    expect(tryConsume(key, 60_000, 2)).toBe(true);
+    expect(tryConsume(key, 60_000, 2)).toBe(true);
+    expect(tryConsume(key, 60_000, 2)).toBe(false);
+    // Still false -- a rejected call must not have advanced the count.
+    expect(tryConsume(key, 60_000, 2)).toBe(false);
+  });
+
+  test('independent keys do not share a bucket', () => {
+    const stamp = Date.now();
+    expect(tryConsume(`tryconsume-a:${stamp}`, 60_000, 1)).toBe(true);
+    expect(tryConsume(`tryconsume-a:${stamp}`, 60_000, 1)).toBe(false);
+    expect(tryConsume(`tryconsume-b:${stamp}`, 60_000, 1)).toBe(true);
+  });
+});
+
+describe('ipRateLimit', () => {
+  test('keys by req.ip and honours the max', () => {
+    const limiter = ipRateLimit('test-iprl', 1);
+    const next = jest.fn();
+    const a = makeReqRes('4.4.4.4');
+    limiter(a.req, a.res, next);
+    const b = makeReqRes('4.4.4.4');
+    limiter(b.req, b.res, next);
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(b.statusCode).toBe(429);
   });
 });

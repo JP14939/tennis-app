@@ -39,35 +39,57 @@ setInterval(() => {
 // weighted by how much of it still overlaps the current windowMs, keeps the
 // count for any windowMs-wide slice close to the real sliding-window bound
 // without needing a full timestamp log per key.
-function rateLimit({ windowMs, max, keyPrefix, keyGenerator = (req) => req.ip }) {
-  return (req, res, next) => {
-    const key = `${keyPrefix}:${keyGenerator(req)}`;
-    const now = Date.now();
-    let bucket = buckets.get(key);
-    if (!bucket) {
-      bucket = { windowStart: now, windowMs, count: 0, prevCount: 0 };
-      buckets.set(key, bucket);
-    } else if (now - bucket.windowStart >= 2 * windowMs) {
-      // Idle for at least a full extra window -- the previous window is
-      // entirely out of range, so there's nothing left to weight in.
-      bucket.windowStart = now;
-      bucket.count = 0;
-      bucket.prevCount = 0;
-    } else if (now - bucket.windowStart >= windowMs) {
-      bucket.windowStart += windowMs;
-      bucket.prevCount = bucket.count;
-      bucket.count = 0;
-    }
+// The core check-and-consume, usable outside a middleware chain: returns true
+// and records the hit if `key` is under `max` for the trailing `windowMs`,
+// false (recording nothing) if it's already at the ceiling. analyse.js calls
+// this directly so the guest-analysis cap is only spent once a request has
+// passed every validation gate and is actually about to spawn Python, rather
+// than on a fat-fingered file pick.
+function tryConsume(key, windowMs, max) {
+  const now = Date.now();
+  let bucket = buckets.get(key);
+  if (!bucket) {
+    bucket = { windowStart: now, windowMs, count: 0, prevCount: 0 };
+    buckets.set(key, bucket);
+  } else if (now - bucket.windowStart >= 2 * windowMs) {
+    // Idle for at least a full extra window -- the previous window is
+    // entirely out of range, so there's nothing left to weight in.
+    bucket.windowStart = now;
+    bucket.count = 0;
+    bucket.prevCount = 0;
+  } else if (now - bucket.windowStart >= windowMs) {
+    bucket.windowStart += windowMs;
+    bucket.prevCount = bucket.count;
+    bucket.count = 0;
+  }
 
-    const elapsed = now - bucket.windowStart;
-    const overlap = Math.max(0, (windowMs - elapsed) / windowMs);
-    const weightedCount = bucket.prevCount * overlap + bucket.count;
-    if (weightedCount + 1 > max) {
-      return res.status(429).json({ error: 'Too many requests -- please try again later' });
-    }
-    bucket.count += 1;
-    next();
+  const elapsed = now - bucket.windowStart;
+  const overlap = Math.max(0, (windowMs - elapsed) / windowMs);
+  const weightedCount = bucket.prevCount * overlap + bucket.count;
+  if (weightedCount + 1 > max) return false;
+  bucket.count += 1;
+  return true;
+}
+
+// `message` / `code` customise the 429 body (default: a generic "try again
+// later" with no code) -- a caller whose client needs to react to a specific
+// limit being hit passes its own.
+function rateLimit({ windowMs, max, keyPrefix, keyGenerator = (req) => req.ip, message, code }) {
+  const body = { error: message || 'Too many requests -- please try again later' };
+  if (code) body.code = code;
+  return (req, res, next) => {
+    if (tryConsume(`${keyPrefix}:${keyGenerator(req)}`, windowMs, max)) return next();
+    return res.status(429).json(body);
   };
 }
 
-module.exports = { rateLimit };
+// Thin wrapper for the common "coarse per-origin ceiling, keyed by IP" case --
+// analyse.js and compareVideos.js each add one behind their per-user limiter
+// to bound a single origin cycling through many accounts (PRE_RELEASE_CHECK.md
+// A1). Defaults to the same 10-minute window those two share; pass `windowMs`
+// for a different one (e.g. the 24h guest-analysis cap).
+function ipRateLimit(keyPrefix, max, { windowMs = 10 * 60 * 1000, message, code } = {}) {
+  return rateLimit({ windowMs, max, keyPrefix, keyGenerator: (req) => req.ip, message, code });
+}
+
+module.exports = { rateLimit, ipRateLimit, tryConsume };

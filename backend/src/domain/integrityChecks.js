@@ -27,6 +27,7 @@ const {
   NAME_SOURCES,
   AVAILABILITY_STATUSES,
   MAX_SETS_IN_A_MATCH,
+  FREE_TIER_DAILY_ANALYSIS_LIMIT,
   MAX_VIDEO_SECONDS,
   PHASE_KEYS,
   isBoundaryNote,
@@ -293,6 +294,21 @@ const STRUCTURAL_CHECKS = [
     description: 'a lesson never has two practice steps claiming the same position',
     sql: `SELECT drill_item_id, step_order, COUNT(*) AS n FROM drill_routine_steps
           GROUP BY drill_item_id, step_order HAVING n > 1`,
+  },
+  {
+    // The at-rest half of reserveDailyUsageSlot() (utils/usageLimit.js): that
+    // helper refuses to insert a row once a user already has
+    // FREE_TIER_DAILY_ANALYSIS_LIMIT for the day, but a since-fixed
+    // check-then-insert race, or a direct sqlite edit, could still leave a
+    // day over the cap. Grouped by calendar day the same way the reservation
+    // count is (date(created_at)). db.js sweeps rows older than 2 days, so in
+    // practice this only ever sees recent days -- which is exactly the window
+    // an abuse would show up in. Premium accounts never get a row here at
+    // all, so this needs no tier join.
+    name: 'analysis_usage.daily_cap',
+    description: `no account has more than ${FREE_TIER_DAILY_ANALYSIS_LIMIT} analyses recorded for a single day`,
+    sql: `SELECT user_id, date(created_at) AS day, COUNT(*) AS n FROM analysis_usage
+          GROUP BY user_id, date(created_at) HAVING n > ${FREE_TIER_DAILY_ANALYSIS_LIMIT}`,
   },
   {
     name: 'rally_clips.job_owner',
