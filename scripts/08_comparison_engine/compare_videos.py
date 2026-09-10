@@ -75,14 +75,20 @@ def compare_videos(reference_path, your_path, shot_type, contact_a=None, contact
         # frames[0]/min() over an empty list raises an unhandled
         # IndexError/ValueError instead of a clear error.
         raise RuntimeError('No frames could be decoded from the reference video')
-    traj_a, peak_a = build_user_trajectory(frames_a, fps_a, contact_a)
+    # shot_type is passed through so a serve's auto-detect (contact_a/contact_b
+    # omitted) uses serve_anchor's overhead-apex anchor instead of silently
+    # falling back to the plain wrist-velocity peak -- compare_swing.py's
+    # compare() already does this for the pro-database flow (see its own
+    # auto_contact_anchor_frame call); this 1v1 flow had drifted from it and
+    # never anchored serves any better than groundstrokes.
+    traj_a, peak_a = build_user_trajectory(frames_a, fps_a, contact_a, shot_type=shot_type)
     angle_a, angle_a_conf, debug_a = infer_camera_angle(reference_path, peak_a)
 
     print('  Extracting poses from your video...', file=sys.stderr)
     frames_b, fps_b = extract_user_poses(your_path)
     if not frames_b:
         raise RuntimeError('No frames could be decoded from your video')
-    traj_b, peak_b = build_user_trajectory(frames_b, fps_b, contact_b)
+    traj_b, peak_b = build_user_trajectory(frames_b, fps_b, contact_b, shot_type=shot_type)
     angle_b, angle_b_conf, debug_b = infer_camera_angle(your_path, peak_b)
 
     # View direction (front = camera at the net, back = camera behind the
