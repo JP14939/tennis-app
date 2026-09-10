@@ -41,7 +41,7 @@ def get_model(model_name='yolo11n.pt'):
 # Kept as a SEPARATE model from get_model() rather than replacing it -- the
 # generic model still does racket detection (COCO class 38, no fine-tuned
 # racket-bbox model exists) and every ball-detecting call site needs both.
-BALL_MODEL_PATH = os.path.join(
+BALL_MODEL_PATH = os.environ.get('RALLYMAX_BALL_MODEL') or os.path.join(
     os.path.dirname(os.path.abspath(__file__)), '..', '..',
     'data', '10b_ball_detection', 'yolo_ball_run_v1', 'weights', 'best.pt',
 )

@@ -158,7 +158,10 @@ def reanchor(dry_run=False, limit=None, only=None, min_move_frames=0, force=Fals
             continue
 
         entry['clip_contact_time_sec'] = new
-        res = reextract_for_entry(entry, lookup=lookup, original_shot_type=orig_st)
+        # yaw_enabled: keep parity with reslice_all_trajectories.py -- a moved
+        # serve must not get a non-yaw re-slice after the stride-1 + yaw rebuild.
+        res = reextract_for_entry(entry, lookup=lookup, original_shot_type=orig_st,
+                                  yaw_enabled=True)
         if res['status'] != 'ok':
             entry['clip_contact_time_sec'] = old  # revert -- couldn't propagate
             skipped_nopose.append(f'{eid} ({res["status"]})')

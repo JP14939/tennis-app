@@ -22,7 +22,7 @@ def _entry(eid, shot_type='serve', swing_id=1):
             'trajectory': [{'t': 0.0, 'landmarks': {}}]}
 
 
-def _ok_reextract(entry, lookup=None, original_shot_type=None):
+def _ok_reextract(entry, lookup=None, original_shot_type=None, yaw_enabled=False):
     return {'status': 'ok', 'trajectory': [{'t': -0.5, 'landmarks': {}}],
             'overlay': [{'t': 0.6, 'landmarks': {}}],
             'new_peak_frame': 300, 'new_peak_time': 10.5}
