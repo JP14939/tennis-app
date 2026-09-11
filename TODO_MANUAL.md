@@ -705,10 +705,99 @@ or set `EXPO_PUBLIC_API_BASE` in `frontend/.env` instead (overrides it).
   the `.web.js` platform file), `utils/sounds.js` → `expo-audio` (not
   currently installed). `expo-video` was previously removed as
   dead-weight; re-add as part of the real migration.
-- **Ball-speed feature scoped, not built.** Recommended approach:
-  net-keypoint local scale calibration, v1 metric = speed at the net
-  crossing (disclosed limitation, not off-racket-at-contact). No action
-  unless you want to greenlight implementation.
+- ~~**Ball-speed feature scoped, not built.**~~ Built 2026-09-02 (v1,
+  net-keypoint local scale + speed at the net crossing), then extended
+  2026-09-11 (v2) to add a second, ball-size-derivative ("radial") signal
+  covering the low camera-angle / dead-centre behind-the-baseline case v1
+  silently returned `None` for — see `scripts/07_ball_racket_tracking/
+  ball_speed.py`'s module docstring for the full reasoning.
+  **Correction to the first sanity-check number below**: the initial
+  real-footage pass used `data/01_source_videos/practice/*.mp4`, believed
+  to be real practice footage. It isn't — pulled frames and confirmed it's
+  downloaded broadcast TV footage (Alcaraz/Medvedev/Federer ATP broadcasts,
+  scoreboard overlays and a "COURT LEVEL IS BACK" promo banner sitting over
+  the net in one clip), a visual domain the net-keypoint model was never
+  trained on (raw model output showed zero detection boxes, not a
+  confidence-threshold issue). Re-checked against Jack's own real match
+  footage instead (`C:\Users\jackp\Downloads\IMG_5755.MOV`, filmed behind
+  the baseline): net detection succeeds on **29/40 (72.5%)** sampled
+  frames — a healthy real-world rate. The "2/36 non-null" low-angle number
+  below was measured on the mislabelled broadcast set and should be
+  disregarded as a reliability signal (it's a domain-mismatch artifact, not
+  a real-footage measurement) — a proper low-angle non-null rate on real
+  footage hasn't been measured yet.
+  **v2.1 (same session)**: added a per-device-model focal-length
+  calibration table (`DEVICE_FOCAL_PX_PER_WIDTH`, keyed off
+  `com.apple.quicktime.model`, confirmed present on real iPhone videos e.g.
+  `IMG_5755.MOV` → "iPhone 13") as a better fallback than
+  `ASSUMED_CAMERA_TO_NET_M` alone — still starts empty, still needs a real
+  filmed reference per device model to populate (recipe: eye-level, aimed
+  straight down the ball's flight path, either a tape-measured distance to a
+  known-size object or a labelled ball-machine speed). Jack flagged this
+  doesn't scale across many phone models, which is correct.
+  **v3 (same session): true self-calibration, no assumption at all.** Added
+  `scripts/05_angle_detection/infer_angle.py`'s `sideline_vanishing_point_y`
+  and `detect_near_baseline`, combined with the already-detected net (row +
+  width) in `ball_speed._solve_camera_geometry` to solve for focal length,
+  camera height, pitch, and camera-to-baseline distance simultaneously from
+  the court's fixed dimensions alone (`NET_WIDTH_M`, baseline-to-net=11.89m)
+  — no per-device table, no assumed distance/height. Now the top-priority
+  tier in `_focal_px_for_video`, falling through to the v2.1 device table
+  then the v2 assumed-distance approximation when its inputs aren't
+  available. Verified against 320 synthetic (focal length, height, pitch,
+  distance) combinations — recovers all exactly
+  (`test_court_geometry_calibration_pytest.py`).
+  **Real-footage findings (`IMG_5755.MOV`, 59 sampled frames)**: the full
+  solve succeeded on 18/59 (~30%), bottlenecked almost entirely by near-
+  baseline detection recall (lighting/shadow-dependent — the earlier part of
+  this match detected 0/33, the later part 18/26, suggesting the baseline
+  detector is sensitive to specific lighting conditions worth improving
+  later). Where it DID succeed, the recovered values were plausible and
+  reasonably stable for a fixed tripod across many different swings: focal
+  length 1176-1334px, pitch 1.9-2.5°, camera-to-baseline distance 1.9-2.6m
+  (a believable "mounted a couple of metres back from the fence" setup).
+  One flag: recovered camera height clustered at 0.63-0.81m — lower than a
+  typical eye-level phone-holding height, more consistent with a fence mount
+  partway down (plausible for this specific setup, but worth another look
+  once a second real device/setup can be checked — no ground truth exists to
+  confirm this number is actually correct, same caveat as everything else in
+  this feature).
+  **Still open across all three tiers: no ground-truth accuracy check.**
+  Nothing in v1/v2/v2.1/v3 has been checked against a real known speed —
+  the same radar-gun/ball-machine/known-distance reference clip ask from
+  v1/v2 would validate all tiers at once, and is now the single most
+  valuable next step for this feature.
+- **Net-detection domain generalization is unverified beyond Jack's own
+  footage.** The `yolo_pose_run_v10` net-keypoint model detects the net
+  fine on `IMG_5755.MOV` (72.5%, see above) and fails completely on
+  broadcast TV footage (different domain, expected, not user-facing). What's
+  untested: real users on different court surfaces/colours (clay, indoor,
+  non-standard net colour) and lighting the training set may not have
+  covered. Don't assume this generalizes just because one user's footage
+  worked. Recommended check: as real user uploads accumulate, periodically
+  sample a few and measure net-detection rate the same way this session did
+  for `IMG_5755.MOV`, rather than waiting for a support complaint. Candidate
+  for the v10→v11 retrain already flagged in `infer_angle.py`'s comments if
+  a real pattern of failures shows up on genuine user footage.
+- **Ball-detector adequacy for the radial ball-speed signal, measured** (not
+  guessed): new `scripts/07_ball_racket_tracking/
+  eval_ball_speed_diameter_availability.py`, run against `IMG_5755.MOV` /
+  `IMG_5756.MOV` (40 arbitrary in-play windows each, not swing-contacts
+  specifically — a general-play proxy). Result: **the binding constraint is
+  RECALL (window density), not box precision** — the opposite of this
+  session's working assumption. Only 50-62% of `±DIAMETER_HALF_WINDOW`
+  (±4 frame) windows had the >=2 confident detections a linear diameter fit
+  needs (48-58% for the default quadratic fit); when a window DOES have
+  enough confident detections, their frame-to-frame box-size jitter is
+  small (median 1-2% of diameter), with a real but secondary tail of bad
+  jumps (p90 ~9-11%, max up to ~50% — likely occlusion/motion-blur
+  misdetections). Read: the ball detector's box-fit quality is fine when it
+  fires; it doesn't fire densely enough near-simultaneously across a short
+  window often enough. This points at recall/coverage (matches the known
+  far-ball/occlusion weak spots) as the more valuable ball-detector
+  improvement target for this feature specifically, not IoU/box-regression
+  precision as originally guessed. Re-run this eval after any future ball-
+  detector retrain to check whether it actually moved this number.
 - **Local dev password reset**: `jack.p14370@gmail.com` on local
   (port 8090) was reset directly in `backend/data/app.db` to a password
   given in chat, not recorded here. `RESEND_API_KEY` still isn't

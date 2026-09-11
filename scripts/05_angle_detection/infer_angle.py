@@ -42,8 +42,9 @@ IDX = {
 # There is no data-free way to improve it; scripts/10_net_detection/
 # calibrate_full_net_fraction.py fits it once 0c fence footage with coarse
 # known angles exists (Section 8 item 5). If it changes, that is one atomic
-# commit: VIEW_GATE_SIDE_ON_ANGLE_DEG, ball_speed.MIN_RELIABLE_ANGLE_DEG,
-# angle_label buckets, and a full pro-DB re-enrich all move with it.
+# commit: VIEW_GATE_SIDE_ON_ANGLE_DEG, angle_label buckets, and a full pro-DB
+# re-enrich all move with it. (ball_speed.py's v2 lateral+radial estimator no
+# longer has an angle threshold of its own to keep in sync here.)
 FULL_NET_FRACTION = 0.80
 
 
@@ -312,21 +313,94 @@ def detect_net_endpoints(frame):
     return left_x, right_x, net_y
 
 
-def detect_court_sidelines(frame):
+# Minimum fraction of frame width a candidate baseline segment must span --
+# short horizontal Hough segments in this band are far more likely to be
+# service-box centre marks, shadows, or a player's shoe than the baseline
+# itself, which runs the full width of the court.
+BASELINE_MIN_WIDTH_FRACTION = 0.35
+
+
+def detect_near_baseline(frame, net_y_norm):
     """
-    Detect the two court sidelines as the longest diagonal line on each side
-    of frame-center in the lower portion of the frame, converging toward a
-    vanishing point above -- visible from ANY on-court camera position,
-    unlike the net (only usably foreshortened from certain positions, and
+    Detect the near baseline -- the court's own boundary line closest to the
+    camera in a behind-the-baseline recording -- as the LOWEST (closest to
+    camera) sufficiently long, roughly-horizontal line below the net.
+
+    net_y_norm: the net's already-detected normalised y-position (see
+    detect_net_endpoints_keypoints), used only to bound the search region --
+    the baseline is always further from the camera... no, further DOWN the
+    image (closer to the camera in the real world) than the net, so its ROI
+    starts just below the net line and runs to the bottom of frame.
+
+    Unlike detect_net_endpoints's "longest wins" heuristic (appropriate
+    there because advertising boards/the far baseline can be longer than the
+    net itself but are excluded by the >88% full-frame-width rule), this
+    prefers the LOWEST candidate that clears BASELINE_MIN_WIDTH_FRACTION --
+    the service line, centre mark, or a doubles line would also produce
+    roughly-horizontal candidates in this band, and the baseline is reliably
+    the one nearest the camera (bottom of frame), not necessarily the
+    longest (a player standing on it can shorten the visible segment more
+    than it shortens the service line further away).
+
+    Returns net_y_norm's normalised y-position (float in [0, 1]) of the
+    detected baseline, or None if no confident candidate is found.
+    """
+    h, w = frame.shape[:2]
+    net_y_px = net_y_norm * h
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blurred, 50, 150)
+
+    roi_mask = np.zeros_like(edges)
+    roi_top = int(min(max(net_y_px, 0), h - 1))
+    roi_mask[roi_top:h, :] = 255
+    edges = cv2.bitwise_and(edges, roi_mask)
+
+    lines = cv2.HoughLinesP(
+        edges, rho=1, theta=np.pi / 180, threshold=60,
+        minLineLength=int(w * BASELINE_MIN_WIDTH_FRACTION), maxLineGap=20,
+    )
+    if lines is None:
+        return None
+
+    candidates = []
+    for x1, y1, x2, y2 in lines.reshape(-1, 4):
+        if x2 == x1:
+            continue
+        line_angle = abs(math.degrees(math.atan2(y2 - y1, x2 - x1)))
+        if not (line_angle <= 15 or line_angle >= 165):
+            continue
+        apparent_width = abs(x2 - x1) / w
+        if apparent_width < BASELINE_MIN_WIDTH_FRACTION:
+            continue
+        row = (y1 + y2) / 2
+        candidates.append((row, x1, y1, x2, y2))
+
+    if not candidates:
+        return None
+
+    # Lowest (largest row = closest to camera) qualifying candidate.
+    candidates.sort(reverse=True)
+    row, x1, y1, x2, y2 = candidates[0]
+    return row / h
+
+
+def _find_sideline_segments(frame):
+    """
+    Shared candidate-finding for detect_court_sidelines() and
+    sideline_vanishing_point_y() -- the longest diagonal line on each side of
+    frame-centre in the lower portion of the frame, converging toward a
+    vanishing point above. Visible from ANY on-court camera position, unlike
+    the net (only usably foreshortened from certain positions, and
     essentially unusable from a net-position/'front' recording where the
     camera is right at/behind it). Same cv2.HoughLinesP toolkit as
     detect_net_endpoints(), a different region and line orientation.
 
-    Returns (left_angle_deg, right_angle_deg): each sideline's deviation
-    from vertical, in degrees, signed positive when the line leans toward
-    frame-center as it goes up (the expected perspective-convergence
-    direction) -- or None if a confident pair of candidate lines wasn't
-    found on both sides.
+    Returns ((lx1, ly1, lx2, ly2), (rx1, ry1, rx2, ry2)) -- left and right
+    sideline segments, each with (x1, y1) the LOWER point (closer to camera)
+    and (x2, y2) the upper one -- or None if a confident pair wasn't found on
+    both sides.
     """
     h, w = frame.shape[:2]
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -389,10 +463,29 @@ def detect_court_sidelines(frame):
     _, _, lx1, ly1, lx2, ly2 = left_candidates[0]
     _, _, rx1, ry1, rx2, ry2 = right_candidates[0]
 
+    return (lx1, ly1, lx2, ly2), (rx1, ry1, rx2, ry2)
+
+
+def detect_court_sidelines(frame):
+    """
+    Returns (left_angle_deg, right_angle_deg): each sideline's deviation
+    from vertical, in degrees, signed positive when the line leans toward
+    frame-center as it goes up (the expected perspective-convergence
+    direction) -- or None if a confident pair of candidate lines wasn't
+    found on both sides. See _find_sideline_segments() for the detection
+    itself; this just reduces its segments to angles.
+    """
+    h, w = frame.shape[:2]
+    segments = _find_sideline_segments(frame)
+    if segments is None:
+        return None
+    (lx1, ly1, lx2, ly2), (rx1, ry1, rx2, ry2) = segments
+
     def angle_from_vertical(x1, y1, x2, y2):
         # (x1, y1) is the lower point, (x2, y2) the upper one (see
-        # normalization above). Positive = converging toward center as it
-        # goes up (expected); negative = diverging (a noisy/wrong match).
+        # _find_sideline_segments' normalization). Positive = converging
+        # toward center as it goes up (expected); negative = diverging (a
+        # noisy/wrong match).
         dx, dy = x2 - x1, y1 - y2  # dy > 0 (upward)
         angle = math.degrees(math.atan2(abs(dx), dy))
         converging = abs(x2 - w * 0.5) < abs(x1 - w * 0.5)
@@ -401,6 +494,53 @@ def detect_court_sidelines(frame):
     left_angle_deg = round(angle_from_vertical(lx1, ly1, lx2, ly2), 1)
     right_angle_deg = round(angle_from_vertical(rx1, ry1, rx2, ry2), 1)
     return left_angle_deg, right_angle_deg
+
+
+def sideline_vanishing_point_y(frame):
+    """
+    The two court sidelines' vanishing point row (normalised [0, 1]), or
+    None if a confident pair of sideline segments wasn't found, or if they're
+    too close to parallel for their intersection to be numerically stable
+    (a small angle-measurement error swings a near-parallel intersection
+    wildly -- discard rather than trust a wild value, same philosophy as
+    ball_speed.py's plausibility clamps).
+
+    Only the row (y) matters to ball_speed.py's court-geometry calibration --
+    for a level (zero-roll) camera, EVERY family of ground-plane parallel
+    lines vanishes somewhere on the same horizontal image row (the ground
+    plane's vanishing line/horizon), regardless of which azimuthal direction
+    they run in -- so this is valid as "the horizon row" even though the
+    sidelines themselves run at an angle, not straight ahead. Roll must
+    already be corrected upstream (or negligible) for this to hold; this
+    function does not attempt to detect or correct roll itself.
+    """
+    segments = _find_sideline_segments(frame)
+    if segments is None:
+        return None
+    (lx1, ly1, lx2, ly2), (rx1, ry1, rx2, ry2) = segments
+    h, w = frame.shape[:2]
+
+    # Line-line intersection via the standard determinant form.
+    d1x, d1y = lx2 - lx1, ly2 - ly1
+    d2x, d2y = rx2 - rx1, ry2 - ry1
+    denom = d1x * d2y - d1y * d2x
+    if abs(denom) < 1e-6:
+        return None  # parallel (or numerically indistinguishable) -- no stable intersection
+
+    t = ((rx1 - lx1) * d2y - (ry1 - ly1) * d2x) / denom
+    vp_y = ly1 + t * d1y
+
+    # A real vanishing point sits above the bottom of the frame (the lines
+    # converge going up); one at/below the very bottom, or absurdly far
+    # above (many frame-heights up), means the "intersection" is numerical
+    # noise from a near-parallel pair, not a real vanishing point. Deliberately
+    # generous -- it can legitimately land within or just above the sideline
+    # sample band itself (a shallow convergence doesn't need to resolve far
+    # above where the segments were sampled), so this is a sanity bound, not
+    # a tight one.
+    if not (-10 * h <= vp_y < h):
+        return None
+    return vp_y / h
 
 
 def angle_from_sideline_symmetry(left_angle_deg, right_angle_deg):
