@@ -26,8 +26,9 @@ feature must be reliable at launch, so the ML work below is now in scope for v1
       further than planned — pro-side yaw wiring + a **v4** re-slice (metric z
       decoupled from x/y on all 648 entries, `traj_version 4`, `verify:db`
       99/99). DTW separation +7% → +11%. `phase_breakdown.Z_ROTATION_BLEND = 0.0`
-      is the one live change (reversible). Committed `6cfee83`..`4d19e2b`,
-      **NOT pushed** — needs the pro-DB server transfer first (below). HANDOVER
+      is the one live change (reversible). The current code/documentation batch
+      was consolidated and pushed as `2f750e6`; the rebuilt data artifacts still
+      need the separate manual server transfer below. HANDOVER
       "Session 2026-09-09/10".
 - [x] ~~**0b** [C] Ball detector: let training finish → run the 3 gates in
       `README_ball_retrain.md` → keep or restore.~~ Done 2026-09-08 — resumed
@@ -70,8 +71,9 @@ feature must be reliable at launch, so the ML work below is now in scope for v1
       gives **forehand +12.2** (after 2 rounds of new axes, incl. fixing a real
       angle-wrap bug), **serve +26.1** (ships as-is), **backhand pending a
       `curate` re-run** now that the amateur label pool is 5→26+6 (see 1b-data
-      below). 3D depth axes (`contact_depth_ahead` etc.) are now actually
-      pulled from `CURATED_AXES`, not just flagged provisional. New candidate
+      below). 3D depth axes (`contact_depth_ahead` etc.) remain excluded from
+      `CURATED_AXES` after their negative real-footage result; they are not
+      part of the production score. New candidate
       axis `swing_amplitude` (whole-window motion, catches a rushed/minimal
       backswing that contact-snapshot axes miss) found real but not yet
       CV-stable. **B2 (the actual production scorer/wiring) has not started
@@ -109,9 +111,10 @@ feature must be reliable at launch, so the ML work below is now in scope for v1
       it. Still short of the ≥55%≤3f goal — **next: the supervised per-frame
       classifier** (same candidates→features→score→argmax reframe that made
       audio-onset work; Phase C's old offset-regression framing stays dead).
-      [J] **commit-timing call** on the uncommitted 2a/2b + new
+      The 2a/2b helpers and new
       `label_amateur_contact_from_audio.py`/`amateur_contact_eval.py`/
-      `mark_amateur_contact_time.py`. Details: HANDOVER "Session 2026-09-10/11";
+      `mark_amateur_contact_time.py` were reviewed, tested, committed, and
+      pushed as `2f750e6`. Details: HANDOVER "Session 2026-09-10/11";
       plan `~/.claude/plans/swirling-popping-flame.md`.
 - [x] ~~**1d** z-depth re-enable attempt~~ — **done, negative, 2026-09-10.**
       Metric world-z is now on every trajectory (v4), and the scale is right
@@ -129,7 +132,8 @@ feature must be reliable at launch, so the ML work below is now in scope for v1
       not real. Real issue is absolute — ~51% precision, `_find_gap_contact`
       + `filter_verified_swings` keep any bare gap regardless of confidence.
       Stamped baseline `data/17_amateur_eval/results_baseline_2b27847.jsonl`
-      (54.4% / 49.1%); eval hygiene shipped (uncommitted). Track 2 plan
+      (54.4% / 49.1%); eval hygiene is committed and pushed in `2f750e6`.
+      Track 2 plan
       (anchor-proximity constraint + confidence gate + threshold sweep):
       `~/.claude/plans/rustling-meandering-petal.md`. Not launch-blocking.
 - [ ] **2c** Swing-detector recall — stop missing soft shots; confirm the

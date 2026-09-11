@@ -159,9 +159,9 @@ is done (see A1, A2, A5, A6, A7 above). Remaining, in priority order:
    - `[x]` **B3 review prompt** — built (`utils/reviewPrompt.js` + `ResultsScreen`, `expo-store-review` installed, Dev Page test button).
    - `[x]` **C1 onboarding Phase 1** — built ("gate at the reveal", `OnboardingScreen`, guest `/analyse`, `ResultsScreen` reveal-gate; `docs/plans/onboarding_plan.md`).
    - `[ ]` B1 store name + keyword research, B2 screenshot reorder, C1 Phase 2, device tests — **need you**.
-8. `[x]` `/code-review` (Standards + Spec) + correctness pass over the uncommitted diff → 8 fixes applied (2026-09-09, see progress log). Backend suite 631 green.
+8. `[x]` `/code-review` (Standards + Spec) + correctness pass over the working diff → 8 fixes applied (2026-09-09, see progress log). Backend suite 631 green; the later review/audit batch was pushed as `2f750e6`.
 
-**Still uncommitted** — working tree tangles this thread with Jack's own WIP on `analyse.js` / `ResultsScreen.js` / `SignupScreen.js` / `TODO_MANUAL.md`; commit strategy is Jack's call, not yet made.
+The reviewed release work is committed and pushed as `2f750e6`. Remaining items below are operational or human/device checks, not an uncommitted code tangle.
 
 ---
 
@@ -179,7 +179,7 @@ is done (see A1, A2, A5, A6, A7 above). Remaining, in priority order:
   Backend suite **631 green**, `verify:db` 99/99, web bundle builds clean.
 
 - **2026-09-09** — created from the 4 videos. Backend security audit (A1–A9): found already heavily hardened.
-  Shipped, all uncommitted, backend suite 626 green, `verify:db` 99/99:
+  Shipped and pushed in the subsequent release batch, backend suite 626 green, `verify:db` 99/99:
   - IP-keyed rate-limit backstop on `/analyse` + `/compare-videos` (`analyseIpLimiter`/`compareIpLimiter`)
   - `analysis_usage.daily_cap` integrity check; `FREE_TIER_DAILY_ANALYSIS_LIMIT` centralised into `invariants.js`
   - `middleware/securityHeaders.js` (nosniff / frame-deny / no-referrer / CORP / CSP-on-HTML) wired into `server.js`

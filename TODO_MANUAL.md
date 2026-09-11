@@ -20,14 +20,14 @@ gets resolved.
 Full story: `HANDOVER.md` "Session 2026-09-10/11"; plan
 `~/.claude/plans/swirling-popping-flame.md`. Jack-only items:
 
-- **Commit-timing call.** Two commits already landed (`2791e7e`, `f28f3b5` —
-  Roadmap 1c + the stride-1 eval harness). Everything after that —
+- **Commit-timing call resolved.** The remaining work was reviewed, tested,
+  and landed in `2f750e6` alongside the earlier `2791e7e`/`f28f3b5` commits.
+  The landed work includes
   `racket_tracker._find_gap_contact`'s motion-continuity gate,
   `compare_swing.groundstroke_contact_anchor_frame`, and the three new
   scripts (`label_amateur_contact_from_audio.py`, `amateur_contact_eval.py`,
-  `mark_amateur_contact_time.py`) — is uncommitted, tested (376/376 pytest),
-  and measured (pro broadcast 24%→38%≤3f; real amateur footage 25%≤3f). Say
-  when to commit.
+  `mark_amateur_contact_time.py`) — tested (708/708 pytest) and measured (pro
+  broadcast 24%→38%≤3f; real amateur footage 25%≤3f).
 - **Decide whether to proceed to the supervised classifier** (the reframe
   that made audio-onset work, applied to the visual path) — real amateur
   numbers now exist to gate it against (25%≤3f baseline, ≥55%≤3f target).
@@ -41,13 +41,12 @@ Full story: `HANDOVER.md` "Session 2026-09-10/11"; plan
 
 Full story: `HANDOVER.md` "Session 2026-09-09/10". Jack-only items:
 
-- **DO NOT `git push` yet.** Commits `6cfee83`..`4d19e2b` (+ `12cab96`/`13771e7`)
-  are local only. Pushing auto-deploys the user-side `sample_every` 3→1 change,
-  and stride-1 user trajectories against the server's stride-3 pro DB = score
-  drift. Push only *after* the rebuilt `data/06_pro_database/pro_database.json`
-  + `overlay_trajectories.json` are copied to the VPS (folded into the existing
-  pro-DB transfer item under "Backend / data" in `JACK_TODO.md`).
-- **Uncommitted, yours to review/land with the verifier batch:**
+- **Data transfer remains separate from the code push.** The rebuilt
+  `data/06_pro_database/pro_database.json` + `overlay_trajectories.json` and
+  other local-only artifacts still need to be copied to the VPS; this remains
+  tracked in the existing pro-DB transfer item under "Backend / data" in
+  `JACK_TODO.md`.
+- **Reviewed and landed in `2f750e6`:**
   `scripts/07_ball_racket_tracking/racket_tracker.py` (`RALLYMAX_BALL_MODEL`
   env knob), `scripts/17_amateur_eval/evaluate_amateur_dataset.py` (per-row
   provenance stamps + `--fresh`), `scripts/06_database_build/reanchor_pro_serves.py`
@@ -64,10 +63,8 @@ Full story: `HANDOVER.md` "Session 2026-09-09/10". Jack-only items:
 - **`PRE_RELEASE_CHECK.md` (repo root) is the running list** — distilled from
   4 videos (ASO + vibe-code security). Security + onboarding-Phase-1 + rating
   prompt are code-complete (backend 631 tests green, `verify:db` 99/99, web
-  bundle clean; `/code-review` run + 8 fixes applied). **All still uncommitted
-  and tangled with your own WIP** on `analyse.js` / `ResultsScreen.js` /
-  `SignupScreen.js` / `TODO_MANUAL.md` — decide: commit everything together,
-  have Claude hunk-split just the pre-release work, or you drive. The open
+    bundle clean; `/code-review` run + 8 fixes applied). The reviewed release
+    work is committed and pushed as `2f750e6`; the open
   items there are mostly yours:
   - **Budget caps + billing alerts** on KIE / Anthropic / AWS / Resend /
     RevenueCat, and scope the AWS IAM key to S3-only. Both security videos

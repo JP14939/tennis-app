@@ -27,7 +27,7 @@ None of these crash when absent — each degrades to a fallback (pose-peak
 contact, generic COCO ball detection, advisory-only view gate) — which is
 exactly why they're easy to forget. See `JACK_TODO.md` Phase 3b.
 
-**Last updated:** 2026-09-11 (later⁴) — **Root-cause pass on recurring
+**Last updated:** 2026-09-11 (later⁵) — **Root-cause pass on recurring
 cross-session problems — process guardrails added, no ML/behavior changes.**
 Jack asked for a read-through of `HANDOVER.md`/`TODO_MANUAL.md`/`JACK_TODO.md`
 to find what kept tripping up different sessions. Five cross-cutting patterns
@@ -54,8 +54,9 @@ hand-rolled after the 64.5%→54.4% false-regression incident, covered by
 `test_eval_stamp_pytest.py` (8/8 green); `JACK_TODO.md` got an explicit
 **1b-decision** recommendation (stop axis-hunting, ship B2 as PROVISIONAL
 once all three shot types clear a minimal CV bar, refine against real usage
-instead of more bench iteration). **Docs-only + one new pure-Python utility
-— no deploy, no regression risk, everything still uncommitted.**
+instead of more bench iteration). This documentation and utility batch was
+reviewed, tested, committed, and pushed as `2f750e6`; it made no ML-data
+deployment changes.
 
 **Prior — 2026-09-11 (later³):** **Shot classifier: amateur relabel
 review done (backhand 10→26 examples), which exposed a real eval-cache bug
@@ -77,7 +78,7 @@ detection threshold — widened `SERVE_WINDOW_POST_SEC` 0.5s→0.8s
 (`extract_training_features.py`), which **recovered serve recall 60%→78%
 and geom accuracy 58.0%→66.7% on amateur** (pro also improved: geom
 67.1%→73.8%, serve recall 80%→84%), with no precision cost. One-line
-constant change, **uncommitted**. Forehand/backhand confusion itself barely
+constant change, **committed and pushed in `2f750e6`**. Forehand/backhand confusion itself barely
 moved — likely a contact-frame-timing issue on specific clips, not a window
 problem; queued as the next experiment (correlate remaining errors against
 contact-frame source: audio vs pose-peak vs manual) rather than retuning
@@ -151,8 +152,8 @@ result: **9.65f/25%≤3f on amateur footage** vs pro's 7.7f/38% on the same
 pipeline — the "no evidence at all" bucket nearly triples (10%→27%) on real
 footage. **25%, not 38%, is the honest number the next piece (a supervised
 per-frame contact classifier, the same reframe that made audio-onset work) needs
-to beat.** Nothing beyond the 1c commits is committed yet — 2a/2b code + the
-new amateur-labelling scripts await a commit-timing call. Full detail:
+to beat.** The 2a/2b code and amateur-labelling scripts were reviewed, tested,
+committed, and pushed in `2f750e6`. Full detail:
 `HANDOVER.md` "Session 2026-09-10/11"; plan file
 `~/.claude/plans/swirling-popping-flame.md`.
 
