@@ -1,6 +1,6 @@
 # RallyMax — Full Project Handover
 
-**Last updated:** 2026-08-03, corrected 2026-08-10, extended 2026-08-10 (same-day follow-up session), extended again 2026-08-11, extended again 2026-08-13 (social/gamification roadmap + Phase 1), extended again 2026-08-13 (same-day follow-up: Find Games), extended again 2026-08-13 (same-day follow-up: Friends + match tracking), extended again 2026-08-13 (same-day follow-up: send-to-friend + persisted annotations), extended again 2026-08-13 (same-day follow-up: leaderboards), extended again 2026-08-13 (same-day follow-up: navigation restructure + Find Games data fix), extended again 2026-08-13 (same-day follow-up: community court submission + confirmation), extended again 2026-08-13 (same-day follow-up: app icon + mascot), extended again 2026-08-13 (same-day follow-up: skeleton offset fix, video-error visibility, racket swing-path overlay), extended again 2026-08-13 (same-day follow-up: sound effects), extended again 2026-08-13 (same-day follow-up: sound effects expanded app-wide), extended again 2026-08-13 (same-day follow-up: analysis-complete/achievement/notification sounds), extended again 2026-08-13 (same-day follow-up: History payload-bloat fix, found via real in-app testing), extended again 2026-08-13 (same-day follow-up: Sync Compare video-unavailable fix, England court seed + 20km render radius), extended again 2026-08-14 (batch-analyzed 2 full match videos into 85 History rows; fixed a live angle-wraparound bug in body-rotation scoring; z-depth rotation signal retried with real measurements and shipped live), extended again 2026-08-15 (legal review prep docs; fixed a live account-deletion bug; added message block/report), extended again 2026-08-18 (Wimbledon/Pine & Lime theme rollout completed across all screens; new mascot-based Android icon/splash; 4th teacher-student training loop for exact contact-frame detection, incl. a live production hook; Drills & Lessons feature shipped — free Drills live now, paid Lessons deferred; Swing Review rough-pick contact marking + clip prefetch; Rally Boundary Review lazy video loading; a full DB audit added missing indexes, fixed a real practice-history data-loss bug, and added 21 regression tests) — **social/gamification roadmap fully complete, bottom nav consolidated to 5 tabs, sound effects fully rolled out, theme rollout complete, first real Drills content live**, extended again 2026-08-19 (RevenueCat live + backend hosted on Hetzner; shot-classifier ML model trained; Tip Review + Pro Clip Review Dev Page tools; camera-angle sideline fallback; skeleton-overlay real fix; tip severity shown to users — see items #34-36), extended again 2026-08-20/21 (ball detector project Phase 1/2; Premium folded into Home + Lessons with a responsive tab bar; app-wide fix for `Alert.alert` being a silent no-op on web across 20 files; self-serve password reset via Resend; a full Hetzner redeploy fixing a server that was never actually a git repo, broken SSH access, and missing data — see items #37-41) — **hosting is real and working end-to-end now, but has no CI/CD: every push needs a manual redeploy, see item #41**, extended again 2026-08-22 (a database-verification framework with 48 live integrity checks; two rounds of bug/optimization audits; a clean security review; and — the big one — the first real device-native testing this app has had, which surfaced and fixed a cluster of native-only bugs invisible to every prior web-only testing session, plus a live production SQL bug in Find Games, now fixed and deployed — see item #42), extended again 2026-08-23 (docs round-up of same-day scheduled-routine PR activity, and — later the same day — a manual review/merge of all four resulting PRs: security rate-limiting, a bug sweep, a logic review, plus the 2026-08-22 uncommitted work above finally committed — see "Scheduled-routine PR round-up" below), extended again 2026-08-24 (docs round-up: 4 more scheduled-routine PRs opened — logic review, bug sweep, security review, brainstorm — all still open awaiting human review, none titled 🚨 CRITICAL — see "Scheduled-routine PR round-up (2026-08-24)" below), extended again 2026-08-25 (docs round-up: 4 more scheduled-routine PRs opened — logic review, bug sweep, security review, brainstorm — all still open awaiting human review, none titled 🚨 CRITICAL, and yesterday's `future-ideas/2026-08-24` PR is also still unmerged — see "Scheduled-routine PR round-up (2026-08-25)" below), extended again 2026-08-25 (same-day follow-up: all 8 branches from the 2026-08-24/25 PR round-ups reviewed and merged; pose-overlay jitter fixed with a One Euro Filter; a real gap found in the manual ball-label data (5 clips flagged, needs Jack's review); ball detector reliability re-confirmed unchanged (53%/0.40); a new shared Kalman-filter ball tracker built; the ball-speed feature scoped but not built; hosted server found 2 days stale and redeployed — see item #43), extended again 2026-08-26 (docs round-up: 4 more scheduled-routine PRs opened — logic review, bug sweep, security review, brainstorm — all still open awaiting human review, none titled 🚨 CRITICAL — see "Scheduled-routine PR round-up (2026-08-26)" below), extended again 2026-08-28 (docs round-up: 3 more scheduled-routine PRs opened — logic review, bug sweep, security review — none titled 🚨 CRITICAL; no brainstorm PR today and no routine activity at all on 2026-08-27, but both are expected — the routines' own cadence was reconfigured 2026-08-26 evening from daily to every-3-days (code-review routines) / weekly-Mondays (brainstorm), and a new 6th weekly routine, "Training-data drift watch," was added at the same time — see "Scheduled-routine PR round-up (2026-08-28)" below), extended again 2026-08-31 (docs round-up: 4 more scheduled-routine PRs opened — logic review, bug sweep, security review, brainstorm — all still open awaiting human review, none titled 🚨 CRITICAL, and PRs #17–#19 from the 2026-08-28 round are also still unmerged — see "Scheduled-routine PR round-up (2026-08-31)" below), extended again 2026-09-01 (docs round-up: 3 more scheduled-routine PRs opened — logic review, bug sweep, security review — all still open awaiting human review, none titled 🚨 CRITICAL, no brainstorm PR today (weekly-Mondays cadence, last one was 2026-08-31) and no Training-data-drift-watch PR either, and PRs #17–#23 from the three prior rounds are also still unmerged, ten open PRs total now — see "Scheduled-routine PR round-up (2026-09-01)" below), extended again 2026-09-02 (all eleven open PRs #17–#27 — three review rounds plus the future-ideas + docs-round-up PRs — reviewed and merged in one batch via a `pr-merge/2026-09-02` integration branch: duplicate hunks across the overlapping rounds dropped, full backend suite (516) + `verify:db` (83 invariants) + real `pytest` (63) + a real `compare_swing.compare()` smoke run all green, then fast-forwarded to `master` as a single push → one clean auto-deploy (run 33609545825, 6m40s, health check passed). #22's `users.token_version` migration confirmed applied on the live DB. The SevenSix competitive-analysis doc pass is folded into the same batch — see "Scheduled-routine PR round-up (2026-09-02)" below), extended again 2026-09-04 (a dev-workflow debugging thread that turned into a full shot-classifier + data-quality session: fixed a local-dev ngrok/login/history bug and the practice-footage clips' unplayable video codec; shipped 5 independent shot-classifier fixes (serve gate hard-win, unreviewed-practice-entries excluded from live matching, the user-correction and Pro-Clip-Review training flywheels which had both been silently dropping data since they shipped); retrained the Phase C contact-frame model twice with real new data and it **failed its own accuracy gate both times — not shipped**, a genuine negative result, not a bug; built a visual ball/racket-tracker audit tool that confirmed serves have a much fatter contact-detection error tail than groundstrokes; Jack reviewed 201/333 practice-footage entries in Pro Clip Review this session alone — see "Session 2026-09-04" below), extended again 2026-09-05 (a Find Games revamp: club clustering rewritten to a true 100m node-mesh graph, a third watch type (arbitrary map areas) added alongside courts/clubs, a new "My Watches" management screen, and a real gap fixed where GET /courts never told the frontend which courts were already watched; then extended further same session with free postcode lookups (postcodes.io) on courts/clubs/areas and a crowd-sourced club-naming system mirroring the existing court-verification pattern — see "Session 2026-09-05" below), then integrated into master on 2026-09-07 via pr-merge/2026-09-07 alongside the origin/master scheduled-routine round-ups through 2026-09-07 (2026-09-06/07 sessions below: racket-detection eval, serve-anchor Phase 1a/1b, overlay interpolation + ball-path overlay, the ROI ball tracker + near-court-crop experiments (both NO-GO), and the match-quality flag)
+**Last updated:** 2026-09-11 (later⁴, same-day follow-up: a root-cause pass across `STATUS.md`/`HANDOVER.md`/`JACK_TODO.md` found 5 patterns recurring across many different sessions — the same camera-normalization/depth-scoring generalization gap independently re-discovered 4+ times, eval-harness bugs repeatedly giving a false read on whether a fix worked, uncommitted work tangling across sessions, `data/` never syncing to the server, and score calibration re-flagged as the top risk 4-5 times without shipping — and shipped process guardrails against each: `CLAUDE.md` gained "Known Dead Ends"/"Eval hygiene"/"Commit discipline" sections, `STATUS.md` gained a persistent local-only-artifacts manifest, a new shared `scripts/00_utils/eval_stamp.py` helper (8/8 tests green), and `JACK_TODO.md` got an explicit 1b go/no-go recommendation; docs + one small utility only, no ML/behavior changes, still uncommitted — see "Session 2026-09-11 (later⁴)" below), (later³, same-day follow-up: amateur relabel review completed — backhand 10→26 examples — surfaced a real eval-cache staleness bug that had been hiding the relabel's effect, an honest re-eval showing amateur backhand recall was actually 31% not the stale 80%, and confirmed `ml_phone`'s amateur numbers were train==test leakage; then root-caused and fixed a chunk of amateur serve misses by widening `SERVE_WINDOW_POST_SEC` 0.5s→0.8s — amateur serve recall 60%→78%, geom acc 58.0%→66.7%, no precision cost; still uncommitted — see "Session 2026-09-11 (later³)" below), 2026-08-03, corrected 2026-08-10, extended 2026-08-10 (same-day follow-up session), extended again 2026-08-11, extended again 2026-08-13 (social/gamification roadmap + Phase 1), extended again 2026-08-13 (same-day follow-up: Find Games), extended again 2026-08-13 (same-day follow-up: Friends + match tracking), extended again 2026-08-13 (same-day follow-up: send-to-friend + persisted annotations), extended again 2026-08-13 (same-day follow-up: leaderboards), extended again 2026-08-13 (same-day follow-up: navigation restructure + Find Games data fix), extended again 2026-08-13 (same-day follow-up: community court submission + confirmation), extended again 2026-08-13 (same-day follow-up: app icon + mascot), extended again 2026-08-13 (same-day follow-up: skeleton offset fix, video-error visibility, racket swing-path overlay), extended again 2026-08-13 (same-day follow-up: sound effects), extended again 2026-08-13 (same-day follow-up: sound effects expanded app-wide), extended again 2026-08-13 (same-day follow-up: analysis-complete/achievement/notification sounds), extended again 2026-08-13 (same-day follow-up: History payload-bloat fix, found via real in-app testing), extended again 2026-08-13 (same-day follow-up: Sync Compare video-unavailable fix, England court seed + 20km render radius), extended again 2026-08-14 (batch-analyzed 2 full match videos into 85 History rows; fixed a live angle-wraparound bug in body-rotation scoring; z-depth rotation signal retried with real measurements and shipped live), extended again 2026-08-15 (legal review prep docs; fixed a live account-deletion bug; added message block/report), extended again 2026-08-18 (Wimbledon/Pine & Lime theme rollout completed across all screens; new mascot-based Android icon/splash; 4th teacher-student training loop for exact contact-frame detection, incl. a live production hook; Drills & Lessons feature shipped — free Drills live now, paid Lessons deferred; Swing Review rough-pick contact marking + clip prefetch; Rally Boundary Review lazy video loading; a full DB audit added missing indexes, fixed a real practice-history data-loss bug, and added 21 regression tests) — **social/gamification roadmap fully complete, bottom nav consolidated to 5 tabs, sound effects fully rolled out, theme rollout complete, first real Drills content live**, extended again 2026-08-19 (RevenueCat live + backend hosted on Hetzner; shot-classifier ML model trained; Tip Review + Pro Clip Review Dev Page tools; camera-angle sideline fallback; skeleton-overlay real fix; tip severity shown to users — see items #34-36), extended again 2026-08-20/21 (ball detector project Phase 1/2; Premium folded into Home + Lessons with a responsive tab bar; app-wide fix for `Alert.alert` being a silent no-op on web across 20 files; self-serve password reset via Resend; a full Hetzner redeploy fixing a server that was never actually a git repo, broken SSH access, and missing data — see items #37-41) — **hosting is real and working end-to-end now, but has no CI/CD: every push needs a manual redeploy, see item #41**, extended again 2026-08-22 (a database-verification framework with 48 live integrity checks; two rounds of bug/optimization audits; a clean security review; and — the big one — the first real device-native testing this app has had, which surfaced and fixed a cluster of native-only bugs invisible to every prior web-only testing session, plus a live production SQL bug in Find Games, now fixed and deployed — see item #42), extended again 2026-08-23 (docs round-up of same-day scheduled-routine PR activity, and — later the same day — a manual review/merge of all four resulting PRs: security rate-limiting, a bug sweep, a logic review, plus the 2026-08-22 uncommitted work above finally committed — see "Scheduled-routine PR round-up" below), extended again 2026-08-24 (docs round-up: 4 more scheduled-routine PRs opened — logic review, bug sweep, security review, brainstorm — all still open awaiting human review, none titled 🚨 CRITICAL — see "Scheduled-routine PR round-up (2026-08-24)" below), extended again 2026-08-25 (docs round-up: 4 more scheduled-routine PRs opened — logic review, bug sweep, security review, brainstorm — all still open awaiting human review, none titled 🚨 CRITICAL, and yesterday's `future-ideas/2026-08-24` PR is also still unmerged — see "Scheduled-routine PR round-up (2026-08-25)" below), extended again 2026-08-25 (same-day follow-up: all 8 branches from the 2026-08-24/25 PR round-ups reviewed and merged; pose-overlay jitter fixed with a One Euro Filter; a real gap found in the manual ball-label data (5 clips flagged, needs Jack's review); ball detector reliability re-confirmed unchanged (53%/0.40); a new shared Kalman-filter ball tracker built; the ball-speed feature scoped but not built; hosted server found 2 days stale and redeployed — see item #43), extended again 2026-08-26 (docs round-up: 4 more scheduled-routine PRs opened — logic review, bug sweep, security review, brainstorm — all still open awaiting human review, none titled 🚨 CRITICAL — see "Scheduled-routine PR round-up (2026-08-26)" below), extended again 2026-08-28 (docs round-up: 3 more scheduled-routine PRs opened — logic review, bug sweep, security review — none titled 🚨 CRITICAL; no brainstorm PR today and no routine activity at all on 2026-08-27, but both are expected — the routines' own cadence was reconfigured 2026-08-26 evening from daily to every-3-days (code-review routines) / weekly-Mondays (brainstorm), and a new 6th weekly routine, "Training-data drift watch," was added at the same time — see "Scheduled-routine PR round-up (2026-08-28)" below), extended again 2026-08-31 (docs round-up: 4 more scheduled-routine PRs opened — logic review, bug sweep, security review, brainstorm — all still open awaiting human review, none titled 🚨 CRITICAL, and PRs #17–#19 from the 2026-08-28 round are also still unmerged — see "Scheduled-routine PR round-up (2026-08-31)" below), extended again 2026-09-01 (docs round-up: 3 more scheduled-routine PRs opened — logic review, bug sweep, security review — all still open awaiting human review, none titled 🚨 CRITICAL, no brainstorm PR today (weekly-Mondays cadence, last one was 2026-08-31) and no Training-data-drift-watch PR either, and PRs #17–#23 from the three prior rounds are also still unmerged, ten open PRs total now — see "Scheduled-routine PR round-up (2026-09-01)" below), extended again 2026-09-02 (all eleven open PRs #17–#27 — three review rounds plus the future-ideas + docs-round-up PRs — reviewed and merged in one batch via a `pr-merge/2026-09-02` integration branch: duplicate hunks across the overlapping rounds dropped, full backend suite (516) + `verify:db` (83 invariants) + real `pytest` (63) + a real `compare_swing.compare()` smoke run all green, then fast-forwarded to `master` as a single push → one clean auto-deploy (run 33609545825, 6m40s, health check passed). #22's `users.token_version` migration confirmed applied on the live DB. The SevenSix competitive-analysis doc pass is folded into the same batch — see "Scheduled-routine PR round-up (2026-09-02)" below), extended again 2026-09-04 (a dev-workflow debugging thread that turned into a full shot-classifier + data-quality session: fixed a local-dev ngrok/login/history bug and the practice-footage clips' unplayable video codec; shipped 5 independent shot-classifier fixes (serve gate hard-win, unreviewed-practice-entries excluded from live matching, the user-correction and Pro-Clip-Review training flywheels which had both been silently dropping data since they shipped); retrained the Phase C contact-frame model twice with real new data and it **failed its own accuracy gate both times — not shipped**, a genuine negative result, not a bug; built a visual ball/racket-tracker audit tool that confirmed serves have a much fatter contact-detection error tail than groundstrokes; Jack reviewed 201/333 practice-footage entries in Pro Clip Review this session alone — see "Session 2026-09-04" below), extended again 2026-09-05 (a Find Games revamp: club clustering rewritten to a true 100m node-mesh graph, a third watch type (arbitrary map areas) added alongside courts/clubs, a new "My Watches" management screen, and a real gap fixed where GET /courts never told the frontend which courts were already watched; then extended further same session with free postcode lookups (postcodes.io) on courts/clubs/areas and a crowd-sourced club-naming system mirroring the existing court-verification pattern — see "Session 2026-09-05" below), then integrated into master on 2026-09-07 via pr-merge/2026-09-07 alongside the origin/master scheduled-routine round-ups through 2026-09-07 (2026-09-06/07 sessions below: racket-detection eval, serve-anchor Phase 1a/1b, overlay interpolation + ball-path overlay, the ROI ball tracker + near-court-crop experiments (both NO-GO), and the match-quality flag)
 **User:** Jack Price (jack.p14370@gmail.com)
 **Project root:** `C:\Users\jackp\tennis_app\`
 
@@ -39,7 +39,8 @@ AI-powered tennis swing analysis mobile app (iOS/Android/web via Expo).
 1. The Anthropic API key that was exposed in chat early in the project was rotated 2026-08-10 — no outstanding action, kept here only so nobody re-flags it.
 2. The database is **SQLite** (`backend/data/app.db`), not the Postgres that `backend/.env`'s `DATABASE_URL` implies. Postgres was never installed on this machine. See the Backend section for why and what would need to change to migrate.
 3. **Update (2026-08-25): the hosted backend DOES auto-deploy now.** Since `.github/workflows/deploy.yml` landed (Planned Features item #44), a `git push` to `master` touching `backend/**` / `scripts/**` / `Dockerfile` / `docker-compose.yml` / `Caddyfile` triggers the workflow — it SSHes into the VPS, runs `git pull && docker compose up --build -d app`, and polls `/health`. Doc-only pushes don't trigger it; it can also be run manually from the Actions tab. Superseded the old manual `ssh … git pull … docker compose up` dance for code. **Still manual:** transferring new files under `data/` to the server (gitignored, never touched by CD) and editing `backend/.env` on the server directly. Note there is **no test gate** before deploy — a red suite still ships.
-4. **Update (2026-09-01): the SSH+docker permission-classifier note now only matters for the remaining manual operations.** This environment's permission classifier refuses to run `docker compose up --build -d app` over SSH even after verbal approval (a standalone `git pull` over SSH is fine). Routine code deploys no longer need it (CD handles them, item 3 above). But if a `data/` transfer or `.env` edit ever needs a manual container rebuild on the box, either add an explicit Bash permission rule for the SSH+docker pattern or have Jack run that one line himself. See Planned Features items #41 and #43 for the history.
+4. **Read `CLAUDE.md`'s "Known Dead Ends" section before attempting camera-angle normalization, depth-based scoring, DTW rescaling, the contact-frame correction regressor, or ROI-based ball detection** — each has already been tried (some more than once) and failed for a specific, measured reason documented there. Also see its "Eval hygiene" section: several sessions lost real time to a stale eval cache or an overfit same-set-measured number before this was caught.
+5. **Update (2026-09-01): the SSH+docker permission-classifier note now only matters for the remaining manual operations.** This environment's permission classifier refuses to run `docker compose up --build -d app` over SSH even after verbal approval (a standalone `git pull` over SSH is fine). Routine code deploys no longer need it (CD handles them, item 3 above). But if a `data/` transfer or `.env` edit ever needs a manual container rebuild on the box, either add an explicit Bash permission rule for the SSH+docker pattern or have Jack run that one line himself. See Planned Features items #41 and #43 for the history.
 
 ---
 
@@ -4320,3 +4321,409 @@ would run stride-1/v4 user trajectories against the server's stride-3/v3 pro DB
 external depends on it today (no users). `stash@{1}` `jack-wip` is dead — base
 is 125 commits behind HEAD, its payload is already in the tree via later merges,
 a test-apply conflicts in ~15 files. Safe to `git stash drop stash@{1}`.
+
+---
+
+## Session 2026-09-11 — Roadmap 1b: bench de-overfit + two new Dev Page review tools
+
+Picks up "tennis-app-0f"'s uncommitted roadmap-1b slice (`redesign_similarity.py`
+etc., left uncommitted on purpose in the split above). Still **entirely
+uncommitted** at the end of this session — bench-only + two new Dev Page tools,
+no production/scoring code touched yet (B2/B3 not started). Plan file:
+`~/.claude/plans/reactive-enchanting-metcalfe.md`.
+
+**1. De-overfit the rubric with real cross-validation.** The existing
+`CURATED_AXES` gap (+20.0 combined) was measured on the same clips the axes
+were picked from. Added `redesign_similarity.py curate --folds 5`: 5-fold CV,
+axis selection on 4 folds, gap measured on the 5th, keep axes selected ≥4/5
+folds. Honest result was much weaker than the unvalidated number: **forehand
++1.9** (one fold −17.2 — no real signal), backhand +28.7 (amateur n=5, not
+trustworthy), serve +26.1 (real). Also pulled the 3 metric-z depth axes
+(`contact_depth_ahead`/`coil_depth_xfactor`/`wrist_elbow_depth_lag`) out of
+`CURATED_AXES` entirely — 2026-09-10 already found them a negative result on
+real fence footage; the bench had never actually removed them from production
+weights, only flagged them provisional.
+
+**2. New forehand axes, hunted specifically to fix the +1.9 CV gap.** Two
+rounds: `contact_wrist_lateral`/`follow_through_height`/`racket_body_dist`/
+`racket_path_ratio`/`backswing_wrist_drop` (the last one the big lift, low-to-
+high backswing shape, sep +38) got forehand to **+8.7 CV**, still short of a
++12 target. Jack asked for more (a voice message, "add more support in scoring
+matched to a pro") — second round added `hip_shoulder_lead_contact` (shoulder-
+line vs hip-line angle AT the contact instant, distinct from the existing
+`rotation_range`'s backswing→contact *range*, which tests weak/inverted for
+forehand): sep +45, the strongest single axis found all session, **forehand CV
++8.7 → +12.2**, crosses target, and it's now also in the backhand curated set.
+Dropped as duds: `backswing_takeback_height` (inverted), `contact_arm_extension`,
+`peak_wrist_speed`, `contact_forward_hip`, `followthrough_crossbody` (forehand),
+`swing_arc_tilt`, `elbow_ext_gain`.
+
+**3. Real bug found + fixed in `hip_shoulder_lead_contact`.** The atan2
+difference wasn't wrapped to (−180°,180°] — a near-antiparallel shoulder/hip
+line (common, not an error) could read as ±300° instead of the true ±60°.
+Found by scoring 4 real clips Jack hand-picked as bad (see #5) — one of them
+hit −329.6°, driving this axis's pro-likeness to 0 and understating the score.
+Fixed (`((diff + 180) % 360) - 180`); re-verified the population-level sep
+barely moved (+45 → +45), confirming it was an outlier-only bug, not a
+systematic one.
+
+**4. Amateur Clip Review — new Dev Page tool, `DevAmateurClipReviewScreen.js`
++ `list_amateur_clip_review_candidates.py` + `correct_amateur_clip_label.py`.**
+Re-review pattern for the amateur eval set (248 clips, all pre-labeled by an
+earlier Claude-vision pass but backhand a hard ceiling at 10). Also folded in
+a second, older, never-reviewed batch — `data/runtime/raw_footage_ingest/
+IMG_5822`+`IMG_5823` (81 more candidate swings, auto-classified with scores,
+44/79 near-tied on backhand) — as a clearly-marked "review-only" stream (not
+wired into `calibrate_similarity.py`/`evaluate_amateur_dataset.py`, which need
+a `data/03_swing_detection/amateur_<id>_swings.json` this older batch never
+got; new `/raw-footage-clips` static mount in `server.js`).
+
+**A real "did my work not save" scare, actually a real gap, now fixed.** Jack
+reviewed the full 329-clip queue (skip 132/serve 57/forehand 49/backhand 10 →
+skip 97/serve 68/forehand 57/**backhand 26** amateur_eval, +6 more in
+raw_ingest) but navigating back into the screen showed "1/329" again — nothing
+was lost (every tap saves immediately, verified on disk), but the tool had no
+memory of what had already been seen, so it re-fetched the same unfiltered
+list every time. Fixed properly: `amateur_swing_labels.json` gained a
+`reviewed` id list, every tap (even one that just re-confirms the existing
+label) round-trips and marks reviewed, the list route now excludes reviewed
+ids server-side (same "already-reviewed clips don't come back" convention
+`list_pro_clip_review_candidates.py` already used) — plus a new append-only
+`amateur_clip_review_log.jsonl` audit trail (id/old/new/timestamp on every
+action) so "which ones did I already do" is answerable from now on, and an
+explicit "✓ Done" button + web **D** keyboard shortcut. The honest caveat:
+none of this existed before the fix, so the ~26-backhand batch from before it
+isn't retroactively in the audit trail — stated plainly to Jack rather than
+guessed at.
+
+**5. Diagnosed a real conceptual gap in the axes, with visual evidence.** Jack
+picked 4 real clips (`IMG_5822` swing 56, `hEJ9nPmMRGY` swings 102087/102117,
+`0genZFgM61E` swing 105069) he judged clearly bad (self-reported bottom ~40 of
+320 he'd personally reviewed) and wanted them scoring 20s. They scored 40–52
+raw — at/above the general amateur bucket median. Pulled actual video frames
+(`cv2` grab, `Read` tool) and inspected: all 4 show the same thing, a rushed/
+minimal backswing more like a block than a full stroke, but the racket still
+lands in a plausible spot at the contact instant — exactly the failure mode a
+contact-*snapshot* axis (elbow angle, wrist height, all the current axes bar
+`backswing_wrist_drop`) can't see. Added `swing_amplitude` (total wrist travel
+over the WHOLE window, not a snapshot) — it does score all 4 lower (26–42 vs
+their 38–52 combined), but isn't yet CV-stable (2/5, 3/5 fold selection,
+below the 4/5 bar) at the current sample size. Not forced into `CURATED_AXES`;
+kept as a tracked bench candidate, likely to firm up once backhand's much
+bigger sample (#4 above) gets folded in and especially once 0c deliberately-
+sloppy footage lands.
+
+**6. Jack's follow-up idea — tighten the pro reference pool, not just add
+axes — led to a new Dev Page tool, `DevProQualityReviewScreen.js`.** Same
+`100*exp(-|value-median|/IQR)` kernel every axis uses gets more discriminating
+against a purer reference distribution. Checked the cheap proxy first
+(exclude `ingest=='practice_mvp'`, i.e. broadcast-only) — correctly rejected
+by Jack: practice footage isn't inherently worse technique, broadcast isn't
+inherently clean, the ingest-source flag doesn't measure swing quality. Real
+fix: manual 3-tier tagging (⭐ Gold / OK / ✕ Exclude), same one-tap pattern as
+#4, **built resume-safe from day one this time** (server-side filtering from
+the first commit, not bolted on after a gap). Storage: **`clip_review_log.py`
+gets a completely SEPARATE log** (`quality_review_log.jsonl` / `log_quality_tier()`
+/ `get_quality_tier()` / `get_quality_tiers()`), not new verdict values folded
+into the existing shared verdict stream — that was the original plan, until
+testing surfaced why it's unsafe: ~5 other scripts
+(`rebuild_pro_database_from_verdicts.py`, `extract_training_features_from_pro_verdicts.py`,
+etc.) treat "the most recent logged line for this id" as authoritative state
+(e.g. is this entry excluded); a later `quality_ok` tag on an already-excluded
+entry would have silently un-excluded it for every one of those callers.
+Verified by test (tag `quality_gold` after `label_confirmed`, confirmed
+`get_label_reviewed_ids()` unaffected) before shipping. New backend routes
+`GET /dev/pro-quality-review-candidates` (`?shot_type=` filter) /
+`POST /dev/pro-quality-review/tag`; keyboard shortcuts G/O/X. **0/648 tagged
+so far** — the `prefer_gold` consuming logic in `_pro_dists_by_view` (auto-
+falls-back per shot/view bucket below n≥15, protecting serve's thin 27-clip
+broadcast-only pool) is designed but not built; waiting on real tagging data.
+
+**Verification, this session:** backend suite 631/631 green throughout every
+change (re-run after each new route); `routeAuthConvention.test.js` green;
+full `pytest` 700/700 green (venv, ~3 min); both new Python script pairs
+tested standalone AND through the real `runPythonJson`/`PYTHON` backend config,
+not just import-tested; the quality-log isolation fix specifically
+regression-tested against the exact corruption scenario described; all new/
+edited frontend files parsed with `@babel/parser` (the project's `npx babel`
+CLI turned out to be an unrelated ancient package that can't parse this
+codebase at all — even known-good files like `App.js` "fail" through it, a
+dead end worth remembering for next time). Local dev servers (`npm run dev`
+port 5000 + calibration server 5055, `npm run web` port 8081) run for the
+whole session; nodemon auto-reloaded through every backend edit without a
+manual restart.
+
+**Not done / explicitly open:** `curate` needs re-running with backhand's real
+n=26+6 sample (next up); 0c filming (Jack, "tomorrow") is still the strict
+ship-gate for forehand/serve; B2 (`technique_axes.py`/`technique_score.py`/
+`build_technique_axis_stats.py`) hasn't been started — this whole session was
+still B1 (de-overfitting + data quality), not production code. Full state,
+every number, and the exact next steps: the plan file.
+
+## Session 2026-09-10/11 — no-audio visual contact-frame: baseline measured,
+## two fixes shipped (median error roughly halved), first real amateur numbers
+
+Jack: "verify the audio sync — plan ways to improve it, even redesign or
+manual labelling." Scope narrowed to the NO-AUDIO visual fallback specifically
+(audio onset already works well). Plan file:
+`~/.claude/plans/swirling-popping-flame.md`.
+
+**Phase 0 — committed Roadmap 1c**, which had been sitting uncommitted since
+2026-09-08 blocked on a measured-neutral serve gate (dropped as a blocker,
+per its own RESUME notes): `2791e7e` (`serve_anchor._apex_plateau_frame`,
+`ml_status_report.onset_classifier_status`, `contact_evidence` search-window
+kwarg, restored `test_find_contact_frame_window_pytest.py`) + `f28f3b5`
+(`eval_pro_clip_contact.py` stride-1 default, `--human-only`, method×shot /
+method×angle cross-tabs — `sample_every=3` was hard-coded and stale since the
+Phase 0a stride-1 pro-DB rebuild, silently quantising every error number to
+3-frame steps).
+
+**Label-data question resolved empirically:** `contact_time_corrected` (380
+entries) is all-human, zero `(audio)` machine fills in the current log.
+`label_confirmed` (170 entries) turned out to carry REAL varied contact times
+(0.55–3.35s), not the 1.001 placeholder `build_contact_student_dataset.py`'s
+comment claims — that comment is stale; ~123 of the 170 are audio-derived
+(Phase B.2) then human-eyeballed. `--human-only` = the 370-clip gold set.
+
+**Baseline measured for the first time at full scale + stride-1** (was
+previously only ever measured on a 197-clip / stride-3 subset): 370/370 pro
+clips, `--anchor auto --human-only`: **overall median 12.93f, 24%≤3f.**
+Broke down by method for the first time: `ball_occlusion_gap` (any ≥2f
+ball-detection gap = contact) fires on **57% of clips** but is only 18%≤3f,
+with several ±100–160f blowups (locks onto a gap seconds away when seeded
+from a bad anchor); `ball_racket_proximity` handles 33%/42%≤3f;
+`wrist_velocity_fallback` (zero visual evidence) 11%/**3%≤3f** — the worst
+bucket. A second run with a perfect anchor (`--anchor teacher`) gave the
+refinement ceiling: **3.28f/48%≤3f overall** — `ball_racket_proximity` is
+genuinely excellent at ceiling (0.97f/77%, an anchor fix alone suffices), but
+`ball_occlusion_gap` is STILL weak even with a perfect anchor (5.81f/31%,
+not the ~65% the old 197-clip eval implied) — the *method* itself is
+unreliable, not just anchor-starved. Also found the old "+56f bias at 20–35°
+camera angle" (RESUME_1c) was a 70-serve-only-subset artifact — at full scale
+the angle bands are uniform (~10–15f everywhere); anchor quality dominates,
+not camera angle.
+
+**Shipped two fixes, in the priority order the ceiling data implied (gap
+method first, anchor second — not the original doc order):**
+- **`racket_tracker._find_gap_contact` now requires motion consistency**
+  (new `_gap_motion_consistent` / `_raw_ball_gap`): a real contact gap needs
+  ≥2 *accepted* (non-coasted) `ball_tracker.track_ball_states` detections on
+  both sides, plus either a racket detected inside the gap itself, or the
+  ball's pre-gap velocity actually pointing toward the nearest racket
+  detection. New `gap_motion_consistent` field in `contact_frame_meta`. No
+  other caller of the private `_find_gap_contact` exists (`verify_shot_contact.py`
+  only calls the public `find_contact_frame`/`contact_frame_meta`) — safe to
+  change freely; `16_shot_verification/` pytest re-run green regardless.
+- **New `groundstroke_contact_anchor_frame`** (`compare_swing.py`): shifts
+  the wrist-velocity-peak anchor toward the peak-*deceleration* frame
+  (`contact_evidence.wrist_kinematics`'s `wrist_decel_offset_f` — already
+  computed, never used as an anchor before), guarded to only shift when the
+  offset is small (≤6f) and the wrist was visible at the peak. Also fixed a
+  real latent bug in `wrist_kinematics`: `*3`/`/3` stride-3 relics left over
+  from before the stride-1 rebuild, silently 3x-inflating every reported
+  decel offset.
+- New pytest for both (`test_compare_swing_pytest.py` monkeypatches
+  `find_peak_wrist_frame`/`wrist_kinematics` to isolate the anchor's own
+  guard logic rather than reverse-engineering exact kinematics numerics;
+  `test_find_contact_frame_window_pytest.py` gained heading-toward/away/
+  no-racket-evidence cases for the new gap gate). Full repo `pytest` 376/376
+  green throughout.
+
+**Re-measured on the same 370-clip baseline: overall 12.93f/24%≤3f →
+7.72f/38%≤3f.** Method mix shifted exactly as the ceiling data predicted:
+`ball_occlusion_gap` usage dropped 210→92 clips (57%→25% — correctly stopped
+trusting most spurious gaps) with its own accuracy improving 18%→24%;
+`ball_racket_proximity` absorbed the rejected clips and grew 121→240
+(33%→65%) while ALSO improving 42%→49% (the anchor fix) — the two fixes
+compound. `wrist_velocity_fallback` essentially unchanged (39→38, 3%→5%)
+— neither fix touches it, as expected. By shot: backhand 16%→35%≤3f,
+forehand 25%→38%, serve 42%→48%. Still short of the ≥55%≤3f target set at
+the top of this work, but roughly half the original gap is closed. Not yet
+committed (deliberately, this session — the working tree was mid-split by a
+concurrent session; coordinated via cross-session message so neither
+clobbered the other's files).
+
+**Phase 4 (amateur ground truth) — done via audio pseudo-labelling instead
+of manual marking, on Jack's suggestion.** Old baseline CSV was deleted
+rather than archived before the re-run (habit slip — flagged to Jack; exact
+pre-fix behaviour is still recoverable from git `2791e7e`/`f28f3b5` if ever
+needed).
+
+Built **`mark_amateur_contact_time.py`** first (interactive cv2-window
+frame-stepper, same pattern as `10_net_detection/label_net_keypoints.py`) —
+against Jack's own `IMG_5822`/`IMG_5823` raw-ingest clips (81 real swings,
+already shot-type-reviewed via the new `DevAmateurClipReviewScreen.js`, never
+contact-marked). Then Jack pointed out other amateur footage might have
+audio — checked, and does:
+`data/01_source_videos/amateur/*.mp4` (9 real YouTube amateur-match videos,
+HAS audio) → `data/04_clips/amateur/manifest.json` (248 already-cut clips,
+audio stripped like every other pipeline output — `extract_clips.py` uses
+`cv2.VideoWriter`, which never carries audio, confirmed by `video_io.py`'s
+own comment). 151 have real shot-type labels (68 serve/57 FH/26 BH,
+`amateur_swing_labels.json`).
+
+New **`label_amateur_contact_from_audio.py`** runs the SAME
+`onset_classifier.pkl` + confidence gate the live app uses against the
+source video's audio. **Caught and fixed a real bug on the first smoke test**
+(0/8 confident, near-zero confidence scores across the board): passing a
+whole 5–10-minute match wav broke `onset_envelope()`'s flux normalisation
+(`flux / flux.max()` — normalised against the loudest moment in the ENTIRE
+file, so one crowd cheer or line call anywhere crushed every real contact
+onset to near-zero). Fixed by extracting a short per-swing window instead
+(mirroring how `eval_audio_contact.py` already did this for pro clips) — jumped
+to 8/15 confident (53%), consistent with the classifier's own training-time
+confident fraction (57%). Full run: **77 more confident labels (85 total:
+32 serve/29 FH/16 BH+2 from the smoke test)**, zero manual marking.
+
+New **`amateur_contact_eval.py`** (reuses `eval_pro_clip_contact.predict_one`
+directly rather than reimplementing it) is the real acceptance gate. First
+real amateur-footage numbers, 85/85 scored: **overall 9.65f median, 25%≤3f**
+(backhand 4.2f/44% — a bright spot, but n=18; forehand 11.6f/16%; serve
+9.4f/22%) vs pro-broadcast's 7.72f/38% on the same post-fix pipeline. Confirms
+the domain gap the plan predicted: `wrist_velocity_fallback` triples to
+**27% of clips** (worse camera framing breaks ball/racket detection outright),
+and `ball_racket_proximity`'s own accuracy drops 49%→27% even when it does
+fire. **This 25%, not pro's 38%, is now the honest number the redesign
+(Phase 3, supervised per-frame classifier) needs to beat.**
+
+**Not done / explicitly open:** Phase 2c (window-widen + anchor-distance
+confidence penalty) — optional, not started. Phase 3 (the classifier
+redesign) — not started, this session's amateur-eval numbers are exactly what
+it needs to close. Nothing committed this session beyond Phase 0's two
+commits — the 2a/2b code changes and both new amateur-labelling scripts are
+uncommitted, awaiting Jack's usual commit-timing call. `mark_amateur_contact_time.py`
+built but never actually run (audio pseudo-labelling covered Phase 4 instead)
+— stays available for the no-audio IMG_5822/5823 footage if wanted later.
+Full state, every number, exact next steps: the plan file.
+
+## Session 2026-09-11 (later³) — shot classifier: amateur relabel completed, eval-cache staleness fixed, serve window widened
+
+Follow-up to this same day's Amateur Clip Review tool (item #4 above). Jack
+finished the re-review pass: **248/248 amateur eval clips reviewed, backhand
+10 → 26 examples** (`amateur_swing_labels.json`). Separately, the older
+raw-footage batches (IMG_5822: 79, IMG_5823: 2) are also fully reviewed now
+but still not wired into the real eval set — "review-only" stream per
+`list_amateur_clip_review_candidates.py`'s docstring, needs a matching
+`data/03_swing_detection/amateur_<video_id>_swings.json` first.
+
+**Real bug found: the eval results cache silently hides relabels.**
+`evaluate_shot_classifiers.py` appends to `data/17_amateur_eval/
+shot_classifier_eval.jsonl` (gitignored) and skips any clip id already present
+(`done` set, line ~213) — so after the relabel, `--report-only` kept printing
+the stale 10-backhand numbers (ensemble 68.1%, backhand recall 80%) because
+none of the 116 already-scored amateur ids were ever re-scored. There's no
+`--fresh` flag (unlike the amateur-eval verifier harness, which already has
+this exact problem documented). Fix applied by hand: filtered the amateur
+rows out of the cache file and re-ran. **Honest number with the full 26-backhand
+set: ensemble 56.3%, backhand recall 31%, geom 58.0%.** The old 80% backhand
+recall was an artifact of a tiny, easy 10-clip sample, not real generalization.
+The `ml_phone` model's backhand recall specifically crashed 100% → 19% —
+direct confirmation that its self-reported number was memorization/leakage
+(train==test on amateur data, already flagged as a caveat in the code
+comment, now empirically demonstrated rather than theoretical).
+
+**Root-caused a chunk of the serve misses with real per-clip debug output**
+(not just aggregate stats): pulled raw per-frame overhead-reach values for
+several serve→forehand misclassifications. In more than one case the wrist
+reach climbs to genuine full-extension values (>1.0, well past
+`SERVE_REACH_STRONG`) but only in the *last few frames* of the analysis
+window — just short of the sustained-run/fraction thresholds
+(`SERVE_SUSTAINED_RUN_STRONG=7`/`FRAC_STRONG=0.38`), so the serve gate doesn't
+hard-win and the clip falls through to the forehand/backhand side test
+instead. Root cause: `SERVE_WINDOW_POST_SEC` (`extract_training_features.py`)
+was only 0.5s past the marked contact frame — too short to capture the full
+overhead extension on some amateur serves. Widened to 0.8s, cleared the full
+eval cache (pro window content changes too) and re-ran both sets:
+
+| | amateur before | amateur after | pro before | pro after |
+|---|---|---|---|---|
+| geom acc | 58.0% | **66.7%** | 67.1% | **73.8%** |
+| serve recall | 60% (41/68) | **78%** (53/68) | 80% (64/80) | **84%** (67/80) |
+| ensemble acc | 56.3% | **64.2%** | 86.6% | 86.9% (flat) |
+
+Serve precision held steady (85-87%) on both sets — the wider window isn't
+causing groundstroke false-positives. One-line constant change, no threshold
+retuning, isolates the window-length variable cleanly. **Uncommitted.**
+
+**Still open:** forehand/backhand confusion barely moved (amateur backhand
+recall still ~27-31%) — not a window problem. Confidence is **not**
+predictive of correctness on amateur geom calls (plenty of confidently-wrong
+0.9+ calls mixed with confidently-right ones), which rules out "it's just
+genuine near-midline ambiguity" — the existing damping-near-midline logic
+isn't the thing failing. Best working theory, not yet verified: contact-frame
+timing errors on specific amateur clips (same audio-onset failure mode noted
+in `classify_shot_trajectory.py:33-38` for the practice-footage ingest) are
+feeding the single-frame side-projection test the wrong instant of the swing.
+Queued next experiment: correlate the remaining FH/BH errors against
+contact-frame source (audio-detected vs pose-peak vs manual) before spending
+effort retuning the `TWO_HAND_WRIST_SEP`/`SIDE_AMBIGUOUS` thresholds further.
+
+## Session 2026-09-11 (later⁴) — root-cause pass on recurring cross-session problems: process guardrails, no ML/behavior changes
+
+Jack asked for a read-through of `STATUS.md`/`HANDOVER.md`/`JACK_TODO.md`
+specifically to find what kept tripping up different sessions/agents, and to
+fix root causes rather than one-off symptoms. Read through all three at
+length and found five patterns that recur across *different* technical
+problems, which is the signature of a process gap rather than isolated bugs:
+
+1. **The same broadcast/bench-to-real-footage generalization gap was
+   independently re-discovered 4+ times**, each time investigated as a fresh
+   problem: pose-yaw camera normalization, net-width un-foreshortening,
+   metric-3D depth scoring, and "calibrate once per session" all failed on
+   real fence/phone footage for the same underlying reason (pose-landmark
+   noise at that distance is larger than the signal being corrected for).
+   Same shape of failure in the shot classifier (86.6% broadcast vs 68.1%
+   phone, later shown to be train==test leakage) and contact-frame detection
+   (38% pro-broadcast vs 25% real-amateur, this same day's earlier session).
+2. **Eval-harness bugs have repeatedly produced a false read on whether a fix
+   worked**, each costing a session before being caught: the
+   `evaluate_shot_classifiers.py` stale-cache bug from earlier today; the
+   rubric's "+20.0" separation gap that turned out to be overfit (measured on
+   the same clips the axes were picked from) until 5-fold CV was added
+   (2026-09-11 earlier session); the verifier's apparent "64.5%→54.4%
+   regression" that was actually a frozen-checkpoint artifact, not real
+   (2026-09-10).
+3. **Uncommitted work piles up and tangles across sessions** — multiple
+   sessions' WIP landed in the same dirty working tree at once and needed a
+   manual three-way split (2026-09-10), and several substantial features
+   still sit "entirely uncommitted, bench-only" pending a commit-timing call
+   that keeps getting deferred.
+4. **`data/` never syncs to the server automatically** and CD only touches
+   code — the rebuilt pro DB, the retrained ball detector, the onset
+   classifier, and the net-detection weights are all built, gated, and
+   "KEPT" locally while the server silently runs on stale/missing versions,
+   degrading to a fallback instead of erroring, which is exactly why it's
+   easy to lose track of.
+5. **Score-presentation/calibration risk has been re-flagged as the top
+   pre-launch risk in at least 4-5 separate session summaries** (2026-09-07,
+   -08, -09, -11) without roadmap 1b ever shipping past bench-only.
+
+**Shipped** (docs + one small pure-Python utility, nothing ML/behavioral):
+- `CLAUDE.md` — new **"Known Dead Ends"** register (the failed
+  camera-normalization approaches, dead depth axes, DTW rescaling, the
+  Phase C contact-frame regressor, the ROI ball tracker — each with the
+  one-line reason it failed), a new **"Eval hygiene"** rule (explicit cache
+  invalidation, cross-validated-not-same-set numbers, provenance stamping),
+  and a new **"Commit discipline"** convention (session-scoped branches for
+  multi-session bench work instead of a shared dirty tree).
+- `HANDOVER.md`'s "Read This First" now points to the Dead Ends/Eval hygiene
+  sections (see item 4 there).
+- `STATUS.md` gained a persistent **"Local-only artifacts pending server
+  transfer"** checklist near the top — a running manifest instead of the
+  fact being scattered across dozens of session entries.
+- New `scripts/00_utils/eval_stamp.py` — extracts the git-SHA +
+  model-fingerprint provenance-stamping pattern
+  `evaluate_amateur_dataset.py` hand-rolled after the 64.5%→54.4%
+  false-regression incident, plus a `check_single_version()` helper so a
+  results file spanning multiple code/model versions gets flagged rather
+  than silently averaged together. Covered by `test_eval_stamp_pytest.py`
+  (8/8 green).
+- `JACK_TODO.md` — added an explicit **1b-decision** item: stop hunting
+  further biomechanical axes indefinitely; once the just-finished amateur
+  backhand relabel produces a backhand CV number, make one go/no-go call and
+  ship B2 as explicitly PROVISIONAL if all three shot types clear a minimal
+  bar, refining against real usage instead of more bench iteration.
+
+Nothing here touches ML modeling, the live app, or deploy — docs-only plus
+one new stamping utility with its own test. Still uncommitted, same as the
+rest of today's work.

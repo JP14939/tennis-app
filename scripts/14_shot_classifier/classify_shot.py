@@ -26,9 +26,9 @@ from extract_clips import SCORERS, nearest_pose  # noqa: E402
 from extract_training_features import extract_features, FEATURE_NAMES, FEATURE_VERSION  # noqa: E402
 
 # Same window shape extract_clips.py's process_job() already uses for serve:
-# -1s to +0.5s around contact, sampled every 3 frames.
+# -1s to +0.8s around contact, sampled every 3 frames.
 SERVE_WINDOW_PRE_SEC = 1.0
-SERVE_WINDOW_POST_SEC = 0.5
+SERVE_WINDOW_POST_SEC = 0.8
 SERVE_WINDOW_STEP_FRAMES = 3
 
 ML_MODEL_PATH = os.path.join(DATA_DIR, '14_shot_classifier', 'shot_classifier_model.pkl')

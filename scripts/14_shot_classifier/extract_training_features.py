@@ -48,7 +48,7 @@ OUTPUT_PATH = os.path.join(DATA_DIR, '14_shot_classifier', 'training_features.js
 
 # Same window shape classify_shot.py's classify() uses for the serve signal.
 SERVE_WINDOW_PRE_SEC = 1.0
-SERVE_WINDOW_POST_SEC = 0.5
+SERVE_WINDOW_POST_SEC = 0.8
 SERVE_WINDOW_STEP_FRAMES = 3
 
 # Bump whenever the SEMANTICS of any feature change (not just adding one) --

@@ -49,6 +49,8 @@ import DevRallyBoundaryReviewScreen from './screens/DevRallyBoundaryReviewScreen
 import DevSwingReviewScreen from './screens/DevSwingReviewScreen';
 import DevTipReviewScreen from './screens/DevTipReviewScreen';
 import DevProClipReviewScreen from './screens/DevProClipReviewScreen';
+import DevAmateurClipReviewScreen from './screens/DevAmateurClipReviewScreen';
+import DevProQualityReviewScreen from './screens/DevProQualityReviewScreen';
 import DevBallLabelScreen from './screens/DevBallLabelScreen';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { isOnboardingComplete } from './utils/onboarding';
@@ -149,6 +151,8 @@ function RootNavigator() {
             <Stack.Screen name="DevSwingReview" component={DevSwingReviewScreen} options={{ title: 'Swing Review' }} />
             <Stack.Screen name="DevTipReview" component={DevTipReviewScreen} options={{ title: 'Tip Review' }} />
             <Stack.Screen name="DevProClipReview" component={DevProClipReviewScreen} options={{ title: 'Pro Clip Review' }} />
+            <Stack.Screen name="DevAmateurClipReview" component={DevAmateurClipReviewScreen} options={{ title: 'Amateur Clip Review' }} />
+            <Stack.Screen name="DevProQualityReview" component={DevProQualityReviewScreen} options={{ title: 'Pro Quality Review' }} />
             <Stack.Screen name="DevBallLabel" component={DevBallLabelScreen} options={{ title: 'Ball Label' }} />
             <Stack.Screen name="DevDrillsEditor" component={DevDrillsEditorScreen} options={{ title: 'Drills & Lessons Editor' }} />
       </Stack.Navigator>

@@ -89,6 +89,55 @@ def test_find_gap_contact_requires_real_vanish():
     assert _find_gap_contact(dets) is None
 
 
+def _approach_dets(racket_x=None, racket_in_gap=False):
+    """Ball tracked moving in +x (x=80 at f=40 up to x=116 at f=59), vanishes
+    49-52. `racket_x`: if given, a racket is detected at frames 48 and 53 at
+    that x position (None -> no racket at all near the gap). `racket_in_gap`:
+    also place a racket at that position through the gap frames themselves."""
+    dets = []
+    for f in range(40, 60):
+        if racket_in_gap and 49 <= f <= 52:
+            dets.append(_det(f, racket=_box(racket_x, 100)))
+            continue
+        ball = _box(80 + (f - 40) * 2, 100)
+        racket = _box(racket_x, 100) if racket_x is not None and f in (48, 53) else None
+        if 49 <= f <= 52:
+            dets.append(_det(f, racket=racket))
+        else:
+            dets.append(_det(f, racket=racket, ball=ball))
+    return dets
+
+
+def test_gap_accepted_via_heading_toward_racket_when_racket_absent_during_gap():
+    # No racket detected DURING the gap itself -- only just before/after,
+    # positioned ahead of the ball's direction of travel -- so this can only
+    # pass via the "heading toward the racket" motion check, not the
+    # racket-was-already-there shortcut.
+    dets = _approach_dets(racket_x=200)  # ball is heading toward increasing x
+    frame, conf, method = find_contact_frame(dets, 50, FPS)
+    assert method.startswith('ball_occlusion_gap')
+    assert frame == 50
+
+
+def test_gap_rejected_when_heading_away_from_racket():
+    # Racket sits behind the ball's direction of travel (the ball is moving
+    # in +x, away from a racket at x=0) -- a real strike wouldn't look like
+    # this; a plain detector dropout easily could.
+    dets = _approach_dets(racket_x=0)
+    frame, conf, method = find_contact_frame(dets, 50, FPS)
+    assert not method.startswith('ball_occlusion_gap')
+
+
+def test_gap_rejected_without_any_racket_evidence():
+    # No racket detected anywhere in the window -- nothing to judge "heading
+    # toward" against, and the racket-was-in-the-gap shortcut can't apply
+    # either -- so the gap is rejected outright and the pipeline has to fall
+    # all the way back to the wrist-velocity anchor.
+    dets = _approach_dets(racket_x=None)
+    frame, conf, method = find_contact_frame(dets, 50, FPS)
+    assert method == 'wrist_velocity_fallback'
+
+
 def test_contact_frame_meta_counts_track_search_window():
     dets = [_det(f, racket=_box(1, 1), ball=_box(2, 2)) for f in range(0, 100)]
     narrow = contact_frame_meta(dets, 50, FPS, search_window_sec=0.3)

@@ -15,6 +15,28 @@ gets resolved.
 
 ---
 
+## New from the 2026-09-10/11 session (no-audio visual contact-frame)
+
+Full story: `HANDOVER.md` "Session 2026-09-10/11"; plan
+`~/.claude/plans/swirling-popping-flame.md`. Jack-only items:
+
+- **Commit-timing call.** Two commits already landed (`2791e7e`, `f28f3b5` —
+  Roadmap 1c + the stride-1 eval harness). Everything after that —
+  `racket_tracker._find_gap_contact`'s motion-continuity gate,
+  `compare_swing.groundstroke_contact_anchor_frame`, and the three new
+  scripts (`label_amateur_contact_from_audio.py`, `amateur_contact_eval.py`,
+  `mark_amateur_contact_time.py`) — is uncommitted, tested (376/376 pytest),
+  and measured (pro broadcast 24%→38%≤3f; real amateur footage 25%≤3f). Say
+  when to commit.
+- **Decide whether to proceed to the supervised classifier** (the reframe
+  that made audio-onset work, applied to the visual path) — real amateur
+  numbers now exist to gate it against (25%≤3f baseline, ≥55%≤3f target).
+  ~1.5–2 weeks of work if you want it built.
+- *(optional)* `mark_amateur_contact_time.py` is built and ready if you want
+  to hand-mark your own `IMG_5822`/`IMG_5823` fence clips too (no audio on
+  those, so the audio-pseudo-label trick doesn't apply there) — not needed
+  right now, the 85 YouTube-derived labels already cover Phase 4.
+
 ## New from the 2026-09-09/10 session (metric-3D v4 pro-DB rebuild + verifier)
 
 Full story: `HANDOVER.md` "Session 2026-09-09/10". Jack-only items:

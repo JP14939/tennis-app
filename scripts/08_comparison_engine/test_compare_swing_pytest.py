@@ -16,9 +16,12 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import compare_swing as cs  # noqa: E402 -- module ref, so monkeypatching cs.X affects cs's own callers
 from compare_swing import (  # noqa: E402
     find_peak_wrist_frame, eligible_match_candidates, build_user_trajectory,
+    groundstroke_contact_anchor_frame,
 )
+import contact_evidence  # noqa: E402 -- for monkeypatching wrist_kinematics below
 
 
 def _landmark(x, y, visibility):
@@ -61,6 +64,69 @@ def test_missing_landmarks_frame_is_skipped_not_crashed():
     ]
     # Should not raise, and should still find the real movement at frame 2.
     assert find_peak_wrist_frame(frames, fps=30) == 2
+
+
+# ── groundstroke_contact_anchor_frame: peak-speed anchor recentred toward the
+# peak-deceleration frame (Phase 2a, 2026-09-11) ─────────────────────────────
+#
+# find_peak_wrist_frame and wrist_kinematics are both monkeypatched to fixed
+# values in these tests -- their own arithmetic is covered by
+# test_low_visibility_wrist_jump_is_not_mistaken_for_contact (above) and
+# contact_evidence.py's own test suite respectively. These tests are purely
+# about groundstroke_contact_anchor_frame's OWN guard logic: does it shift by
+# the reported offset, and does it correctly refuse to when the guards fail.
+
+def _anchor_frames(peak_idx, peak_visibility=1.0):
+    frames = [_frame(i, (0.5, 0.5), 1.0) for i in range(peak_idx + 1)]
+    # _frame() always gives left_wrist visibility 1.0 -- lower both wrists at
+    # the peak frame so the "not visible" test actually exercises the guard
+    # (groundstroke_contact_anchor_frame accepts EITHER wrist being visible).
+    frames[peak_idx]['landmarks']['right_wrist']['visibility'] = peak_visibility
+    frames[peak_idx]['landmarks']['left_wrist']['visibility'] = peak_visibility
+    return frames
+
+
+def test_shifts_anchor_by_measured_decel_offset_within_guard(monkeypatch):
+    monkeypatch.setattr(cs, 'find_peak_wrist_frame', lambda frames, fps: 4)
+    monkeypatch.setattr(contact_evidence, 'wrist_kinematics',
+                        lambda frames, idx, fps: {'wrist_decel_offset_f': 3,
+                                                  'wrist_halfspeed_offset_f': None})
+    frames = _anchor_frames(4)
+    assert groundstroke_contact_anchor_frame(frames, fps=30) == frames[4]['frame'] + 3
+
+
+def test_falls_back_to_halfspeed_offset_when_decel_missing(monkeypatch):
+    monkeypatch.setattr(cs, 'find_peak_wrist_frame', lambda frames, fps: 4)
+    monkeypatch.setattr(contact_evidence, 'wrist_kinematics',
+                        lambda frames, idx, fps: {'wrist_decel_offset_f': None,
+                                                  'wrist_halfspeed_offset_f': 2})
+    frames = _anchor_frames(4)
+    assert groundstroke_contact_anchor_frame(frames, fps=30) == frames[4]['frame'] + 2
+
+
+def test_anchor_unshifted_when_offset_exceeds_guard(monkeypatch):
+    # A big offset means the decel signal found something else entirely (e.g.
+    # a second braking event well into the follow-through) -- not trustworthy,
+    # so the raw peak wins rather than moving somewhere wild.
+    monkeypatch.setattr(cs, 'find_peak_wrist_frame', lambda frames, fps: 4)
+    monkeypatch.setattr(contact_evidence, 'wrist_kinematics',
+                        lambda frames, idx, fps: {'wrist_decel_offset_f': 20,
+                                                  'wrist_halfspeed_offset_f': None})
+    frames = _anchor_frames(4)
+    assert groundstroke_contact_anchor_frame(frames, fps=30) == frames[4]['frame']
+
+
+def test_anchor_unshifted_when_wrist_not_visible_at_peak(monkeypatch):
+    # Motion blur right at the speed peak makes even the decel measurement
+    # unreliable -- never trust it, regardless of what wrist_kinematics says.
+    called = []
+    monkeypatch.setattr(cs, 'find_peak_wrist_frame', lambda frames, fps: 4)
+    monkeypatch.setattr(contact_evidence, 'wrist_kinematics',
+                        lambda frames, idx, fps: called.append(1) or
+                        {'wrist_decel_offset_f': 1})
+    frames = _anchor_frames(4, peak_visibility=0.2)
+    assert groundstroke_contact_anchor_frame(frames, fps=30) == frames[4]['frame']
+    assert not called  # short-circuited before ever consulting wrist_kinematics
 
 
 def test_low_visibility_PREVIOUS_frame_is_not_mistaken_for_contact():

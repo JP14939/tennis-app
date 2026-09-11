@@ -88,6 +88,28 @@ const CORRECT_CONTACT_TIME_TIMEOUT_MS = 120 * 1000;
 // ceiling to cover the extra pose-loading/extraction work.
 const SPLIT_PRO_CLIP_TIMEOUT_MS = 120 * 1000;
 
+// Amateur Clip Review (roadmap 1b): re-review the 248 already-labeled
+// amateur swing candidates for missed backhands. No cut/split/contact-time
+// correction like Pro Clip Review -- amateur candidates are already
+// correctly time-boxed at ingest, this is a pure shot-type relabel.
+const LIST_AMATEUR_CLIP_REVIEW_CANDIDATES = path.join(SCRIPTS_DIR, '06_database_build', 'list_amateur_clip_review_candidates.py');
+const CORRECT_AMATEUR_CLIP_LABEL = path.join(SCRIPTS_DIR, '06_database_build', 'correct_amateur_clip_label.py');
+// Just reads manifest.json + amateur_swing_labels.json (248 entries) -- near-instant.
+const AMATEUR_CLIP_REVIEW_CANDIDATES_TIMEOUT_MS = 30 * 1000;
+// Just rewrites amateur_swing_labels.json (no clip file move, unlike correct_shot_type.py).
+const CORRECT_AMATEUR_CLIP_LABEL_TIMEOUT_MS = 15 * 1000;
+
+// Pro Quality Review (roadmap 1b B1.6): tag pro-database clips gold/ok/exclude
+// on TECHNIQUE quality -- orthogonal to Pro Clip Review's label-accuracy
+// verdicts, written to a separate log (clip_review_log.QUALITY_LOG_PATH; see
+// that module for why it isn't folded into the shared verdict stream).
+const LIST_PRO_QUALITY_REVIEW_CANDIDATES = path.join(SCRIPTS_DIR, '06_database_build', 'list_pro_quality_review_candidates.py');
+const TAG_PRO_QUALITY = path.join(SCRIPTS_DIR, '06_database_build', 'tag_pro_quality.py');
+// Just reads pro_database.json (648 entries) + the quality log -- near-instant.
+const PRO_QUALITY_REVIEW_CANDIDATES_TIMEOUT_MS = 30 * 1000;
+// Just appends one line to the quality log.
+const TAG_PRO_QUALITY_TIMEOUT_MS = 15 * 1000;
+
 const LIST_BALL_LABEL_CANDIDATES = path.join(SCRIPTS_DIR, '07_ball_racket_tracking', 'list_ball_label_candidates.py');
 const LOG_MANUAL_BALL_LABEL = path.join(SCRIPTS_DIR, '07_ball_racket_tracking', 'log_manual_ball_label.py');
 // Just reads a JSON labels file + the review log -- near-instant.
@@ -311,6 +333,77 @@ router.post('/dev/pro-clip-review/split', requireAuth, requireAdmin, (req, res) 
       nonzero_exit: 'Failed to split clip',
       invalid_json: 'Split clip produced invalid output',
       spawn_failed: 'Failed to start clip splitting',
+    },
+  });
+});
+
+// Re-review of the amateur eval set's shot-type labels (roadmap 1b: only
+// 10/248 candidates are backhand, a hard ceiling on the technique-score
+// rubric's backhand axes -- Jack wants a by-eye pass to catch any real
+// backhand mislabeled as 'skip'/'forehand'/'serve'). See
+// list_amateur_clip_review_candidates.py for the sort order.
+router.get('/dev/amateur-clip-review-candidates', requireAuth, requireAdmin, (req, res) => {
+  const args = [LIST_AMATEUR_CLIP_REVIEW_CANDIDATES];
+  if (req.query.limit) args.push(String(req.query.limit));
+  sendPythonJson(res, args, {
+    timeoutMs: AMATEUR_CLIP_REVIEW_CANDIDATES_TIMEOUT_MS,
+    label: 'list_amateur_clip_review_candidates.py',
+    logTag: 'list_amateur_clip_review_candidates.py failed',
+    messages: {
+      nonzero_exit: 'Failed to list amateur clip review candidates',
+      invalid_json: 'Amateur clip review candidate list produced invalid output',
+      spawn_failed: 'Failed to start amateur clip review candidate listing',
+    },
+  });
+});
+
+// Corrects one amateur candidate's shot-type label (DevAmateurClipReviewScreen.js).
+// Body is {id, new_label}, new_label one of 'forehand'|'backhand'|'serve'|'skip'.
+router.post('/dev/amateur-clip-review/label', requireAuth, requireAdmin, (req, res) => {
+  sendPythonJson(res, [CORRECT_AMATEUR_CLIP_LABEL], {
+    timeoutMs: CORRECT_AMATEUR_CLIP_LABEL_TIMEOUT_MS,
+    stdinBody: req.body,
+    label: 'correct_amateur_clip_label.py',
+    logTag: 'correct_amateur_clip_label.py failed',
+    messages: {
+      nonzero_exit: 'Failed to correct amateur clip label',
+      invalid_json: 'Correct amateur clip label produced invalid output',
+      spawn_failed: 'Failed to start amateur clip label correction',
+    },
+  });
+});
+
+// Lists untagged pro-database candidates for quality-tier review (roadmap 1b
+// B1.6). Optional ?shot_type= filter. Already-tagged entries never come back
+// (list_pro_quality_review_candidates.py excludes them server-side).
+router.get('/dev/pro-quality-review-candidates', requireAuth, requireAdmin, (req, res) => {
+  const args = [LIST_PRO_QUALITY_REVIEW_CANDIDATES];
+  if (req.query.shot_type) args.push('--shot-type', String(req.query.shot_type));
+  if (req.query.limit) args.push(String(req.query.limit));
+  sendPythonJson(res, args, {
+    timeoutMs: PRO_QUALITY_REVIEW_CANDIDATES_TIMEOUT_MS,
+    label: 'list_pro_quality_review_candidates.py',
+    logTag: 'list_pro_quality_review_candidates.py failed',
+    messages: {
+      nonzero_exit: 'Failed to list pro quality review candidates',
+      invalid_json: 'Pro quality review candidate list produced invalid output',
+      spawn_failed: 'Failed to start pro quality review candidate listing',
+    },
+  });
+});
+
+// Tags one pro clip's technique-quality tier (DevProQualityReviewScreen.js).
+// Body is {id, tier}, tier one of 'gold'|'ok'|'exclude'.
+router.post('/dev/pro-quality-review/tag', requireAuth, requireAdmin, (req, res) => {
+  sendPythonJson(res, [TAG_PRO_QUALITY], {
+    timeoutMs: TAG_PRO_QUALITY_TIMEOUT_MS,
+    stdinBody: req.body,
+    label: 'tag_pro_quality.py',
+    logTag: 'tag_pro_quality.py failed',
+    messages: {
+      nonzero_exit: 'Failed to tag pro clip quality',
+      invalid_json: 'Tag pro clip quality produced invalid output',
+      spawn_failed: 'Failed to start pro clip quality tagging',
     },
   });
 });

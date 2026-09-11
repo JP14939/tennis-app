@@ -128,3 +128,52 @@ def get_label_reviewed_ids():
     than get_reviewed_set(), which also counts pre-sprint boundary-only
     verdicts like 'ok'/'mismatched' that never checked label accuracy."""
     return {eid for eid, v in get_latest_verdicts().items() if v in LABEL_REVIEW_VERDICTS}
+
+
+# ── quality tiering (roadmap 1b B1.6, 2026-09-11) ─────────────────────────
+#
+# A SEPARATE, ORTHOGONAL dimension from everything above -- "is the label/
+# boundary right" (the log above) vs "is this textbook technique" (this
+# one). Deliberately kept in its OWN log file rather than folded into
+# VERDICTS/LOG_PATH: get_latest_verdicts() and the ~5 other scripts that
+# consume it (rebuild_pro_database_from_verdicts.py,
+# extract_training_features_from_pro_verdicts.py, etc.) all treat "the most
+# recent logged line for this id" as authoritative state (e.g. "was this
+# entry excluded"). If quality tags shared that stream, tagging an already-
+# excluded entry 'quality_ok' later would make it look UN-excluded to any
+# caller reading get_latest_verdicts() -- a real, silent, cross-cutting
+# corruption risk for no benefit. Two independent logs, two independent
+# "most recent" answers, no interaction. DevProQualityReviewScreen.js.
+QUALITY_LOG_PATH = os.path.join(DATA_DIR, '06_pro_database', 'quality_review_log.jsonl')
+QUALITY_TIERS = ('gold', 'ok', 'exclude')
+
+
+def log_quality_tier(entry_id, tier, name=None):
+    if tier not in QUALITY_TIERS:
+        raise ValueError(f'Unknown quality tier {tier!r}, expected one of {QUALITY_TIERS}')
+    record = {'entry_id': entry_id, 'tier': tier, 'name': name, 'timestamp': time.time()}
+    os.makedirs(os.path.dirname(QUALITY_LOG_PATH), exist_ok=True)
+    with open(QUALITY_LOG_PATH, 'a') as f:
+        f.write(json.dumps(record) + '\n')
+
+
+def get_quality_tiers():
+    """{entry_id: 'gold'|'ok'|'exclude'} using each id's most recent tag --
+    the bulk form for _pro_dists_by_view's prefer_gold mode / the review
+    tool's list route, so callers don't re-scan the log per entry."""
+    if not os.path.exists(QUALITY_LOG_PATH):
+        return {}
+    tiers = {}
+    with open(QUALITY_LOG_PATH) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            r = json.loads(line)
+            tiers[r['entry_id']] = r['tier']
+    return tiers
+
+
+def get_quality_tier(entry_id):
+    """'gold'|'ok'|'exclude'|None for one entry."""
+    return get_quality_tiers().get(entry_id)

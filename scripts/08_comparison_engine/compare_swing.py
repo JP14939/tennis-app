@@ -375,13 +375,57 @@ def find_peak_wrist_frame(frames, fps):
     return peak_idx
 
 
+def groundstroke_contact_anchor_frame(frames, fps):
+    """Groundstroke contact anchor: the wrist-velocity peak, recentred toward
+    the peak-DECELERATION frame when one is measurable.
+
+    find_peak_wrist_frame lands on peak hand SPEED, which is the follow-
+    through, not contact (measured 2026-09-10: ~9f median error, +7f late
+    bias). The hand actually brakes hard at impact -- contact_evidence.
+    wrist_kinematics already computes that braking frame
+    (wrist_decel_offset_f) as a byproduct of the Phase-C evidence pass, it's
+    just never been used to seed the anchor itself.
+
+    Guarded: only shifts when the offset is small (a big one means the decel
+    signal found something else, e.g. a second braking event in the follow-
+    through -- not worth trusting) and the wrist was actually visible at the
+    peak (motion blur right at contact makes the pose landmark unreliable, so
+    a decel measured off a blurred point isn't trustworthy either). Falls
+    back to the raw peak whenever either guard fails, so this can only ever
+    move the anchor a little closer to contact, never further away or
+    somewhere wild.
+
+    Returns a frame NUMBER (see auto_contact_anchor_frame)."""
+    peak_idx = find_peak_wrist_frame(frames, fps)
+    peak_frame = frames[peak_idx]['frame']
+
+    MAX_SHIFT_FRAMES = 6
+    MIN_WRIST_VIS = 0.5
+    lm = frames[peak_idx].get('landmarks') or {}
+    rw, lw = lm.get('right_wrist'), lm.get('left_wrist')
+    visible = any(d and d.get('visibility', 0) > MIN_WRIST_VIS for d in (rw, lw))
+    if not visible:
+        return peak_frame
+
+    from contact_evidence import wrist_kinematics  # noqa: PLC0415 -- deferred, pulls in racket_tracker/cv2
+    kin = wrist_kinematics(frames, peak_idx, fps)
+    offset = kin.get('wrist_decel_offset_f')
+    if offset is None:
+        offset = kin.get('wrist_halfspeed_offset_f')
+    if offset is None or abs(offset) > MAX_SHIFT_FRAMES:
+        return peak_frame
+    return peak_frame + offset
+
+
 def auto_contact_anchor_frame(frames, fps, shot_type):
     """Rough contact anchor for the AUTO-DETECT path (no user mark).
 
     Serve -> the overhead-apex frame (serve_anchor.serve_contact_anchor_frame),
     which sits within a few frames of contact; groundstroke -> the
-    wrist-velocity peak. Falls back to the wrist-velocity peak when the serve
-    overhead signal isn't measurable (bad pose / not actually a serve).
+    deceleration-recentred wrist-velocity peak (see
+    groundstroke_contact_anchor_frame). Falls back to the raw wrist-velocity
+    peak when the serve overhead signal isn't measurable (bad pose / not
+    actually a serve).
 
     Returns a frame NUMBER (not a list index) so it's interchangeable with
     `frames[find_peak_wrist_frame(...)]['frame']` at every call site."""
@@ -389,7 +433,8 @@ def auto_contact_anchor_frame(frames, fps, shot_type):
         anchor = serve_contact_anchor_frame(pose_by_frame_from_frames_list(frames), fps)
         if anchor is not None:
             return anchor
-    return frames[find_peak_wrist_frame(frames, fps)]['frame']
+        return frames[find_peak_wrist_frame(frames, fps)]['frame']
+    return groundstroke_contact_anchor_frame(frames, fps)
 
 
 # Yaw (camera-azimuth) normalization of the user's swing -- see
@@ -692,9 +737,11 @@ def compare(video_path, shot_type, top_n=3, angle_window=20, contact_time_sec=No
         print('  View gate: ok', file=sys.stderr)
 
     # Ball speed at the net crossing -- see ball_speed.py's module docstring
-    # for why "at the net" rather than off the racket at contact, and why a
-    # low/unknown camera angle just silently disables the stat rather than
-    # reporting an unreliable number.
+    # for why "at the net" rather than off the racket at contact, how it
+    # combines a lateral (net-width-scaled) term with a radial
+    # (ball-size-derivative) term to cover low-angle behind-the-baseline
+    # framing, and why an unknown camera angle or missing track data just
+    # silently disables the stat rather than reporting an unreliable number.
     ball_speed_kmh = None
     try:
         ball_speed_kmh = estimate_net_crossing_ball_speed_kmh(

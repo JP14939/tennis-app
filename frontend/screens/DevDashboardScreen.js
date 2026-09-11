@@ -53,6 +53,18 @@ const TOOLS = [
     screen: 'DevProClipReview',
   },
   {
+    key: 'amateur-clip-review',
+    label: 'Amateur Clip Review (free, manual)',
+    sub: 'Re-review the 248 amateur eval-set swing labels one at a time -- catches a real backhand mislabeled as skip/forehand/serve (only 10/248 are labeled backhand)',
+    screen: 'DevAmateurClipReview',
+  },
+  {
+    key: 'pro-quality-review',
+    label: 'Pro Quality Review (free, manual)',
+    sub: 'Tag pro-database clips gold / OK / exclude on TECHNIQUE quality (not label accuracy) -- builds a tightened reference pool for the technique-score rubric',
+    screen: 'DevProQualityReview',
+  },
+  {
     key: 'ball-label',
     label: 'Ball Label (free, manual)',
     sub: 'Draw a box around the ball on frames the automated ball-detector labeling pipeline could not resolve on its own',

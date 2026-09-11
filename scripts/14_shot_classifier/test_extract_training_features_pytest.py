@@ -6,7 +6,10 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from extract_training_features import extract_features, FEATURE_NAMES, FEATURE_VERSION  # noqa: E402
+from extract_training_features import (  # noqa: E402
+    extract_features, FEATURE_NAMES, FEATURE_VERSION, SERVE_WINDOW_POST_SEC,
+)
+from classify_shot import SERVE_WINDOW_POST_SEC as INFERENCE_SERVE_WINDOW_POST_SEC  # noqa: E402
 
 # _frame()'s defaults: shoulders y=0.3, hips y=0.6, both centred x=0.5 ->
 # torso length (body_scale) = 0.3. Every magnitude feature is divided by it.
@@ -43,6 +46,10 @@ def test_returns_every_declared_feature_name():
 
 def test_feature_version_is_set():
     assert isinstance(FEATURE_VERSION, str) and FEATURE_VERSION
+
+
+def test_training_and_inference_serve_windows_match():
+    assert SERVE_WINDOW_POST_SEC == INFERENCE_SERVE_WINDOW_POST_SEC == 0.8
 
 
 def test_wrist_below_shoulder_gives_negative_margin_body_normalised():

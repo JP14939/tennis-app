@@ -16,7 +16,7 @@ import sys
 import cv2
 from ultralytics import YOLO
 
-from ball_tracker import track_ball
+from ball_tracker import track_ball, track_ball_states
 
 RACKET_CLASS = 38
 BALL_CLASS = 32
@@ -153,6 +153,69 @@ def _dist(b1, b2):
     return math.hypot(c1[0] - c2[0], c1[1] - c2[1])
 
 
+def _raw_ball_gap(window_dets):
+    """The largest gap between consecutive ball detections, or None if there
+    isn't one (or it's too short to be a real vanish -- see _find_gap_contact).
+    Split out from _find_gap_contact so contact_frame_meta can report on a
+    gap that existed but got rejected by _gap_motion_consistent, not just a
+    binary present/absent."""
+    ball_frames = sorted(d['frame'] for d in window_dets if d['ball_box'])
+    if len(ball_frames) < 2:
+        return None
+    gaps = [(ball_frames[i], ball_frames[i + 1]) for i in range(len(ball_frames) - 1)]
+    start, end = max(gaps, key=lambda g: g[1] - g[0])
+    gap_size = end - start
+    if gap_size < 2:  # ball never actually vanished — no occlusion event
+        return None
+    return start, end, gap_size
+
+
+def _gap_motion_consistent(window_dets, start, end):
+    """Is this ball-detection gap consistent with a real strike -- the ball
+    approaching then (would-be) departing through wherever the racket is --
+    rather than a plain detector dropout (background clutter, motion blur,
+    a low camera angle losing the ball against the court)?
+
+    Measured 2026-09-10/11: the un-gated version (any >=2f gap = contact) is
+    the majority contact-picking method (57% of a 370-clip eval) but only
+    18% accurate within 3 frames, including several 100+ frame misses where
+    it locked onto a gap seconds away from the real contact. Given a PERFECT
+    anchor it's still only 31% accurate -- i.e. not just an anchor-seeding
+    problem, the raw heuristic itself is too permissive.
+
+    Requires real (not Kalman-coasted) ball evidence on both sides of the gap,
+    plus either: a racket detection actually present somewhere inside the gap
+    (it was already in position), or the ball's velocity just before the gap
+    pointing toward the nearest racket detection (heading in to make contact).
+    """
+    frames_sorted = sorted(d['frame'] for d in window_dets)
+    if not frames_sorted:
+        return False
+    states = track_ball_states(window_dets, frames_sorted[0], frames_sorted[-1],
+                               _center_in_original_space)
+    by_frame = {s['frame']: s for s in states}
+
+    pre = [by_frame[f] for f in sorted(by_frame) if f <= start and by_frame[f]['accepted']]
+    post = [by_frame[f] for f in sorted(by_frame) if f >= end and by_frame[f]['accepted']]
+    if len(pre) < 2 or len(post) < 2:
+        return False
+
+    # The racket was already in the gap's frame range -- plausible it made
+    # contact there regardless of the ball's approach direction.
+    if any(d['racket_box'] for d in window_dets if start < d['frame'] < end):
+        return True
+
+    racket_dets = [d for d in window_dets if d['racket_box']]
+    if not racket_dets:
+        return False
+    nearest = min(racket_dets, key=lambda d: min(abs(d['frame'] - start), abs(d['frame'] - end)))
+    rx, ry = _center(nearest['racket_box'])
+    px, py = pre[-1]['pos']
+    vx, vy = pre[-1]['vel']
+    heading_toward_racket = (rx - px) * vx + (ry - py) * vy
+    return heading_toward_racket > 0
+
+
 def _find_gap_contact(window_dets):
     """
     At true contact the ball is fastest-moving and often occluded by the
@@ -160,18 +223,18 @@ def _find_gap_contact(window_dets):
     at impact. If the ball is tracked approaching, vanishes briefly, then
     reappears departing, the midpoint of that gap is a strong contact signal
     — often better than proximity, since the true contact frame may have no
-    ball detection at all.
+    ball detection at all. But a gap alone isn't enough evidence (see
+    _gap_motion_consistent) -- plenty of non-contact detector dropouts are
+    also >=2 frames long.
 
-    Returns (frame_idx, confidence, gap_size) or None if no clean gap found.
+    Returns (frame_idx, confidence, gap_size) or None if no clean, motion-
+    consistent gap is found.
     """
-    ball_frames = sorted(d['frame'] for d in window_dets if d['ball_box'])
-    if len(ball_frames) < 2:
+    raw = _raw_ball_gap(window_dets)
+    if raw is None:
         return None
-
-    gaps = [(ball_frames[i], ball_frames[i + 1]) for i in range(len(ball_frames) - 1)]
-    start, end = max(gaps, key=lambda g: g[1] - g[0])
-    gap_size = end - start
-    if gap_size < 2:  # ball never actually vanished — no occlusion event
+    start, end, gap_size = raw
+    if not _gap_motion_consistent(window_dets, start, end):
         return None
 
     midpoint = round((start + end) / 2)
@@ -225,11 +288,20 @@ def contact_frame_meta(detections, fallback_frame, fps, search_window_sec=0.3):
     wd = _window_dets(detections, fallback_frame, fps, search_window_sec)
     both = [d for d in wd if d['racket_box'] and d['ball_box']]
     gap = _find_gap_contact(wd)
+    raw_gap = _raw_ball_gap(wd)
     return {
         'n_ball_detections_in_window': sum(1 for d in wd if d['ball_box']),
         'n_racket_detections_in_window': sum(1 for d in wd if d['racket_box']),
         'n_both_present': len(both),
         'occlusion_gap_frames': gap[2] if gap else None,
+        # A gap existed but got rejected by the motion-consistency check
+        # (True), was accepted (also True, same value as occlusion_gap_frames
+        # being non-None), or no gap of any kind was found (None) -- lets the
+        # eval CSV show accepted-vs-rejected rates without re-deriving from
+        # raw detections.
+        'gap_motion_consistent': (
+            _gap_motion_consistent(wd, raw_gap[0], raw_gap[1]) if raw_gap else None
+        ),
         'min_ball_racket_dist': (
             round(min(_dist(d['racket_box'], d['ball_box']) for d in both), 2) if both else None
         ),

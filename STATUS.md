@@ -6,7 +6,185 @@ where things stand in under 2 minutes. For the full detailed history, see
 `HANDOVER.md` (dated build log) and `TODO_MANUAL.md` (full backlog, also
 chronological) — this file is a filter on top of those, not a replacement.
 
-**Last updated:** 2026-09-10 (later) — **ideal-swing reference clips DONE +
+## Local-only artifacts pending server transfer
+
+A running manifest, not a log entry — keep this current as items are built
+or transferred, rather than letting the fact scatter across `HANDOVER.md`
+session entries. CD auto-deploys code but never `data/` (gitignored), so
+everything below is live locally and on the pre-transfer, older version on
+the hosted server:
+
+- [ ] Rebuilt `pro_database.json` (v4, stride-1, metric z, serve re-anchored)
+      + `overlay_trajectories.json` — server still on the pre-2026-09-02 DB
+- [ ] Fine-tuned ball detector `best.pt` (2026-09-08 retrain, KEPT)
+- [ ] `onset_classifier.pkl` (audio-onset contact detection)
+- [ ] Net-detection keypoint weights (`10_net_detection`) — needed for the
+      behind-baseline view gate (`net_not_found` fires without it)
+- [ ] `clusterCourts.js` output (`clubs`/`club_courts` rows) — hosted DB has
+      zero clubs
+
+None of these crash when absent — each degrades to a fallback (pose-peak
+contact, generic COCO ball detection, advisory-only view gate) — which is
+exactly why they're easy to forget. See `JACK_TODO.md` Phase 3b.
+
+**Last updated:** 2026-09-11 (later⁴) — **Root-cause pass on recurring
+cross-session problems — process guardrails added, no ML/behavior changes.**
+Jack asked for a read-through of `HANDOVER.md`/`TODO_MANUAL.md`/`JACK_TODO.md`
+to find what kept tripping up different sessions. Five cross-cutting patterns
+found: (1) the same broadcast/bench-to-real-footage generalization gap was
+independently re-discovered 4+ times (camera-angle normalization × 3 attempts,
+shot classifier, contact-frame detection); (2) eval-harness bugs repeatedly
+produced a false read on whether a fix worked (stale results cache, an
+overfit same-set-measured rubric gap, a frozen-checkpoint "regression" that
+wasn't real); (3) uncommitted work has piled up and tangled across sessions
+(the 2026-09-10 three-way split); (4) `data/` never syncs to the server
+automatically and the gap degrades silently instead of erroring; (5) score
+calibration (roadmap 1b) has been re-flagged as the top pre-launch risk in
+4-5 separate session summaries without ever shipping past bench-only.
+Shipped: `CLAUDE.md` gained a **"Known Dead Ends"** register (7 documented
+failed approaches + why, so a future session checks before re-attempting),
+an **"Eval hygiene"** rule (explicit cache invalidation, CV-not-same-set
+numbers), and a **"Commit discipline"** convention (session-scoped branches
+for multi-session bench work instead of a shared dirty tree); `HANDOVER.md`'s
+"Read This First" now points to these; this file gained the "Local-only
+artifacts pending server transfer" manifest above; a small shared helper
+`scripts/00_utils/eval_stamp.py` (git-SHA + model-fingerprint stamping,
+mixed-version detection) extracts the pattern `evaluate_amateur_dataset.py`
+hand-rolled after the 64.5%→54.4% false-regression incident, covered by
+`test_eval_stamp_pytest.py` (8/8 green); `JACK_TODO.md` got an explicit
+**1b-decision** recommendation (stop axis-hunting, ship B2 as PROVISIONAL
+once all three shot types clear a minimal CV bar, refine against real usage
+instead of more bench iteration). **Docs-only + one new pure-Python utility
+— no deploy, no regression risk, everything still uncommitted.**
+
+**Prior — 2026-09-11 (later³):** **Shot classifier: amateur relabel
+review done (backhand 10→26 examples), which exposed a real eval-cache bug
+and a much worse honest amateur-accuracy number, then a cheap fix recovered
+a chunk of it.** The amateur backhand-relabel pass finished (248/248
+reviewed). Re-running the eval showed no change at first — traced to
+`evaluate_shot_classifiers.py` silently skipping any clip id already scored
+in its cached results file, so the relabel's effect was invisible until the
+stale amateur rows were cleared by hand. Honest number with the full
+26-backhand set: **ensemble accuracy 56.3%** (was a stale, inflated 68.1%
+measured on only 10 easy backhand clips), backhand recall a real **31%**
+(not 80%). The `ml_phone` model's backhand recall specifically crashed
+100%→19% on the new clips — confirms its amateur self-reported numbers were
+memorization (train==test leakage), not real generalization, exactly as an
+existing code comment warned. Separately, pulled raw per-clip debug output
+for misclassified serves and found the sustained-overhead serve signal was
+genuinely present but arriving too late in the analysis window to cross the
+detection threshold — widened `SERVE_WINDOW_POST_SEC` 0.5s→0.8s
+(`extract_training_features.py`), which **recovered serve recall 60%→78%
+and geom accuracy 58.0%→66.7% on amateur** (pro also improved: geom
+67.1%→73.8%, serve recall 80%→84%), with no precision cost. One-line
+constant change, **uncommitted**. Forehand/backhand confusion itself barely
+moved — likely a contact-frame-timing issue on specific clips, not a window
+problem; queued as the next experiment (correlate remaining errors against
+contact-frame source: audio vs pose-peak vs manual) rather than retuning
+geometry thresholds blind. Full detail: `HANDOVER.md` "Session 2026-09-11
+(later³)".
+
+**Prior — 2026-09-11 (later²):** **Metric 3D depth: built + kept, but
+depth as a SCORING signal is dead (negative result), confirmed on real
+footage.** Jack asked to "make more of the database 3D" (every trajectory, not
+just the ~48% that got fully yaw-rotated). Built it: `extract_trajectory_from_index`
+decouples the z source from x/y — x/y unchanged, z always taken from MediaPipe
+`world_landmarks` (soft-yaw-rotated, or unrotated-but-metric), a new `soft_yaw`
+(= `usable_yaw` minus the deadband check). Schema `traj_version` 4; pro DB
+re-sliced, all 648 entries v4, DB-wide z abs-median now 0.45 (was ~1.5 on the
+unrotated half) — matches x's 0.51. `phase_breakdown.Z_ROTATION_BLEND → 0`
+(the one live-scoring change; reverts `body_rotation` to its months-stable
+angle-only form, since its `Z_TO_DEG_SCALE` constant was fit to the old noisy
+image-z). Commits `be1e1c4`/`4d19e2b`, local, **not pushed**. **But**: the
+depth rubric axes this was meant to unlock (`contact_depth_ahead` etc., bench
+separation up to +30) were then tested against Jack's own 6 known-angle fence
+clips and **failed** — the same axis ranged [-0.19, +4.27] for the identical
+self-fed forehand at the identical 0° camera position. Pose noise, not
+technique. Same broadcast-vs-phone gap as the shot classifier (86%/68%).
+**Decision: 3D depth as a live-score signal is done — a negative result, not
+a shipped feature.** Written to memory
+(`project_metric_z_v4`/`project_viewpoint_normalization_dead`) so it isn't
+re-attempted; roadmap 1b's real foundation stays the 2D axes (`tempo_peak_frac`
++62, `racket_body_range` +51, `backswing_depth` +37…). One thread stayed open:
+Jack's "calibrate once per session" reframe (camera→net angle is a session
+constant — read it from one deliberate square-and-still hold instead of a
+per-clip lead-in). Built the gate (`calibration_hold_test.py`,
+`12cab96`/`13771e7`) and ran it against the existing (self-fed, NOT
+deliberately-square) calibration footage as a lenient proxy: **RED** —
+within-hold facing estimate still bounces ±30° even while standing still
+(depth noise, not squareness), head-on clip reads −57° median. Genuinely
+untested on a *clean* deliberate hold though (the self-fed footage confounds
+"not square" with "noisy even when square") — **needs Jack to film ~6 clips**
+per the script's docstring before the calibrate-once idea can be closed out
+either way. Full detail: `HANDOVER.md` "Session 2026-09-09/10/11 — 3D depth";
+plan `~/.claude/plans/dreamy-exploring-eich.md`.
+
+**Prior — 2026-09-11 (later):** **No-audio visual contact-frame: real
+baseline measured for the first time, two fixes shipped (24%→38%≤3f on pro
+broadcast), first-ever REAL amateur-footage numbers (25%≤3f — the honest
+target, not pro's flattering 38%).** Jack: "verify the audio sync, plan ways
+to improve it, even redesign or hand-label." Scope: the NO-AUDIO visual
+fallback only (audio onset already works well, ~1f/89%≤3f). Committed the
+long-stuck Roadmap 1c (`2791e7e`/`f28f3b5`, was blocked on a measured-neutral
+serve gate — dropped as a blocker) plus a stride-1 eval-harness rewrite
+(the old harness was silently running at the pre-rebuild stride-3, quantising
+every error number). **First full-scale (370-clip) baseline: 12.9f median,
+24%≤3f** — `ball_occlusion_gap` (any ≥2f ball-gap = contact) fires on 57% of
+clips but is only 18%≤3f, with several ±100f+ blowups; a perfect-anchor
+ceiling run showed it's a genuinely unreliable *method* (31%≤3f even with a
+perfect anchor), not just an anchor problem — while `ball_racket_proximity`
+IS excellent at ceiling (77%≤3f). Shipped both fixes gap-method first:
+`_find_gap_contact` now requires the ball's tracked motion to actually be
+consistent with a real strike (not just any 2-frame detection gap), and the
+groundstroke anchor now recentres toward peak wrist *deceleration* (hand
+brakes at contact) instead of peak speed (the follow-through). **Result:
+12.9f/24%≤3f → 7.7f/38%≤3f** — the two fixes compound (gap method usage
+dropped 57%→25% as it correctly stopped trusting spurious gaps; the freed
+clips landed on the now-more-accurate proximity method). Full repo `pytest`
+376/376 green. Then built real amateur validation with **zero manual
+marking**: Jack's own YouTube amateur-match footage has audio even though the
+cut clips don't (same `cv2.VideoWriter`-drops-audio issue as everywhere
+else) — ran the SAME trained onset classifier against it (caught + fixed a
+real bug: a whole-match audio window breaks the onset detector's
+loudest-moment normalisation) for **85 confident, trustworthy labels**. Real
+result: **9.65f/25%≤3f on amateur footage** vs pro's 7.7f/38% on the same
+pipeline — the "no evidence at all" bucket nearly triples (10%→27%) on real
+footage. **25%, not 38%, is the honest number the next piece (a supervised
+per-frame contact classifier, the same reframe that made audio-onset work) needs
+to beat.** Nothing beyond the 1c commits is committed yet — 2a/2b code + the
+new amateur-labelling scripts await a commit-timing call. Full detail:
+`HANDOVER.md` "Session 2026-09-10/11"; plan file
+`~/.claude/plans/swirling-popping-flame.md`.
+
+**Prior — 2026-09-11:** **Roadmap 1b: rubric de-overfit + two new Dev
+Page review tools, still bench-only.** Added `redesign_similarity.py curate
+--folds 5` (real 5-fold CV) and found the old +20.0 combined rubric gap was
+overfit — honest numbers: forehand +1.9 (no real signal), backhand +28.7
+(n=5, not trustworthy), serve +26.1 (real). Hunted new forehand axes at
+Jack's request: `hip_shoulder_lead_contact` (shoulder-vs-hip angle AT contact,
+sep +45, the session's strongest single axis) got **forehand to +12.2 CV**,
+crossing target — found and fixed a real angle-wrap bug in it along the way.
+Built **Amateur Clip Review** (Dev Page tool, re-review the 248-clip amateur
+eval set + a second 81-clip never-reviewed batch) — Jack finished the whole
+329-clip queue, **backhand 5 → 26+6**, unblocking the CV re-run. Hit a real
+"why didn't my progress save" gap (nothing was lost, the tool just had no
+memory of what it had shown you) — fixed with server-side reviewed-filtering,
+an audit-log JSONL, a "✓ Done" button + **D** keyboard shortcut. Jack then
+hand-picked 4 clips he judged clearly bad; they scored 40-52 (near/above the
+amateur median) — pulled actual video frames and confirmed by eye: all 4 have
+a rushed/minimal backswing our contact-*snapshot* axes can't see. Added
+`swing_amplitude` (whole-window motion, not a snapshot) — helps, not yet
+CV-stable. Jack's follow-up idea (tighten the pro reference pool itself) led
+to **Pro Quality Review** (2nd new Dev Page tool, ⭐Gold/OK/✕Exclude tagging,
+G/O/X shortcuts) — built with its own isolated log after testing showed
+folding it into the existing verdict log would have let a later quality tag
+silently corrupt ~5 other scripts' "is this entry excluded" reads. **0/648
+pro clips tagged yet.** Backend 631/631, pytest 700/700, all green throughout.
+Still **entirely uncommitted, entirely bench-only** — B2 (the actual
+production scorer) hasn't started. Full detail: `HANDOVER.md` "Session
+2026-09-11"; plan file `~/.claude/plans/reactive-enchanting-metcalfe.md`.
+
+**Prior — 2026-09-10 (later):** **ideal-swing reference clips DONE +
 pre-release roadmap consolidated.** The display-only FH/BH/serve compare clips
 are produced (Luma Dream Machine "Modify Video" — real swing footage re-rendered
 with a new character, keeping the motion; Jack ran Luma, Claude removed Luma's

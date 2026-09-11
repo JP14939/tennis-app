@@ -513,6 +513,17 @@ def axis_values(traj, racket_frames=None, metric_z=False):
                    for i in range(1, len(pts)))
         net = math.hypot(pts[-1]['x'] - pts[0]['x'], pts[-1]['y'] - pts[0]['y'])
         ax['wrist_path_ratio'] = path / net if net > 0.05 else None
+        # total distance the wrist actually travelled over the whole window,
+        # in shoulder-width units -- distinct from wrist_path_ratio (which
+        # only measures looseness RELATIVE to net displacement). Targets a
+        # failure mode contact-instant axes miss entirely: a rushed/blocked
+        # near-non-swing can still land the racket in a plausible position
+        # at the moment of contact (so contact_wrist_height/elbow_angle/etc.
+        # score fine) while barely swinging at all through the rest of the
+        # window. Found 2026-09-11 by eye on 4 clips Jack flagged as clearly
+        # bad but scoring near/above the amateur median -- all 4 showed
+        # almost no backswing on inspection.
+        ax['swing_amplitude'] = path
     # tempo: fraction of the window spent in backswing (wrist-speed peak position)
     sp = []
     for i in range(1, len(pts)):
@@ -520,6 +531,83 @@ def axis_values(traj, racket_frames=None, metric_z=False):
     if sp:
         peak_i = max(range(len(sp)), key=lambda i: sp[i])
         ax['tempo_peak_frac'] = peak_i / len(sp)
+        # wrist-speed jerk: mean |Δspeed| / mean speed -- a smooth acceleration
+        # ramp (pro) has low jerk, a hitchy amateur swing high.
+        ms = sum(sp) / len(sp)
+        if ms > 1e-6 and len(sp) >= 4:
+            ax['wrist_speed_jerk'] = (sum(abs(sp[i] - sp[i - 1]) for i in range(1, len(sp)))
+                                      / (len(sp) - 1)) / ms
+
+    # ── candidate 2D forehand axes (roadmap 1b B1.4-retry) ───────────────────
+    # contact wrist ahead of the LEAD hip (RH forehand: left hip is the lead)
+    lh = c.get('left_hip')
+    if rw and lh:
+        ax['contact_forward_hip'] = rw['x'] - lh['x']
+    # low-to-high: how far below the contact-height the wrist drops in the backswing
+    if rw:
+        bwv = [p['landmarks']['right_wrist']['y'] for p in _win(traj, -0.5, -0.1)
+               if p['landmarks'].get('right_wrist')]
+        if bwv:
+            ax['backswing_wrist_drop'] = max(bwv) - rw['y']   # +ve = wrist starts low
+    # elbow-extension gain from the top of the backswing through contact ("whip")
+    if ea is not None:
+        bea = [a for p in _win(traj, -0.45, -0.05)
+               if (a := _angle(p['landmarks'], 'right_shoulder', 'right_elbow', 'right_wrist')) is not None]
+        if bea:
+            ax['elbow_ext_gain'] = ea - min(bea)
+    # follow-through cross-body travel of the wrist past the contact point
+    if rw:
+        ftx = [p['landmarks']['right_wrist']['x'] for p in _win(traj, 0.25, 1.0)
+               if p['landmarks'].get('right_wrist')]
+        if ftx:
+            ax['followthrough_crossbody'] = rw['x'] - min(ftx)   # RH finishes to -x
+    # 2D swing-arc tilt: principal-axis angle of the wrist (x,y) arc through contact
+    aw = [(p['landmarks']['right_wrist']['x'], p['landmarks']['right_wrist']['y'])
+          for p in _win(traj, -0.30, 0.30) if p['landmarks'].get('right_wrist')]
+    if len(aw) >= 6:
+        try:
+            import numpy as np
+            m = np.asarray(aw) - np.mean(aw, axis=0)
+            _w, v = np.linalg.eigh(m.T @ m)
+            pa_ = v[:, -1]
+            ax['swing_arc_tilt'] = abs(math.degrees(math.atan2(pa_[1], pa_[0])))
+        except Exception:
+            pass
+    # racket lag at contact: handle position behind body centre, in shoulder
+    # widths, at the racket frame nearest contact (self-contained racket coords)
+    if racket_frames:
+        rc = racket_frames[len(racket_frames) // 2]
+        h, hm, sw = rc.get('racket_handle'), rc.get('hip_mid'), rc.get('shoulder_width')
+        if h and hm and sw and sw > 1e-6:
+            ax['racket_lag_contact'] = (h[0] - hm[0]) / sw
+
+    # ── B1.4-retry-2 candidates (2026-09-11, more forehand pose axes) ────────
+    re_ = c.get('right_elbow')
+    if re_ and sh:
+        ax['contact_elbow_height'] = re_['y'] - sh[1]
+    if rw and sh:
+        bwh = [p['landmarks']['right_wrist']['y'] for p in _win(traj, -0.5, -0.15)
+               if p['landmarks'].get('right_wrist')]
+        if bwh:
+            ax['backswing_takeback_height'] = rw['y'] - min(bwh)   # +ve = takeback goes higher than contact
+    if sp:
+        ax['peak_wrist_speed'] = max(sp)
+    if rw and sh:
+        ax['contact_arm_extension'] = math.hypot(rw['x'] - sh[0], rw['y'] - sh[1])
+    if c.get('left_shoulder') and c.get('right_shoulder') and c.get('left_hip') and c.get('right_hip'):
+        sh_ang = math.atan2(c['right_shoulder']['y'] - c['left_shoulder']['y'],
+                             c['right_shoulder']['x'] - c['left_shoulder']['x'])
+        hip_ang = math.atan2(c['right_hip']['y'] - c['left_hip']['y'],
+                              c['right_hip']['x'] - c['left_hip']['x'])
+        # atan2-of-atan2 difference lands in (-2pi, 2pi), not (-pi, pi] --
+        # wrap to (-180, 180] or a near-antiparallel shoulder/hip line (common,
+        # not an error) can read as +/-300 deg instead of the equivalent
+        # +/-60 deg. Found 2026-09-11 scoring Jack's own picked calibration
+        # clips: 0genZFgM61E_105069 hit -329.6 deg here, driving this axis's
+        # (highest-weighted, forehand) pro-likeness to 0 for a swing that
+        # wasn't actually that extreme.
+        diff = math.degrees(sh_ang - hip_ang)
+        ax['hip_shoulder_lead_contact'] = ((diff + 180) % 360) - 180
 
     # ── depth-aware axes (metric-z only; see helpers above) ──────────────────
     if metric_z:
@@ -677,17 +765,41 @@ def do_axes(args):
 # backhand/serve, rotation_range on groundstrokes.
 # PROVISIONAL -- axes picked by sep on the same eval set (overfit risk); the
 # amateur buckets are small (backhand n=5). Treat the rubric gap as indicative.
+#
+# Re-curated 2026-09-10 (roadmap 1b, plan reactive-enchanting-metcalfe):
+# the 3D metric-z depth axes -- contact_depth_ahead, coil_depth_xfactor,
+# wrist_elbow_depth_lag -- are PULLED. They benched well on broadcast footage
+# but are a negative result on real behind-baseline fence clips
+# (contact_depth_ahead swung [-0.19, +4.27] for the SAME forehand at 0 deg --
+# pose noise, no signal). The `metric_z` block in axis_values() stays as a
+# bench-only reference column; it never enters the production rubric. The
+# foundation is the strong 2D axes below.
+#
+# 2026-09-11 B1.4-retry-2: added contact_elbow_height, backswing_takeback_height,
+# peak_wrist_speed, contact_arm_extension, hip_shoulder_lead_contact. Winner:
+# hip_shoulder_lead_contact (shoulder-line vs hip-line angle AT contact --
+# instantaneous uncoil, not the backswing-to-contact range that tested
+# weak/inverted) sep +45 forehand, strong on all 3 shots. CV gap: forehand
+# +8.7 -> +12.2 (4/5 folds +14..+20, one weak fold -4.4), backhand +21.2
+# (n=5, still pending B1.5), serve unchanged +21.1 (doesn't need the new
+# axes). CURATED_AXES below is the current CV-selected set for all 3 shots.
+#
+# 2026-09-10 B1.4 / B1.4-retry: `curate --folds 5` (5-fold CV, axis selection
+# on 4 folds, gap measured on the 5th). The pre-CV +20 combined gap was
+# overfit; forehand became consistent once `backswing_wrist_drop` (low-to-high
+# backswing shape, sep +38) was added.
 CURATED_AXES = {
-    'forehand': {'contact_depth_ahead': 3.0, 'follow_through_height': 3.0,
-                 'racket_body_dist': 2.1, 'wrist_elbow_depth_lag': 2.1,
-                 'racket_path_ratio': 1.8, 'contact_wrist_height': 1.2,
-                 'contact_wrist_lateral': 1.1},
-    'backhand': {'tempo_peak_frac': 6.2, 'racket_body_range': 5.1, 'backswing_depth': 3.7,
-                 'coil_depth_xfactor': 2.6, 'contact_wrist_lateral': 2.5,
-                 'contact_elbow_angle': 2.2, 'contact_depth_ahead': 1.7,
-                 'racket_body_dist': 1.6, 'contact_wrist_height': 1.4},
-    'serve':    {'contact_elbow_angle': 5.1, 'racket_body_range': 2.2,
-                 'contact_depth_ahead': 1.8, 'wrist_path_ratio': 1.8},
+    'forehand': {'hip_shoulder_lead_contact': 4.8, 'backswing_wrist_drop': 3.9,
+                 'follow_through_height': 2.9, 'racket_body_dist': 2.3,
+                 'racket_path_ratio': 1.9, 'contact_wrist_lateral': 1.4,
+                 'contact_elbow_height': 1.3},
+    'backhand': {'tempo_peak_frac': 5.9, 'racket_body_range': 5.1, 'backswing_depth': 3.6,
+                 'hip_shoulder_lead_contact': 2.8, 'contact_wrist_lateral': 2.7,
+                 'contact_forward_hip': 2.5, 'followthrough_crossbody': 2.5,
+                 'contact_elbow_angle': 1.9, 'contact_wrist_height': 1.7,
+                 'backswing_wrist_drop': 1.2},
+    'serve':    {'contact_elbow_angle': 5.0, 'racket_body_range': 2.1,
+                 'wrist_path_ratio': 1.9},
 }
 
 
@@ -740,6 +852,133 @@ def do_rubric(args):
               f'-> gap {_pct(ho,0.5)-_pct(am,0.5):+.1f} pts (DTW v0 gap was ~+3 on a 0-100 scale)')
 
 
+# ── curate phase : cross-validated axis selection (de-overfit the rubric) ─────
+#
+# The `rubric` gap is measured on the SAME held_out+amateur clips CURATED_AXES
+# was hand-picked from -- an overfit risk flagged since 2026-09-08. This does
+# k-fold CV: rank/select axes on k-1 folds, measure the rubric gap on the held
+# fold, repeat. An axis that only helps on the fold it was chosen from drops
+# out. The real overfit guard is still the strict 0c gate on Jack's own
+# behind-baseline footage (`gate` subcommand) -- this just stops us shipping
+# weights that are noise.
+
+# 2D-only candidate pool (depth axes pulled -- see CURATED_AXES note above).
+CURATE_CANDIDATE_AXES = [
+    'tempo_peak_frac', 'racket_body_range', 'backswing_depth',
+    'contact_wrist_height', 'contact_wrist_lateral', 'contact_elbow_angle',
+    'follow_through_height', 'wrist_path_ratio', 'racket_body_dist',
+    'racket_path_ratio', 'rotation_range',
+    # B1.4-retry candidates (2026-09-10)
+    'wrist_speed_jerk', 'contact_forward_hip', 'backswing_wrist_drop',
+    'elbow_ext_gain', 'followthrough_crossbody', 'swing_arc_tilt',
+    'racket_lag_contact',
+    # B1.4-retry-2 candidates (2026-09-11)
+    'contact_elbow_height', 'backswing_takeback_height', 'peak_wrist_speed',
+    'contact_arm_extension', 'hip_shoulder_lead_contact',
+    # B1.4-retry-3 candidate (2026-09-11): does a real swing even happen?
+    'swing_amplitude',
+]
+
+
+def _assign_folds(recs, k):
+    """Deterministic stratified k-fold: within each (bucket, shot_type) group,
+    sort by cache key and round-robin into folds. Returns {key: fold_idx}."""
+    groups = defaultdict(list)
+    for r in recs:
+        groups[(r['bucket'], r['shot_type'])].append(r)
+    out = {}
+    for g in groups.values():
+        for i, r in enumerate(sorted(g, key=lambda x: x['key'])):
+            out[r['key']] = i % k
+    return out
+
+
+def _rec_axis_prolikeness(r, pro_dists):
+    av = axis_values(r['user_traj'], r.get('racket_frames'), metric_z=_rec_metric_z(r))
+    return {k: pl for k in av
+            if (pl := _axis_prolikeness(av[k], pro_dists, r.get('view'), k)) is not None}
+
+
+def do_curate(args):
+    recs = [r for r in _load_cache() if r['bucket'] in ('held_out', 'amateur')]
+    with open(DB_PATH) as f:
+        entries = json.load(f)['entries']
+    reviewed = clip_review_log.get_label_reviewed_ids()
+    folds = _assign_folds(recs, args.folds)
+    all_recs = _load_cache()
+
+    print(f'CV axis curation: {args.folds}-fold, sep>={args.sep_min}, '
+          f'keep axes selected in >={args.min_folds}/{args.folds} folds\n')
+
+    final = {}
+    for shot in ('forehand', 'backhand', 'serve'):
+        pro_dists = _pro_dists_by_view(entries, shot, reviewed, all_recs)
+        avail = set(pro_dists['_pooled'])
+        cands = [a for a in CURATE_CANDIDATE_AXES if a in avail]
+        srecs = [r for r in recs if r['shot_type'] == shot]
+        pl_cache = {r['key']: _rec_axis_prolikeness(r, pro_dists) for r in srecs}
+
+        sel_count = defaultdict(int)
+        sel_weight = defaultdict(list)
+        fold_gaps = []
+        n_ho = sum(1 for r in srecs if r['bucket'] == 'held_out')
+        n_am = sum(1 for r in srecs if r['bucket'] == 'amateur')
+        for f in range(args.folds):
+            train = [r for r in srecs if folds[r['key']] != f]
+            test = [r for r in srecs if folds[r['key']] == f]
+            # rank axes on train
+            weights = {}
+            for ax in cands:
+                ho = sorted(pl_cache[r['key']][ax] for r in train
+                            if r['bucket'] == 'held_out' and ax in pl_cache[r['key']])
+                am = sorted(pl_cache[r['key']][ax] for r in train
+                            if r['bucket'] == 'amateur' and ax in pl_cache[r['key']])
+                if len(ho) < 3 or len(am) < 3:
+                    continue
+                sep = _pct(ho, 0.5) - _pct(am, 0.5)
+                if sep >= args.sep_min:
+                    weights[ax] = round(sep / 10, 1) or 0.1
+            for ax, w in weights.items():
+                sel_count[ax] += 1
+                sel_weight[ax].append(w)
+            # score rubric on test fold
+            def rubric(rec):
+                num = den = 0.0
+                for ax, w in weights.items():
+                    if ax in pl_cache[rec['key']]:
+                        num += w * pl_cache[rec['key']][ax]
+                        den += w
+                return num / den if den else None
+            ho_s = sorted(s for r in test if r['bucket'] == 'held_out'
+                          and (s := rubric(r)) is not None)
+            am_s = sorted(s for r in test if r['bucket'] == 'amateur'
+                          and (s := rubric(r)) is not None)
+            if ho_s and am_s:
+                fold_gaps.append(_pct(ho_s, 0.5) - _pct(am_s, 0.5))
+
+        keep = {ax: round(sum(sel_weight[ax]) / len(sel_weight[ax]), 1)
+                for ax in cands if sel_count[ax] >= args.min_folds}
+        final[shot] = keep
+        gmean = sum(fold_gaps) / len(fold_gaps) if fold_gaps else None
+        print(f'=== {shot} (held_out n={n_ho}, amateur n={n_am}) ===')
+        print(f'  per-axis fold-selection count / mean weight:')
+        for ax in cands:
+            if sel_count[ax]:
+                mw = sum(sel_weight[ax]) / len(sel_weight[ax])
+                mark = 'KEEP' if sel_count[ax] >= args.min_folds else 'drop'
+                print(f'    {ax:24s} {sel_count[ax]}/{args.folds}  w~{mw:.1f}  [{mark}]')
+        if gmean is not None:
+            print(f'  CV rubric gap: mean {gmean:+.1f}  '
+                  f'(folds: {", ".join(f"{g:+.1f}" for g in fold_gaps)})')
+        print(f'  -> CURATED[{shot!r}] = {keep}\n')
+
+    print('# paste into CURATED_AXES (and technique_axes.CURATED_AXES for B2):')
+    print('CURATED_AXES = {')
+    for shot, w in final.items():
+        print(f'    {shot!r}: {w},')
+    print('}')
+
+
 # ── decomp phase ─────────────────────────────────────────────────────────────
 
 def do_decomp(args):
@@ -779,6 +1018,11 @@ if __name__ == '__main__':
     sub.add_parser('decomp')
     sub.add_parser('axes')
     sub.add_parser('rubric')
+    cu = sub.add_parser('curate', help='cross-validated axis selection')
+    cu.add_argument('--folds', type=int, default=5)
+    cu.add_argument('--sep-min', type=float, default=10.0)
+    cu.add_argument('--min-folds', type=int, default=4,
+                    help='keep an axis only if selected in >= this many folds')
     args = ap.parse_args()
     {'cache': do_cache, 'eval': do_eval, 'decomp': do_decomp,
-     'axes': do_axes, 'rubric': do_rubric}[args.cmd](args)
+     'axes': do_axes, 'rubric': do_rubric, 'curate': do_curate}[args.cmd](args)

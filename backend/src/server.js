@@ -98,6 +98,10 @@ app.use('/ball-label-frames', express.static(path.join(DATA_DIR, '10b_ball_detec
 // HTTP Range requests out of the box, so seeking to a specific timestamp
 // doesn't require downloading the whole file first.
 app.use('/source-footage', express.static(path.join(DATA_DIR, '01_source_videos')));
+// Older raw-footage-ingest candidate swings (pre-dates the amateur eval
+// set's manifest.json/amateur_swing_labels.json pipeline) -- serves the
+// Dev Page's Amateur Clip Review "review-only" stream for IMG_5822/5823.
+app.use('/raw-footage-clips', express.static(path.join(DATA_DIR, 'runtime', 'raw_footage_ingest')));
 
 // Standalone reset-password.html (self-serve password reset, 2026-08-20)
 // -- served from the backend directly rather than through the Expo app,

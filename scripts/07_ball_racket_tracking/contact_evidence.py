@@ -62,7 +62,7 @@ def wrist_kinematics(frames, anchor_idx, fps):
     jerk = [accel[i + 1] - accel[i] for i in range(len(accel) - 1)]
     # only look for the braking event within ~0.35s of the speed peak -- past
     # that it's follow-through noise, not the impact.
-    win = max(2, int(0.35 * fps / 3))
+    win = max(2, int(0.35 * fps))
     lo, hi = max(0, a - win), min(len(accel), a + win + 1)
     decel_i = min(range(lo, hi), key=lambda i: accel[i]) if lo < hi else a
     peak = max(sm[max(0, a - win):a + win + 1] or [1e-9]) or 1e-9
@@ -71,8 +71,8 @@ def wrist_kinematics(frames, anchor_idx, fps):
         'wrist_speed_at_anchor': round(sm[a], 5) if a < len(sm) else None,
         'wrist_accel_at_anchor': round(accel[a], 5) if a < len(accel) else None,
         'wrist_jerk_at_anchor': round(jerk[a], 5) if a < len(jerk) else None,
-        'wrist_decel_offset_f': (decel_i - a) * 3,          # *3: pose sampled every 3
-        'wrist_halfspeed_offset_f': ((drop_i - a) * 3) if drop_i is not None else None,
+        'wrist_decel_offset_f': decel_i - a,
+        'wrist_halfspeed_offset_f': (drop_i - a) if drop_i is not None else None,
     }
 
 

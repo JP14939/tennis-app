@@ -62,24 +62,57 @@ feature must be reliable at launch, so the ML work below is now in scope for v1
 - [~] **1b** Similarity-score calibration — reframe as a rule-based **technique
       score** on biomechanical axes vs the pro DB's per-shot/per-view distribution
       (the DTW metric can't separate a pro from a decent amateur; ~10 variants
-      failed, 2026-09-08). **Bench on the v4 DB (2026-09-10):** rubric combined
-      pro-vs-amateur gap **+20.0** (mechanically re-curated `CURATED_AXES`,
-      **PROVISIONAL**). **3D depth axes = negative result on real footage** —
-      strong on broadcast (`contact_depth_ahead` +30/+17/+18) but pose-noise on
-      Jack's fence clips; **pull the depth axes from `CURATED_AXES`**. Real
-      foundation = the strong 2D axes (`tempo_peak_frac` +62, `racket_body_range`
-      +51, `backswing_depth` +37, contact wrist pos, follow-through). The
-      `racket_body_*` enrich ran (623/648). **Resume:
-      `scripts/17_amateur_eval/RESUME_swing_score_redesign.md`.**
-- [~] **1c** Visual contact-frame model for clips with no audio — **code DONE
-      2026-09-08, not committed, blocked on the accuracy gate (CPU run paused).**
-      `find_contact_frame` now wired into `compare()`'s no-audio path (Phase C
-      offset model dropped); serve apex plateau recentred in `serve_anchor.py`;
-      `contact_source` field + `onset_classifier` in `/dev/ml-status` for
-      deployment confirmation. **To resume:** follow
-      `scripts/07_ball_racket_tracking/RESUME_1c_contact_eval.md` (serve eval,
-      ~70-90 min CPU, then npm test + pytest + commit). Details: HANDOVER
-      "Session 2026-09-08 (later²)".
+      failed, 2026-09-08). **2026-09-11: full plan + de-overfit + two new Dev
+      Page tools, still bench-only** — see `~/.claude/plans/reactive-enchanting-metcalfe.md`
+      and `HANDOVER.md` "Session 2026-09-11" for the complete state. The old
+      +20.0 combined gap was **overfit** (measured on the same clips axes were
+      picked from) — real 5-fold CV (`redesign_similarity.py curate --folds 5`)
+      gives **forehand +12.2** (after 2 rounds of new axes, incl. fixing a real
+      angle-wrap bug), **serve +26.1** (ships as-is), **backhand pending a
+      `curate` re-run** now that the amateur label pool is 5→26+6 (see 1b-data
+      below). 3D depth axes (`contact_depth_ahead` etc.) are now actually
+      pulled from `CURATED_AXES`, not just flagged provisional. New candidate
+      axis `swing_amplitude` (whole-window motion, catches a rushed/minimal
+      backswing that contact-snapshot axes miss) found real but not yet
+      CV-stable. **B2 (the actual production scorer/wiring) has not started
+      — this is all still bench + data-quality work.**
+- [ ] **1b-decision** [J+C] This has been re-flagged as the top pre-launch
+      risk in 4-5 separate session summaries without shipping past
+      bench-only. Recommendation: stop hunting further axes indefinitely.
+      Once the just-finished amateur backhand relabel produces a backhand CV
+      number from `redesign_similarity.py curate --folds 5`, make one
+      go/no-go call — if all three shot types clear a minimal CV-separation
+      bar, wire the rubric into `compare_swing.py` as B2 behind an explicit
+      "PROVISIONAL" tag in the API response and ship it, refining against
+      real usage once there's a beta instead of continuing to iterate on
+      bench data alone.
+- [ ] **1b-data** [J] Two new free Dev Page tools to work through, no rush,
+      stop per shot type once "enough":
+      - **Amateur Clip Review** — DONE, Jack finished the full 329-clip queue
+        2026-09-11 (backhand 5→26 in the amateur eval set +6 more in a second
+        raw-footage batch). Re-run `curate` with the bigger sample is next
+        (Claude's step, not Jack's).
+      - **Pro Quality Review** (new) — tag pro-database clips ⭐Gold/OK/✕Exclude
+        on TECHNIQUE quality (not label accuracy) — builds a tightened
+        reference pool for the same `exp(-|Δ|/IQR)` kernel every axis uses.
+        **0/648 tagged as of 2026-09-11.** Target ≥15 gold per shot/view
+        bucket to start being useful; more is better, no need to do all 648.
+        G/O/X keyboard shortcuts on web.
+- [~] **1c** Visual contact-frame model for clips with no audio — **base
+      committed 2026-09-11** (`2791e7e`/`f28f3b5` — serve apex plateau,
+      `onset_classifier` in `/dev/ml-status`, stride-1 eval harness). **Two
+      accuracy fixes on top, measured, NOT yet committed:** ball-motion-
+      continuity gate on the "ball vanished = contact" heuristic +
+      deceleration-recentred groundstroke anchor → pro-broadcast **24%→38%≤3f**.
+      **First real amateur-footage numbers (85 audio-pseudo-labelled clips,
+      zero manual marking): 25%≤3f** — the honest target, pro's 38% overstates
+      it. Still short of the ≥55%≤3f goal — **next: the supervised per-frame
+      classifier** (same candidates→features→score→argmax reframe that made
+      audio-onset work; Phase C's old offset-regression framing stays dead).
+      [J] **commit-timing call** on the uncommitted 2a/2b + new
+      `label_amateur_contact_from_audio.py`/`amateur_contact_eval.py`/
+      `mark_amateur_contact_time.py`. Details: HANDOVER "Session 2026-09-10/11";
+      plan `~/.claude/plans/swirling-popping-flame.md`.
 - [x] ~~**1d** z-depth re-enable attempt~~ — **done, negative, 2026-09-10.**
       Metric world-z is now on every trajectory (v4), and the scale is right
       (median 0.45), but it carries no technique signal at fence distance

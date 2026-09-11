@@ -29,13 +29,23 @@ Usage:
   python evaluate_amateur_dataset.py --limit 20       # smoke test
   python evaluate_amateur_dataset.py --report-only    # just re-print the report
   python evaluate_amateur_dataset.py --no-backfill    # process without touching the training logs
+  python evaluate_amateur_dataset.py --fresh          # clear + recompute every row (comparable baseline)
+
+Every row is stamped with git_sha + ball_model + harness version. results.jsonl
+is append-only and gitignored, so a plain re-run only fills in NEW keys -- mixing
+code/model versions in one file. Use --fresh for any before/after comparison.
 """
 import argparse
 import json
 import math
 import os
+import subprocess
 import sys
+import time
 from collections import Counter, defaultdict
+
+# Bump when the harness logic changes in a way that invalidates old rows.
+HARNESS_VERSION = 1
 
 SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(SCRIPTS_DIR, '00_utils'))
@@ -119,8 +129,37 @@ def load_checkpoint():
     return done
 
 
+_PROVENANCE = None
+
+
+def _provenance():
+    """Per-row stamp so results.jsonl is self-describing -- the checkpoint is
+    append-only and gitignored, so without this a re-run silently mixes rows
+    from different code + model versions (which is exactly what made the
+    2026-09 '64.5% -> 54.4%' comparison meaningless)."""
+    global _PROVENANCE
+    if _PROVENANCE is None:
+        try:
+            sha = subprocess.check_output(
+                ['git', 'rev-parse', '--short', 'HEAD'], cwd=SCRIPTS_DIR,
+                text=True, stderr=subprocess.DEVNULL).strip()
+        except Exception:
+            sha = 'unknown'
+        ball = None
+        try:
+            from racket_tracker import BALL_MODEL_PATH  # noqa: PLC0415
+            if os.path.exists(BALL_MODEL_PATH):
+                st = os.stat(BALL_MODEL_PATH)
+                ball = f'{os.path.basename(os.path.dirname(os.path.dirname(BALL_MODEL_PATH)))}:{int(st.st_mtime)}:{st.st_size}'
+        except Exception:
+            pass
+        _PROVENANCE = {'git_sha': sha, 'ball_model': ball, 'harness': HARNESS_VERSION}
+    return _PROVENANCE
+
+
 def append_result(rec):
     os.makedirs(OUT_DIR, exist_ok=True)
+    rec = {**rec, **_provenance()}
     with open(RESULTS_PATH, 'a') as f:
         f.write(json.dumps(rec) + '\n')
 
@@ -211,6 +250,12 @@ def print_report():
     errored = [r for r in records if 'error' in r and r['error']]
     print(f'\n=== {len(records)} examples processed ({len(errored)} hard errors) ===')
 
+    shas = Counter(r.get('git_sha', 'unstamped') for r in records)
+    balls = Counter(r.get('ball_model', 'unstamped') for r in records)
+    if len(shas) > 1 or len(balls) > 1:
+        print(f'  !! rows span multiple versions -- NOT a comparable baseline. '
+              f'Re-run with --fresh.\n     git_sha: {dict(shas)}\n     ball_model: {dict(balls)}')
+
     ver_records = [r for r in records if r.get('student_is_real') is not None]
     tp = sum(1 for r in ver_records if r['label_is_real'] and r['student_is_real'])
     tn = sum(1 for r in ver_records if not r['label_is_real'] and not r['student_is_real'])
@@ -262,11 +307,19 @@ def main():
     parser.add_argument('--limit', type=int, default=None, help='Only process the first N labeled examples')
     parser.add_argument('--report-only', action='store_true', help='Skip processing, just print the report from existing results')
     parser.add_argument('--no-backfill', action='store_true', help='Process without writing to the production training logs')
+    parser.add_argument('--fresh', action='store_true',
+                        help='Back up + clear results.jsonl and recompute every row under the current '
+                             'code + models (the only way to get a comparable baseline)')
     args = parser.parse_args()
 
     if args.report_only:
         print_report()
         return
+
+    if args.fresh and os.path.exists(RESULTS_PATH):
+        bak = os.path.join(OUT_DIR, f'results_{time.strftime("%Y%m%d_%H%M%S")}.jsonl')
+        os.replace(RESULTS_PATH, bak)
+        print(f'--fresh: moved existing results to {bak}', file=sys.stderr)
 
     with open(LABELS_PATH) as f:
         labels = json.load(f)['labels']

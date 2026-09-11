@@ -68,6 +68,71 @@ The backend **never runs ML code in-process** — it always shells out to a Pyth
 
 `scripts/` is organized into numbered stages, each in its own `scripts/NN_<name>/` folder. `00_utils/` holds shared cross-stage helpers (`paths.py`, `serve_anchor.py` — serve overhead-apex contact anchor, `interpolate_track.py` — short-gap fill for overlay trajectories, `video_io.py`, …). Stages `01_data_collection` through `06_database_build` are the **offline pipeline that built the pro database** — you should not need to re-run them unless adding new source footage. `07_ball_racket_tracking` and `10_net_detection` are auxiliary trained keypoint models used by later stages. `08_comparison_engine` is the live inference code described above. `09_coaching_ai` is the (currently unused) teacher-student coaching-tip selector. `11`–`17` cover highlight clipping, video crop/overlay utilities, shot classification, batch analysis, shot verification, and amateur-footage evaluation. See `HANDOVER.md`'s "The Data Pipeline" section for a per-stage breakdown of what each script does and why — it's detailed enough that re-deriving it from the code alone is slower than reading it there first.
 
+## Known Dead Ends — check before re-attempting
+
+These have each been independently tried (sometimes more than once) and
+failed for a specific, measured reason. If a task looks like it's heading
+toward one of these, read the reason first rather than re-deriving it —
+several of these cost a full session before the failure was recognized as
+the same underlying cause as an earlier attempt.
+
+- **Camera-angle normalization at fence/phone distance** — three separate
+  approaches (pose-yaw rotation, net-width un-foreshortening, "calibrate
+  once per session" via a deliberate square-and-still hold) all failed on
+  real footage: pose-landmark noise at that distance is larger than the
+  signal being corrected for (a held-still calibration clip still swings
+  ±30° in facing angle). Current approach is to **restrict the input
+  domain** (behind-baseline view gate, `08_comparison_engine`'s
+  `evaluate_view_usable`) rather than normalize it.
+- **Metric-3D depth as a scoring signal** — built and kept as data
+  (`traj_version 4`), but depth-derived rubric axes (`contact_depth_ahead`
+  etc.) are dead as a *score*: the same forehand at the same 0° camera angle
+  scored anywhere from −0.19 to +4.27. Same pose-noise root cause as above.
+  Don't re-add depth axes to `CURATED_AXES` without a better depth source.
+- **DTW distance rescaling to separate pro vs. amateur swings** — ~10
+  variants tried; the metric itself doesn't separate them (held-out pro
+  0.455 vs. amateur 0.484, inside the noise). The fix in progress is a
+  rule-based biomechanical rubric, not a rescaling of the DTW number.
+- **Phase C contact-frame correction regressor** — retrained twice with new
+  real data, and both times scored worse than the plain geometric heuristic
+  it was meant to improve on. Not a data problem — needs a different
+  framing (e.g. the per-frame classifier reframe that worked for audio
+  onset), not more training rows.
+- **Two-pass ROI ball re-detector / near-court crop** — both evaluated
+  NO-GO: the full-frame detector already gets ~85-87% on visible balls;
+  cropping loses more coverage than it gains. Ball detection isn't the
+  bottleneck — the contact frame (ball behind racket) and the offline pro DB
+  are.
+
+## Eval hygiene
+
+Several past sessions lost real time to an eval script silently reporting
+the wrong number: a stale-results cache skipped already-scored clips and
+hid a fix's real effect for a full session; a rubric's headline separation
+gap was later found to be overfit because it was measured on the same clips
+the axes were picked from. When adding or running an eval/benchmark script
+whose number will be quoted in `HANDOVER.md`/`STATUS.md`:
+- Make cache invalidation explicit — support a `--fresh` flag, or don't
+  cache per-clip results at all. Never silently skip a clip already present
+  in a results file.
+- Any number used to justify a change should be cross-validated or
+  held-out, not measured on the same set the change was tuned against.
+- Stamp results with the git SHA and model/data hash they were produced
+  from (see `data/17_amateur_eval/results_baseline_2b27847.jsonl` for the
+  pattern, or the shared helper `scripts/00_utils/eval_stamp.py`) so a
+  later "regression" can be checked against what actually produced it
+  before being treated as real.
+
+## Commit discipline
+
+Finished units of work should be committed before ending a session, even
+if the larger feature isn't done — don't leave it as an uncommitted pile
+for a later session to pick through. If work is genuinely bench-only or
+awaiting a decision from Jack and is likely to span multiple sessions,
+commit it to a session-scoped branch instead of leaving `master`'s working
+tree dirty; multiple sessions' uncommitted work landing in the same tree at
+once has previously required a manual multi-way split to untangle.
+
 ## Find Games (courts, clubs, watches)
 
 Courts are sourced from OpenStreetMap (`backend/src/utils/overpassCourts.js`, Overpass API) and clustered into clubs via `backend/scripts/clusterCourts.js`: courts are nodes in a graph, an edge connects two courts ≤100m apart (`backend/src/utils/geo.js` haversine distance), and a club is one connected component — not a running-centroid heuristic, so a long line of closely-spaced courts correctly becomes one club. Postcodes are resolved via postcodes.io (free, no API key — chosen over paid Google Geocoding) and backfilled onto existing court/club rows with `backend/scripts/backfillPostcodes.js`. Club naming is crowd-sourced the same way court verification already worked: a user proposes a name, two others confirm it — no paid lookup needed. Users can watch a specific court, an entire club, or an arbitrary map area (pin + radius); `GET /courts` reports which are already watched so the map can render watched-state on load.
