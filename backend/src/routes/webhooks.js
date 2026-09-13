@@ -61,7 +61,7 @@ router.post('/webhooks/revenuecat', (req, res) => {
   // delivery this app can't attribute. isPositiveIntegerId requires the
   // whole string to be digits, so anything else maps to "no matching user".
   const userId = isPositiveIntegerId(event.app_user_id) ? Number(event.app_user_id) : null;
-  const user = userId !== null ? db.prepare('SELECT id FROM users WHERE id = ?').get(userId) : null;
+  const user = userId !== null ? db.prepare('SELECT id, email FROM users WHERE id = ?').get(userId) : null;
 
   db.prepare(
     'INSERT INTO payment_events (user_id, event_type, raw_payload) VALUES (?, ?, ?)'
@@ -82,8 +82,23 @@ router.post('/webhooks/revenuecat', (req, res) => {
   const entitlementIds = Array.isArray(event.entitlement_ids) ? event.entitlement_ids : [];
   const affectsOurEntitlement = entitlementIds.length === 0 || entitlementIds.includes(ENTITLEMENT_ID);
 
+  // DELETE /auth/me anonymizes rather than deletes the users row, and sets
+  // this exact email pattern as part of that (see auth.js) specifically so
+  // the row can be recognised as "no longer a real account" without an
+  // extra column. billing.js already guards its own tier='premium' write
+  // against resurrecting an anonymized account (its token_version check) --
+  // this route grants the same tier from an independent event source
+  // (RevenueCat can still deliver a renewal for an app_user_id whose
+  // RallyMax account was deleted after the purchase was made, since nothing
+  // cancels the subscription itself) and needs the same guard, or a
+  // delayed/retried webhook could silently revive tier='premium' on a
+  // deleted account forever.
+  const isDeletedAccount = user.email.endsWith('@rallymax.invalid');
+
   if (affectsOurEntitlement && GRANT_EVENTS.has(event.type)) {
-    db.prepare("UPDATE users SET tier = 'premium' WHERE id = ?").run(user.id);
+    if (!isDeletedAccount) {
+      db.prepare("UPDATE users SET tier = 'premium' WHERE id = ?").run(user.id);
+    }
   } else if (affectsOurEntitlement && REVOKE_EVENTS.has(event.type)) {
     db.prepare("UPDATE users SET tier = 'free' WHERE id = ?").run(user.id);
   }

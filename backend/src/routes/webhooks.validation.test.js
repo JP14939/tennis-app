@@ -91,4 +91,19 @@ describe('POST /webhooks/revenuecat payload validation', () => {
     expect(res.status).toBe(200);
     expect(db.prepare('SELECT tier FROM users WHERE id = ?').get(user.id).tier).toBe('premium');
   });
+
+  // DELETE /auth/me anonymizes (not deletes) the users row: sets
+  // email = 'deleted_<id>@rallymax.invalid' and tier = 'free'. RevenueCat can
+  // still deliver a grant event for that same app_user_id after the account
+  // was deleted (nothing about deleting a RallyMax account cancels the real
+  // subscription), and this must not resurrect tier='premium' on it -- the
+  // same resurrection billing.js's /billing/sync already guards against via
+  // token_version, just arriving through webhooks.js's independent write path.
+  test('a grant event for an anonymized (deleted) account does not resurrect premium', async () => {
+    const user = makeUser();
+    db.prepare("UPDATE users SET email = ? WHERE id = ?").run(`deleted_${user.id}@rallymax.invalid`, user.id);
+    const res = await post({ event: { app_user_id: String(user.id), type: 'INITIAL_PURCHASE' } });
+    expect(res.status).toBe(200);
+    expect(db.prepare('SELECT tier FROM users WHERE id = ?').get(user.id).tier).toBe('free');
+  });
 });

@@ -304,7 +304,16 @@ def _body_rotation_tips(shot_type, issues, top_n=2):
         variants = db_issue['tips'][issue['severity']]
         tips.append(variants[0])
     if not tips:
-        tips = ['Good body rotation and racket extension through this swing.']
+        if issues:
+            # score_body_rotation() already found a real issue (that's the
+            # only way `issues` is non-empty) but none of it resolved to tip
+            # text -- e.g. a missing coaching_tips_database.json entry for
+            # this shot_type/issue_id. Falling through to the "good" text
+            # below would show a positive-sounding tip for a swing that was
+            # just scored as having a rotation/racket-extension problem.
+            tips = ['Rotation or racket extension needs work here, but no specific tip is available yet.']
+        else:
+            tips = ['Good body rotation and racket extension through this swing.']
     return tips
 
 
