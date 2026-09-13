@@ -93,8 +93,6 @@ def main():
     n_ok = n_fail = 0
 
     for i, (cell_id, shot_type) in enumerate(usable, 1):
-        processed.add(cell_id)
-
         entry = manifest.get(cell_id)
         if entry is None:
             print(f'[{i}/{len(usable)}] {cell_id}: no manifest entry — skipping')
@@ -140,6 +138,14 @@ def main():
             continue
 
         n_ok += 1
+        # Only mark as processed once it actually reached and passed the
+        # verifier -- marking it earlier (as this used to, unconditionally at
+        # the top of the loop) permanently excluded an example from every
+        # future run after ANY skip reason (a transient get_coaching_tips
+        # failure included), contradicting this file's own PROCESSED_PATH
+        # comment ("re-running doesn't call the verifier again on the SAME
+        # example" -- i.e. one that already ran, not one that never got there).
+        processed.add(cell_id)
         rate = agreement_rate()
         print(f'    source={meta["source"]} verified={meta["verified"]}'
               + (f' agreed={meta.get("agreed_with_student")}' if meta.get('verified') else '')

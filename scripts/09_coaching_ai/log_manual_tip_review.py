@@ -28,6 +28,13 @@ def main():
     reviewer_pick_ids = payload.get('reviewer_pick_ids') or []
     agreed = sorted(shown_tip_ids) == sorted(reviewer_pick_ids)
 
+    # Order matters: mark reviewed FIRST. If the process dies between these
+    # two writes, this order loses at most one training example; the reverse
+    # order would leave analysis_id un-reviewed, so list_tip_review_candidates.py
+    # re-serves it next session -- and a repeat verdict on the same candidate
+    # would append a second, duplicate row to tip_training_log.jsonl, inflating
+    # agreement_rate()'s sample count with a repeat rather than a new example.
+    tip_reviewed_log.log_reviewed(payload['analysis_id'])
     tip_training_log.log_example(
         payload['shot_type'],
         payload.get('deviation_features'),
@@ -36,7 +43,6 @@ def main():
         agreed,
         source='user_flag',
     )
-    tip_reviewed_log.log_reviewed(payload['analysis_id'])
 
     print(json.dumps({'logged': True, 'agreed': agreed}))
 
